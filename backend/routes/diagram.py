@@ -4,7 +4,7 @@ import json
 
 bp = Blueprint('diagram', __name__, url_prefix='/api/diagram')
 
-@bp.route('/project/<int:project_id>', methods=['GET'])
+@bp.route('/project/<int:project_id>/', methods=['GET'])
 def get_diagram_data(project_id):
     """Get diagram data (nodes and edges)"""
     try:
