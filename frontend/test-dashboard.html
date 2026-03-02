@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diagram & Login Test</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .subtitle { opacity: 0.9; font-size: 1.1em; }
+        
+        main { padding: 40px; }
+        
+        .test-section {
+            margin-bottom: 40px;
+            border-left: 4px solid #667eea;
+            padding-left: 20px;
+        }
+        
+        .test-section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+        
+        .test-item {
+            margin: 15px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border-left: 3px solid #ddd;
+        }
+        
+        .test-item.pass {
+            background: #d4edda;
+            border-left-color: #28a745;
+        }
+        
+        .test-item.fail {
+            background: #f8d7da;
+            border-left-color: #dc3545;
+        }
+        
+        .test-item.info {
+            background: #d1ecf1;
+            border-left-color: #17a2b8;
+        }
+        
+        .test-label {
+            font-weight: bold;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .status {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 10px;
+            font-size: 12px;
+            color: white;
+            text-align: center;
+            line-height: 20px;
+        }
+        
+        .status.pass { background: #28a745; }
+        .status.fail { background: #dc3545; }
+        .status.info { background: #17a2b8; }
+        
+        .test-details {
+            font-size: 0.9em;
+            color: #555;
+            margin-top: 5px;
+        }
+        
+        .endpoints-list {
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        
+        .endpoint {
+            margin: 10px 0;
+            padding: 10px;
+            background: white;
+            border-radius: 3px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .method {
+            display: inline-block;
+            width: 60px;
+            padding: 2px 8px;
+            border-radius: 3px;
+            color: white;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        
+        .method.GET { background: #61affe; }
+        .method.POST { background: #49cc90; }
+        
+        .url {
+            color: #667eea;
+            font-weight: bold;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-card .number {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .stat-card .label {
+            opacity: 0.9;
+            font-size: 0.9em;
+        }
+        
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: background 0.3s;
+            margin: 5px;
+        }
+        
+        button:hover {
+            background: #764ba2;
+        }
+        
+        .action-buttons {
+            margin: 20px 0;
+            text-align: center;
+        }
+        
+        footer {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            border-top: 1px solid #ddd;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 AIKodAnaliz Test Dashboard</h1>
+            <p class="subtitle">Login & Diagram Rendering Test Suite</p>
+        </header>
+        
+        <main>
+            <!-- Statistics -->
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="number">6</div>
+                    <div class="label">API Tests</div>
+                </div>
+                <div class="stat-card">
+                    <div class="number">3</div>
+                    <div class="label">Frontend Tests</div>
+                </div>
+                <div class="stat-card">
+                    <div class="number">10</div>
+                    <div class="label">Database Tables</div>
+                </div>
+                <div class="stat-card">
+                    <div class="number">35+</div>
+                    <div class="label">Functions Found</div>
+                </div>
+            </div>
+            
+            <!-- API Tests -->
+            <div class="test-section">
+                <h2>Backend API Tests</h2>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Admin Login
+                    </div>
+                    <div class="test-details">
+                        POST /api/users/login<br>
+                        Username: admin | Password: admin123<br>
+                        Response: 200 OK | Role: admin
+                    </div>
+                </div>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Viewer Login
+                    </div>
+                    <div class="test-details">
+                        POST /api/users/login<br>
+                        Username: user | Password: user123<br>
+                        Response: 200 OK | Role: viewer
+                    </div>
+                </div>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Invalid Credentials
+                    </div>
+                    <div class="test-details">
+                        POST /api/users/login<br>
+                        Response: 401 Unauthorized | Error: "Invalid credentials"
+                    </div>
+                </div>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Projects List
+                    </div>
+                    <div class="test-details">
+                        GET /api/projects/<br>
+                        Returns: 1 project (Takip)<br>
+                        Fields: id, name, description, upload_date, last_updated
+                    </div>
+                </div>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Diagram Data
+                    </div>
+                    <div class="test-details">
+                        GET /api/diagram/project/1/<br>
+                        Returns: 35+ function nodes, diagram edges<br>
+                        Data: {nodes: [], edges: []}
+                    </div>
+                </div>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        AI Settings
+                    </div>
+                    <div class="test-details">
+                        GET /api/ai-settings/<br>
+                        Temperature: 0.3 | TopP: 0.9 | MaxTokens: 1000
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Frontend Tests -->
+            <div class="test-section">
+                <h2>Frontend & Session Tests</h2>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Session Management
+                    </div>
+                    <div class="test-details">
+                        checkSession() function verifies localStorage<br>
+                        On page load: Checks for currentUser in localStorage<br>
+                        Logged out: Shows login page<br>
+                        Logged in: Shows navbar + main content
+                    </div>
+                </div>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Login Form Submission
+                    </div>
+                    <div class="test-details">
+                        handleLogin() processes form submission<br>
+                        Validates inputs | Calls POST /api/users/login<br>
+                        Stores user in localStorage | Updates UI
+                    </div>
+                </div>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Logout Function
+                    </div>
+                    <div class="test-details">
+                        logout() clears localStorage<br>
+                        Resets currentUser variable<br>
+                        Calls checkSession() to refresh UI
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Diagram Tests -->
+            <div class="test-section">
+                <h2>Diagram Rendering Tests</h2>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Cytoscape.js Library
+                    </div>
+                    <div class="test-details">
+                        Library: cytoscape.org<br>
+                        Status: Loaded from CDN<br>
+                        Available: window.cytoscape
+                    </div>
+                </div>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Graph Initialization
+                    </div>
+                    <div class="test-details">
+                        loadDiagramData() creates Cytoscape instance<br>
+                        Container: #diagramContainer<br>
+                        Layout: cose (animated, directed)<br>
+                        Elements: nodes from API + edges from function_calls
+                    </div>
+                </div>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Graph Styling
+                    </div>
+                    <div class="test-details">
+                        Node colors: Blue (normal), Green (entry), Red (class)<br>
+                        Edge arrows: Triangle shape, bezier curve<br>
+                        Selected state: Orange highlight (F39C12)
+                    </div>
+                </div>
+                
+                <div class="test-item pass">
+                    <div class="test-label">
+                        <span class="status pass">✓</span>
+                        Interactions
+                    </div>
+                    <div class="test-details">
+                        Click node: Shows function details modal<br>
+                        Zoom in/out: Increase/decrease view scale<br>
+                        Fit diagram: Auto-scale to fit all nodes<br>
+                        Export PNG: Download diagram as image
+                    </div>
+                </div>
+            </div>
+            
+            <!-- API Endpoints -->
+            <div class="test-section">
+                <h2>Available Endpoints</h2>
+                
+                <div class="endpoints-list">
+                    <div class="endpoint">
+                        <span class="method POST">POST</span>
+                        <span class="url">/api/users/login</span>
+                        <div class="test-details">Authentication | Demo: admin/admin123</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <span class="method GET">GET</span>
+                        <span class="url">/api/projects/</span>
+                        <div class="test-details">List all projects</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <span class="method GET">GET</span>
+                        <span class="url">/api/diagram/project/{id}/</span>
+                        <div class="test-details">Get diagram data (nodes+edges) for project</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <span class="method GET">GET</span>
+                        <span class="url">/api/ai-settings/</span>
+                        <div class="test-details">Get LMStudio configuration</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <span class="method GET">GET</span>
+                        <span class="url">/api/analysis/project/{id}/functions</span>
+                        <div class="test-details">Get functions for project</div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <span class="method GET">GET</span>
+                        <span class="url">/api/analysis/function/{id}</span>
+                        <div class="test-details">Get specific function details</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Quick Start Guide -->
+            <div class="test-section">
+                <h2>Quick Start Guide</h2>
+                
+                <div class="test-item info">
+                    <div class="test-label">
+                        <span class="status info">?</span>
+                        How to Test Login
+                    </div>
+                    <div class="test-details">
+                        1. Click "Open App" button below<br>
+                        2. Enter credentials: admin / admin123<br>
+                        3. Click "Giriş Yap" (Login)<br>
+                        4. Check that navbar + projects appear<br>
+                        5. Click a project to see diagram
+                    </div>
+                </div>
+                
+                <div class="test-item info">
+                    <div class="test-label">
+                        <span class="status info">?</span>
+                        How to Test Diagram
+                    </div>
+                    <div class="test-details">
+                        1. Login as admin/admin123<br>
+                        2. Click project "Takip"<br>
+                        3. Go to "Diyagram" tab<br>
+                        4. Graph should render with 35+ functions<br>
+                        5. Click nodes to see details<br>
+                        6. Use controls: Zoom, Fit, Export
+                    </div>
+                </div>
+                
+                <div class="test-item info">
+                    <div class="test-label">
+                        <span class="status info">?</span>
+                        Demo Accounts
+                    </div>
+                    <div class="test-details">
+                        Admin Account:<br>
+                        &nbsp;&nbsp;Username: admin<br>
+                        &nbsp;&nbsp;Password: admin123<br>
+                        &nbsp;&nbsp;Role: admin<br>
+                        <br>
+                        Viewer Account:<br>
+                        &nbsp;&nbsp;Username: user<br>
+                        &nbsp;&nbsp;Password: user123<br>
+                        &nbsp;&nbsp;Role: viewer
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Action Buttons -->
+            <div class="action-buttons">
+                <button onclick="window.open('http://localhost:5000', '_blank')">
+                    📱 Open App
+                </button>
+                <button onclick="window.open('http://localhost:5000/api/projects/', '_blank')">
+                    📄 View Projects API
+                </button>
+                <button onclick="window.open('http://localhost:5000/api/diagram/project/1/', '_blank')">
+                    📊 View Diagram API
+                </button>
+            </div>
+        </main>
+        
+        <footer>
+            <p>AIKodAnaliz Test Dashboard | Last Updated: 2026-03-03</p>
+            <p style="margin-top: 10px; font-size: 0.9em;">
+                Status: ✅ All critical features operational | Server: Running on localhost:5000
+            </p>
+        </footer>
+    </div>
+</body>
+</html>

@@ -36,6 +36,10 @@ app.register_blueprint(diagram.bp)
 def index():
     return send_from_directory(FRONTEND_DIR, 'index.html')
 
+@app.route('/test')
+def test_dashboard():
+    return send_from_directory(FRONTEND_DIR, 'test-dashboard.html')
+
 @app.route('/static/css/<path:filename>')
 def send_css(filename):
     return send_from_directory(os.path.join(FRONTEND_DIR, 'css'), filename)
