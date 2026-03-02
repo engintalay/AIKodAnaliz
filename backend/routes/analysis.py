@@ -101,6 +101,32 @@ def get_ai_summary(function_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@bp.route('/function/<int:function_id>', methods=['GET'])
+def get_function_details(function_id):
+    """Get single function details"""
+    try:
+        row = db.execute_query(
+            'SELECT id, function_name, function_type, signature, parameters, return_type, ai_summary, start_line, end_line FROM functions WHERE id = ?',
+            (function_id,)
+        )
+        
+        if not row:
+            return jsonify({'error': 'Function not found'}), 404
+        
+        func = dict(row[0])
+        
+        # Parse parameters from JSON string
+        if func['parameters']:
+            try:
+                func['parameters'] = json.loads(func['parameters'])
+            except:
+                func['parameters'] = func['parameters'].split(',')
+        
+        return jsonify(func), 200
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @bp.route('/project/<int:project_id>/functions', methods=['GET'])
 def get_project_functions(project_id):
     """Get all functions in project"""
