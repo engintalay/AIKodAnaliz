@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIKodAnaliz - Kod Analiz Aracı</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cytoscape.org/releases/cytoscape.cjs.js"></script>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Navigation -->
+        <nav class="navbar">
+            <div class="logo">AIKodAnaliz</div>
+            <div class="nav-menu">
+                <a href="#" onclick="loadProjects()">Projeler</a>
+                <a href="#" onclick="showUpload()">Proje Yükle</a>
+                <a href="#" onclick="showSettings()">Ayarlar</a>
+                <a href="#" onclick="logout()">Çık</a>
+            </div>
+        </nav>
+
+        <!-- Main Content -->
+        <div class="main">
+            <!-- Projects Section -->
+            <div id="projectsSection" class="section visible">
+                <h2>Projeler</h2>
+                <button class="btn btn-primary" onclick="showUpload()">+ Yeni Proje</button>
+                <div id="projectsList" class="projects-grid">
+                    <!-- Projects akan buraya yüklenecek -->
+                </div>
+            </div>
+
+            <!-- Upload Section -->
+            <div id="uploadSection" class="section">
+                <h2>Proje Yükle</h2>
+                <form id="uploadForm" class="upload-form">
+                    <input type="text" id="projectName" placeholder="Proje Adı" required>
+                    <input type="text" id="projectDesc" placeholder="Proje Açıklaması">
+                    <input type="file" id="projectFile" accept=".zip" required>
+                    <button type="submit" class="btn btn-primary">Yükle ve Analiz Et</button>
+                </form>
+                <div id="uploadProgress" style="display:none;">
+                    <p>Yükleniyor...</p>
+                    <progress id="uploadBar" max="100" value="0"></progress>
+                </div>
+            </div>
+
+            <!-- Project Detail Section -->
+            <div id="projectDetailSection" class="section">
+                <div class="detail-header">
+                    <h2 id="projectTitle"></h2>
+                    <button class="btn btn-secondary" onclick="goBack()">← Geri</button>
+                </div>
+                
+                <div class="detail-content">
+                    <!-- Tabs -->
+                    <div class="tabs">
+                        <button class="tab-btn active" onclick="switchTab('diagram')">Diyagram</button>
+                        <button class="tab-btn" onclick="switchTab('functions')">Fonksiyonlar</button>
+                        <button class="tab-btn" onclick="switchTab('marks')">İşaretler</button>
+                        <button class="tab-btn" onclick="switchTab('files')">Dosyalar</button>
+                    </div>
+
+                    <!-- Diagram Tab -->
+                    <div class="tab-content" id="diagramTab">
+                        <div class="diagram-controls">
+                            <input type="text" id="searchFunctions" placeholder="Fonksiyon ara..." class="search-input">
+                            <button class="btn btn-secondary" onclick="exportDiagram()">📥 PNG Olarak İndir</button>
+                            <button class="btn btn-secondary" onclick="zoomIn()">🔍 + Yaklaş</button>
+                            <button class="btn btn-secondary" onclick="zoomOut()">🔍 - Uzaklaş</button>
+                            <button class="btn btn-secondary" onclick="fitDiagram()">📐 Sığdır</button>
+                        </div>
+                        <div id="diagramContainer" class="diagram-container"></div>
+                    </div>
+
+                    <!-- Functions Tab -->
+                    <div class="tab-content" id="functionsTab" style="display:none;">
+                        <div class="functions-search">
+                            <input type="text" id="searchFunctionsText" placeholder="Fonksiyon adı veya açıklamada ara..." class="search-input">
+                        </div>
+                        <div id="functionsList" class="functions-list">
+                            <!-- Functions akan buraya yüklenecek -->
+                        </div>
+                    </div>
+
+                    <!-- Marks Tab -->
+                    <div class="tab-content" id="marksTab" style="display:none;">
+                        <div id="marksList" class="marks-list">
+                            <!-- Marks akan buraya yüklenecek -->
+                        </div>
+                    </div>
+
+                    <!-- Files Tab -->
+                    <div class="tab-content" id="filesTab" style="display:none;">
+                        <div id="filesList" class="files-list">
+                            <!-- Files akan buraya yüklenecek -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Section -->
+            <div id="settingsSection" class="section">
+                <h2>Ayarlar</h2>
+                <div class="settings-container">
+                    <div class="settings-group">
+                        <h3>LMStudio Ayarları</h3>
+                        <div class="setting-item">
+                            <label>API URL:</label>
+                            <input type="text" id="apiUrl" placeholder="http://localhost:1234/v1">
+                        </div>
+                        <div class="setting-item">
+                            <label>Sıcaklık (Temperature):</label>
+                            <input type="range" id="temperature" min="0" max="1" step="0.1" value="0.7">
+                            <span id="tempValue">0.7</span>
+                        </div>
+                        <div class="setting-item">
+                            <label>Top P:</label>
+                            <input type="range" id="topP" min="0" max="1" step="0.1" value="0.9">
+                            <span id="topPValue">0.9</span>
+                        </div>
+                        <div class="setting-item">
+                            <label>Max Tokens:</label>
+                            <input type="number" id="maxTokens" value="1000" min="100" max="4000">
+                        </div>
+                        <button class="btn btn-primary" onclick="saveLMSettings()">Kaydet</button>
+                        <button class="btn btn-secondary" onclick="testLMConnection()">Bağlantı Test Et</button>
+                        <div id="connectionResult"></div>
+                    </div>
+
+                    <div class="settings-group">
+                        <h3>Veritabanı Ayarları</h3>
+                        <div class="setting-item">
+                            <label>Veritabanı Türü:</label>
+                            <select id="dbType">
+                                <option value="sqlite">SQLite (Mevcut)</option>
+                                <option value="postgresql">PostgreSQL (Gelecek)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <div id="functionModal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <span class="close" onclick="closeFunctionModal()">&times;</span>
+            <h3 id="funcModalTitle"></h3>
+            <div id="funcModalContent"></div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="addMark()">İşaret Koy</button>
+                <button class="btn btn-secondary" onclick="viewSource()">Kaynak Kodu Gör</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

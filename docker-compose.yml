@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  aikodanaliz:
+    build: .
+    container_name: aikodanaliz
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./database:/app/database
+      - ./uploads:/app/uploads
+      - ./frontend:/app/frontend
+    environment:
+      - FLASK_APP=backend/app.py
+      - FLASK_ENV=development
+      - DB_CONNECTION_TYPE=sqlite
+    depends_on:
+      - lmstudio
+    networks:
+      - aikodanaliz-net
+
+  lmstudio:
+    image: lmstudio:latest
+    container_name: lmstudio
+    ports:
+      - "1234:1234"
+      - "8000:8000"
+    volumes:
+      - lmstudio_models:/root/.cache/lm-studio
+    networks:
+      - aikodanaliz-net
+
+networks:
+  aikodanaliz-net:
+    driver: bridge
+
+volumes:
+  lmstudio_models:
+
+# Çalıştırmak için:
+# docker-compose up --build
+# 
+# Durdurmak için:
+# docker-compose down
