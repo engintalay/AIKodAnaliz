@@ -497,16 +497,91 @@ document.getElementById('topP')?.addEventListener('input', (e) => {
 });
 
 // ============================================
+// SECTION: Authentication
+// ============================================
+
+let currentUser = null;
+
+function checkSession() {
+    const user = localStorage.getItem('currentUser');
+    const loginSection = document.getElementById('loginSection');
+    const navbar = document.getElementById('navbar');
+    const mainContent = document.getElementById('mainContent');
+    
+    if (user) {
+        currentUser = JSON.parse(user);
+        // Show main UI, hide login
+        if (loginSection) loginSection.style.display = 'none';
+        if (navbar) navbar.style.display = 'flex';
+        if (mainContent) mainContent.style.display = 'block';
+        document.getElementById('userInfo').textContent = `👤 ${currentUser.username}`;
+        return true;
+    } else {
+        // Show login, hide main UI
+        if (loginSection) loginSection.style.display = 'block';
+        if (navbar) navbar.style.display = 'none';
+        if (mainContent) mainContent.style.display = 'none';
+        return false;
+    }
+}
+
+async function handleLogin(e) {
+    e.preventDefault();
+    
+    const username = document.getElementById('loginUsername').value;
+    const password = document.getElementById('loginPassword').value;
+    const errorDiv = document.getElementById('loginError');
+    
+    try {
+        const response = await fetch(`${API_URL}/users/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.user) {
+            // Store user info
+            localStorage.setItem('currentUser', JSON.stringify(data.user));
+            currentUser = data.user;
+            
+            // Update UI
+            errorDiv.style.display = 'none';
+            document.getElementById('loginForm').reset();
+            checkSession();
+            
+            // Load projects
+            loadProjects();
+        } else {
+            errorDiv.textContent = data.error || 'Giriş başarısız';
+            errorDiv.style.display = 'block';
+        }
+    } catch (error) {
+        errorDiv.textContent = 'Hata: ' + error;
+        errorDiv.style.display = 'block';
+    }
+}
+
+function logout() {
+    localStorage.removeItem('currentUser');
+    currentUser = null;
+    checkSession();
+}
+
+// ============================================
 // SECTION: Initialization
 // ============================================
 
 document.addEventListener('DOMContentLoaded', () => {
-    loadProjects();
-});
-
-// Logout
-function logout() {
-    if (confirm('Çıkış yapmak istediğinizden emin misiniz?')) {
-        window.location.href = '/';
+    // Setup login form
+    const loginForm = document.getElementById('loginForm');
+    if (loginForm) {
+        loginForm.addEventListener('submit', handleLogin);
     }
-}
+    
+    // Check session on page load
+    if (checkSession()) {
+        loadProjects();
+    }
+});

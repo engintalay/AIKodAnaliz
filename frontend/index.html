@@ -11,19 +11,52 @@
 </head>
 <body>
     <div class="container">
+        <!-- Login Section -->
+        <div id="loginSection" class="section visible">
+            <div class="login-container">
+                <div class="login-box">
+                    <h1>AIKodAnaliz</h1>
+                    <p class="login-subtitle">Yapay Zeka Destekli Kod Analiz Aracı</p>
+                    
+                    <form id="loginForm">
+                        <div class="form-group">
+                            <label>Kullanıcı Adı</label>
+                            <input type="text" id="loginUsername" placeholder="admin veya demo" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Şifre</label>
+                            <input type="password" id="loginPassword" placeholder="şifre" required>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary btn-full">Giriş Yap</button>
+                    </form>
+                    
+                    <div class="login-info">
+                        <p><strong>Demo Hesapları:</strong></p>
+                        <p>👤 admin / admin123</p>
+                        <p>👤 users / user123</p>
+                    </div>
+                    
+                    <div id="loginError" class="error-message" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+
         <!-- Navigation -->
-        <nav class="navbar">
+        <nav class="navbar" style="display:none;" id="navbar">
             <div class="logo">AIKodAnaliz</div>
             <div class="nav-menu">
-                <a href="#" onclick="loadProjects()">Projeler</a>
-                <a href="#" onclick="showUpload()">Proje Yükle</a>
-                <a href="#" onclick="showSettings()">Ayarlar</a>
-                <a href="#" onclick="logout()">Çık</a>
+                <span id="userInfo"></span>
+                <a href="#" onclick="loadProjects(); return false;">Projeler</a>
+                <a href="#" onclick="showUpload(); return false;">Proje Yükle</a>
+                <a href="#" onclick="showSettings(); return false;">Ayarlar</a>
+                <a href="#" onclick="logout(); return false;">Çık</a>
             </div>
         </nav>
 
         <!-- Main Content -->
-        <div class="main">
+        <div class="main" style="display:none;" id="mainContent">
             <!-- Projects Section -->
             <div id="projectsSection" class="section visible">
                 <h2>Projeler</h2>

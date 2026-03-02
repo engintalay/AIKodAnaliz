@@ -4,6 +4,37 @@ import json
 
 bp = Blueprint('user', __name__, url_prefix='/api/users')
 
+@bp.route('/login', methods=['POST'])
+def login():
+    """User login"""
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+    
+    if not username or not password:
+        return jsonify({'error': 'Username and password required'}), 400
+    
+    try:
+        rows = db.execute_query(
+            'SELECT id, username, role FROM users WHERE username = ? AND password = ?',
+            (username, password)
+        )
+        
+        if not rows:
+            return jsonify({'error': 'Invalid credentials'}), 401
+        
+        user = dict(rows[0])
+        return jsonify({
+            'user': {
+                'id': user['id'],
+                'username': user['username'],
+                'role': user['role']
+            },
+            'message': 'Login successful'
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @bp.route('/register', methods=['POST'])
 def register():
     """Register new user"""

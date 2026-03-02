@@ -148,6 +148,21 @@ class Database:
                 )
             ''')
             
+            # Create demo users if not exist
+            cursor.execute("SELECT COUNT(*) FROM users WHERE username = ?", ("admin",))
+            if cursor.fetchone()[0] == 0:
+                # Admin user
+                cursor.execute('''
+                    INSERT INTO users (username, password, role)
+                    VALUES (?, ?, ?)
+                ''', ("admin", "admin123", "admin"))
+                
+                # Demo viewer user
+                cursor.execute('''
+                    INSERT INTO users (username, password, role)
+                    VALUES (?, ?, ?)
+                ''', ("user", "user123", "viewer"))
+            
             conn.commit()
     
     def get_connection(self):
