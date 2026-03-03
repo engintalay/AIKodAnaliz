@@ -22,24 +22,6 @@ def get_diagram_data(project_id):
             (project_id,)
         )
         
-        # If no dependencies found, create sample edges from first few functions
-        if not dep_rows and len(func_rows) > 1:
-            # Create sample connections between functions (for visualization)
-            sample_edges = []
-            func_ids = [row[0] for row in func_rows]
-            for i in range(min(len(func_ids)-1, 5)):  # Create 5 sample connections
-                sample_edges.append((
-                    func_ids[i],
-                    func_ids[i+1] if i+1 < len(func_ids) else func_ids[0]
-                ))
-            # Convert to dict format for consistency
-            dep_rows = []
-            for caller_id, callee_id in sample_edges:
-                dep_rows.append({
-                    'caller_function_id': caller_id,
-                    'callee_function_id': callee_id
-                })
-        
         # Build nodes
         nodes = []
         for row in func_rows:
@@ -54,13 +36,8 @@ def get_diagram_data(project_id):
         # Build edges
         edges = []
         for row in dep_rows:
-            # Handle both database rows (tuple/Row) and dict format (sample edges)
-            if isinstance(row, dict):
-                from_id = row['caller_function_id']
-                to_id = row['callee_function_id']
-            else:
-                from_id = row[0]
-                to_id = row[1]
+            from_id = row[0]
+            to_id = row[1]
             edges.append({
                 'from': from_id,
                 'to': to_id

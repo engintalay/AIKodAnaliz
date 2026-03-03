@@ -69,6 +69,8 @@ class Database:
                     return_type TEXT,
                     description TEXT,
                     ai_summary TEXT,
+                    class_name TEXT,
+                    package_name TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (project_id) REFERENCES projects(id),
                     FOREIGN KEY (file_id) REFERENCES source_files(id)

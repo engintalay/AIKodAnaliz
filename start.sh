@@ -18,6 +18,9 @@ echo "📥 Bağımlılıklar yükleniyor..."
 pip install -r requirements.txt
 
 # Flask uygulamasını başlat
+echo "🧹 5000 portu kontrol ediliyor ve gerekiyorsa temizleniyor..."
+fuser -k 5000/tcp || true
+
 echo "✅ Sunucu başlatılıyor..."
 echo "🌐 Tarayıcıda açın: http://localhost:5000"
 echo "⚠️  LMStudio'nun çalıştığından emin olun (http://localhost:1234)"

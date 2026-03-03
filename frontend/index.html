@@ -182,10 +182,28 @@
         <div class="modal-content">
             <span class="close" onclick="closeFunctionModal()">&times;</span>
             <h3 id="funcModalTitle"></h3>
-            <div id="funcModalContent"></div>
-            <div class="modal-actions">
-                <button class="btn btn-secondary" onclick="addMark()">İşaret Koy</button>
-                <button class="btn btn-secondary" onclick="viewSource()">Kaynak Kodu Gör</button>
+            
+            <div id="funcModalContent">
+                <!-- Meta data will be injected here -->
+            </div>
+            
+            <div style="margin-top: 15px;">
+                <label style="font-weight: bold; display: block; margin-bottom: 5px;">Fonksiyon Özeti:</label>
+                <textarea id="funcModalSummary" style="width: 100%; height: 80px; font-family: inherit; padding: 8px; border-radius: 4px; border: 1px solid #ccc;"></textarea>
+                
+                <div style="text-align: right; margin-top: 5px; margin-bottom: 15px;">
+                    <button class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;" onclick="saveFunctionSummary()">💾 Özeti Kaydet</button>
+                    <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px; margin-left: 5px;" onclick="generateAISummary()">🤖 AI Özeti Al</button>
+                </div>
+            </div>
+
+            <div style="margin-top: 15px;">
+                <label style="font-weight: bold; display: block; margin-bottom: 5px;">Kaynak Kod:</label>
+                <pre style="background: #282c34; color: #abb2bf; padding: 10px; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 13px; max-height: 250px; overflow-y: auto;"><code id="funcModalSource"></code></pre>
+            </div>
+            
+            <div class="modal-actions" style="margin-top: 20px;">
+                <button class="btn btn-secondary" onclick="addMark()">📍 İşaret Koy</button>
             </div>
         </div>
     </div>

@@ -17,17 +17,17 @@ class CodeAnalyzer:
         self.content = content
         
         if self.language == "python":
-            return self._analyze_python(content)
+            return self._analyze_python(file_path, content)
         elif self.language in ["java", "javascript", "typescript"]:
-            return self._analyze_java_like(content)
+            return self._analyze_java_like(file_path, content)
         elif self.language in ["php"]:
-            return self._analyze_php(content)
+            return self._analyze_php(file_path, content)
         elif self.language in ["css", "html"]:
             return self._analyze_markup(content)
         else:
             return self._analyze_generic(content)
     
-    def _analyze_python(self, content: str) -> Dict:
+    def _analyze_python(self, file_path: str, content: str) -> Dict:
         """Analyze Python code"""
         try:
             tree = ast.parse(content)
@@ -47,7 +47,9 @@ class CodeAnalyzer:
                     'parameters': [arg.arg for arg in node.args.args],
                     'return_type': self._extract_return_type(node),
                     'signature': self._get_python_signature(node),
-                    'is_entry': node.name in ['main', '__main__', 'run']
+                    'is_entry': node.name in ['main', '__main__', 'run'],
+                    'class_name': getattr(node, 'parent_class_name', None),
+                    'package_name': file_path.replace('/', '.').replace('\\', '.').replace('.py', '') if file_path else None
                 }
                 functions.append(func_info)
                 if func_info['is_entry']:
@@ -62,9 +64,16 @@ class CodeAnalyzer:
                     'parameters': [],
                     'return_type': None,
                     'signature': f"class {node.name}",
-                    'is_entry': False
+                    'is_entry': False,
+                    'class_name': None,
+                    'package_name': file_path.replace('/', '.').replace('\\', '.').replace('.py', '') if file_path else None
                 }
                 functions.append(func_info)
+                
+                # Tag methods with their parent class
+                for child in node.body:
+                    if isinstance(child, ast.FunctionDef):
+                        child.parent_class_name = node.name
         
         return {
             'functions': functions,
@@ -72,19 +81,37 @@ class CodeAnalyzer:
             'dependencies': self._extract_imports_python(tree)
         }
     
-    def _analyze_java_like(self, content: str) -> Dict:
+    def _analyze_java_like(self, file_path: str, content: str) -> Dict:
         """Analyze Java/JavaScript/TypeScript code"""
         functions = []
         entry_points = []
+        
+        # Package pattern
+        package_match = re.search(r'package\s+([^;]+);', content)
+        package_name = package_match.group(1).strip() if package_match else None
         
         # Function pattern for Java/JS/TS
         func_pattern = r'(?:public|private|protected|static|async)?\s*(?:\w+\s+)*(\w+)\s*\([^)]*\)\s*(?:throws\s+\w+)?\s*[{:]'
         matches = re.finditer(func_pattern, content)
         
+        # Class pattern
+        classes = []
+        class_pattern = r'(?:public|private|protected)?\s*(?:abstract)?\s*class\s+(\w+)'
+        for m in re.finditer(class_pattern, content):
+            classes.append({'name': m.group(1), 'start': m.start()})
+
+        
         lines = content.split('\n')
+        
+        # Blacklist of keywords that are not functions
+        keywords = {'if', 'else', 'for', 'while', 'do', 'switch', 'catch', 'try', 'finally', 'return'}
         
         for match in matches:
             func_name = match.group(1)
+            
+            if func_name in keywords:
+                continue
+                
             line_num = content[:match.start()].count('\n') + 1
             
             # Extract parameters
@@ -94,6 +121,13 @@ class CodeAnalyzer:
                 params_str = params_match.group(1)
                 params = [p.strip().split()[-1] for p in params_str.split(',') if p.strip()]
             
+            # Find closest parent class
+            current_class = None
+            for cls in reversed(classes):
+                if cls['start'] < match.start():
+                    current_class = cls['name']
+                    break
+            
             func_info = {
                 'name': func_name,
                 'type': 'function' if func_name not in ['main', 'constructor'] else 'entry',
@@ -102,7 +136,9 @@ class CodeAnalyzer:
                 'parameters': params,
                 'return_type': 'void',  # Default
                 'signature': content[match.start():match.end()].strip(),
-                'is_entry': func_name in ['main', 'constructor', 'init']
+                'is_entry': func_name in ['main', 'constructor', 'init'],
+                'class_name': current_class,
+                'package_name': package_name
             }
             functions.append(func_info)
             
@@ -115,7 +151,7 @@ class CodeAnalyzer:
             'dependencies': self._extract_imports_generic(content)
         }
     
-    def _analyze_php(self, content: str) -> Dict:
+    def _analyze_php(self, file_path: str, content: str) -> Dict:
         """Analyze PHP code"""
         functions = []
         entry_points = []
@@ -123,6 +159,15 @@ class CodeAnalyzer:
         # PHP function pattern
         func_pattern = r'(?:public|private|protected)?\s*function\s+(\w+)\s*\(([^)]*)\)'
         matches = re.finditer(func_pattern, content)
+        
+        # Class and namespace pattern
+        ns_match = re.search(r'namespace\s+([^;]+);', content)
+        package_name = ns_match.group(1).strip() if ns_match else None
+        
+        classes = []
+        class_pattern = r'class\s+(\w+)'
+        for m in re.finditer(class_pattern, content):
+            classes.append({'name': m.group(1), 'start': m.start()})
         
         for match in matches:
             func_name = match.group(1)
@@ -136,6 +181,13 @@ class CodeAnalyzer:
                 if param:
                     params.append(param.split()[-1] if ' ' in param else param)
             
+            # Find closest parent class
+            current_class = None
+            for cls in reversed(classes):
+                if cls['start'] < match.start():
+                    current_class = cls['name']
+                    break
+                    
             func_info = {
                 'name': func_name,
                 'type': 'function',
@@ -144,7 +196,9 @@ class CodeAnalyzer:
                 'parameters': params,
                 'return_type': 'mixed',
                 'signature': match.group(0),
-                'is_entry': func_name in ['main', 'index', 'run']
+                'is_entry': func_name in ['main', 'index', 'run'],
+                'class_name': current_class,
+                'package_name': package_name
             }
             functions.append(func_info)
             
