@@ -6,8 +6,6 @@
     <title>AIKodAnaliz - Kod Analiz Aracı</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.26.0/dist/cytoscape.umd.js"></script>
-    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -192,6 +190,9 @@
         </div>
     </div>
 
+    <!-- Load libraries before main.js -->
+    <script src="https://unpkg.com/cytoscape@3/dist/cytoscape.umd.js"></script>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <script src="/static/js/main.js"></script>
 </body>
 </html>

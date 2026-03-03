@@ -8,10 +8,10 @@ bp = Blueprint('diagram', __name__, url_prefix='/api/diagram')
 def get_diagram_data(project_id):
     """Get diagram data (nodes and edges)"""
     try:
-        # Get all functions
+        # Get all functions (exclude "if" statements - they're not real functions)
         func_rows = db.execute_query(
             '''SELECT id, function_name, function_type, file_id, ai_summary 
-            FROM functions WHERE project_id = ? LIMIT 50''',
+            FROM functions WHERE project_id = ? AND function_name != 'if' LIMIT 50''',
             (project_id,)
         )
         
