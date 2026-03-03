@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="tr">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,6 +8,7 @@
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
+
 <body>
     <div class="container">
         <!-- Login Section -->
@@ -15,27 +17,27 @@
                 <div class="login-box">
                     <h1>AIKodAnaliz</h1>
                     <p class="login-subtitle">Yapay Zeka Destekli Kod Analiz Aracı</p>
-                    
+
                     <form id="loginForm">
                         <div class="form-group">
                             <label>Kullanıcı Adı</label>
                             <input type="text" id="loginUsername" placeholder="admin veya demo" required>
                         </div>
-                        
+
                         <div class="form-group">
                             <label>Şifre</label>
                             <input type="password" id="loginPassword" placeholder="şifre" required>
                         </div>
-                        
+
                         <button type="submit" class="btn btn-primary btn-full">Giriş Yap</button>
                     </form>
-                    
+
                     <div class="login-info">
                         <p><strong>Demo Hesapları:</strong></p>
                         <p>👤 admin / admin123</p>
                         <p>👤 users / user123</p>
                     </div>
-                    
+
                     <div id="loginError" class="error-message" style="display:none;"></div>
                 </div>
             </div>
@@ -85,7 +87,7 @@
                     <h2 id="projectTitle"></h2>
                     <button class="btn btn-secondary" onclick="goBack()">← Geri</button>
                 </div>
-                
+
                 <div class="detail-content">
                     <!-- Tabs -->
                     <div class="tabs">
@@ -110,7 +112,8 @@
                     <!-- Functions Tab -->
                     <div class="tab-content" id="functionsTab" style="display:none;">
                         <div class="functions-search">
-                            <input type="text" id="searchFunctionsText" placeholder="Fonksiyon adı veya açıklamada ara..." class="search-input">
+                            <input type="text" id="searchFunctionsText"
+                                placeholder="Fonksiyon adı veya açıklamada ara..." class="search-input">
                         </div>
                         <div id="functionsList" class="functions-list">
                             <!-- Functions akan buraya yüklenecek -->
@@ -178,30 +181,34 @@
     </div>
 
     <!-- Modals -->
-    <div id="functionModal" class="modal" style="display:none;">
+    <div id="functionModal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="closeFunctionModal()">&times;</span>
             <h3 id="funcModalTitle"></h3>
-            
+
             <div id="funcModalContent">
                 <!-- Meta data will be injected here -->
             </div>
-            
+
             <div style="margin-top: 15px;">
                 <label style="font-weight: bold; display: block; margin-bottom: 5px;">Fonksiyon Özeti:</label>
-                <textarea id="funcModalSummary" style="width: 100%; height: 80px; font-family: inherit; padding: 8px; border-radius: 4px; border: 1px solid #ccc;"></textarea>
-                
+                <textarea id="funcModalSummary"
+                    style="width: 100%; height: 80px; font-family: inherit; padding: 8px; border-radius: 4px; border: 1px solid #ccc;"></textarea>
+
                 <div style="text-align: right; margin-top: 5px; margin-bottom: 15px;">
-                    <button class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;" onclick="saveFunctionSummary()">💾 Özeti Kaydet</button>
-                    <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px; margin-left: 5px;" onclick="generateAISummary()">🤖 AI Özeti Al</button>
+                    <button class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;"
+                        onclick="saveFunctionSummary()">💾 Özeti Kaydet</button>
+                    <button class="btn btn-secondary" style="padding: 5px 10px; font-size: 12px; margin-left: 5px;"
+                        onclick="generateAISummary()">🤖 AI Özeti Al</button>
                 </div>
             </div>
 
             <div style="margin-top: 15px;">
                 <label style="font-weight: bold; display: block; margin-bottom: 5px;">Kaynak Kod:</label>
-                <pre style="background: #282c34; color: #abb2bf; padding: 10px; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 13px; max-height: 250px; overflow-y: auto;"><code id="funcModalSource"></code></pre>
+                <pre
+                    style="background: #282c34; color: #abb2bf; padding: 10px; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 13px; max-height: 250px; overflow-y: auto;"><code id="funcModalSource"></code></pre>
             </div>
-            
+
             <div class="modal-actions" style="margin-top: 20px;">
                 <button class="btn btn-secondary" onclick="addMark()">📍 İşaret Koy</button>
             </div>
@@ -213,4 +220,5 @@
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <script src="/static/js/main.js"></script>
 </body>
+
 </html>
