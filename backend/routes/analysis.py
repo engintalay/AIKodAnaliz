@@ -92,9 +92,16 @@ def get_ai_summary(function_id):
         end_line = func['end_line']
         func_code = '\n'.join(lines[start_line:end_line])
         
-        # Get AI summary
+        # Check LMStudio connection first
         client = LMStudioClient()
-        summary = client.analyze_function(func_code, func['signature'])
+        connection_status = client.test_connection()
+        
+        if connection_status['status'] != 'connected':
+            # LMStudio not available - return error immediately without timeout
+            summary = f"⚠️ AI Analiz Hatası: {connection_status['message']}\n\nLMStudio sunucusu çalışmıyor. Lütfen LMStudio'yu başlatmaya çalışın (http://localhost:1234)"
+        else:
+            # Get AI summary
+            summary = client.analyze_function(func_code, func['signature'])
         
         # Save summary
         db.execute_update(
