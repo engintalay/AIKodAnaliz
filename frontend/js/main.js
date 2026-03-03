@@ -331,18 +331,42 @@ async function loadFunctions() {
 async function showFunctionDetails(functionId) {
     try {
         const response = await fetch(`${API_URL}/analysis/function/${functionId}`);
-        const func = await response.json();
+        let func = await response.json();
         
         const modal = document.getElementById('functionModal');
         document.getElementById('funcModalTitle').textContent = func.function_name;
+        
+        // Show loading UI
+        document.getElementById('funcModalContent').innerHTML = `
+            <p><strong>Tür:</strong> ${func.function_type}</p>
+            <p><strong>Parametreler:</strong> ${func.parameters || 'Yok'}</p>
+            <p><strong>Dönüş Tipi:</strong> ${func.return_type || 'Yok'}</p>
+            <p><strong>Özet:</strong> <em>Yükleniyor...</em></p>
+        `;
+        
+        modal.classList.add('visible');
+        
+        // If no AI summary, fetch it
+        if (!func.ai_summary || func.ai_summary.trim() === '') {
+            try {
+                const aiResponse = await fetch(`${API_URL}/analysis/function/${functionId}/ai-summary`, {
+                    method: 'POST'
+                });
+                const aiResult = await aiResponse.json();
+                func.ai_summary = aiResult.summary;
+            } catch (aiError) {
+                console.error('AI analiz hatası:', aiError);
+                func.ai_summary = 'AI analiz başarısız oldu';
+            }
+        }
+        
+        // Update modal with summary
         document.getElementById('funcModalContent').innerHTML = `
             <p><strong>Tür:</strong> ${func.function_type}</p>
             <p><strong>Parametreler:</strong> ${func.parameters || 'Yok'}</p>
             <p><strong>Dönüş Tipi:</strong> ${func.return_type || 'Yok'}</p>
             <p><strong>Özet:</strong> ${func.ai_summary || 'Henüz analiz edilmedi'}</p>
         `;
-        
-        modal.classList.add('visible');
     } catch (error) {
         console.error('Fonksiyon detayları yükleme hatası:', error);
     }
