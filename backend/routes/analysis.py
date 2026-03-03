@@ -2,7 +2,11 @@ from flask import Blueprint, request, jsonify
 from backend.database import db
 from backend.analyzers.code_analyzer import CodeAnalyzer
 from backend.lmstudio_client import LMStudioClient
+from backend.progress_tracker import progress_tracker
+from backend.logger import logger, log_analysis, log_ai_call, log_error
 import json
+import uuid
+import re
 
 bp = Blueprint('analysis', __name__, url_prefix='/api/analysis')
 
@@ -20,24 +24,34 @@ def test_lmstudio_connection():
 def analyze_project(project_id):
     """Analyze entire project"""
     try:
+        logger.info(f"Starting analysis for project {project_id}")
+        
         # Get all files in project
         rows = db.execute_query(
             'SELECT id, content, language, file_name FROM source_files WHERE project_id = ?',
             (project_id,)
         )
         
+        log_analysis(project_id, "Retrieved source files", count=len(rows))
+        
         analyzer = CodeAnalyzer()
         all_functions = []
         all_entry_points = []
         
-        for row in rows:
+        for idx, row in enumerate(rows):
             file_id = row[0]
             content = row[1]
             language = row[2]
             file_name = row[3]
             
+            logger.debug(f"[Project {project_id}] Analyzing file {idx+1}/{len(rows)}: {file_name}")
+            
             # Analyze file
             result = analyzer.analyze(file_name, content, language)
+            
+            log_analysis(project_id, f"Analyzed {file_name}", 
+                        functions_found=len(result.get('functions', [])),
+                        language=language)
             
             # Store functions
             for func in result.get('functions', []):
@@ -53,6 +67,7 @@ def analyze_project(project_id):
                     func.get('class_name'), func.get('package_name'))
                 )
                 all_functions.append(func_id)
+                logger.debug(f"[Project {project_id}] Stored function: {func['name']} (ID: {func_id})")
             
             # Store entry points
             for entry in result.get('entry_points', []):
@@ -63,8 +78,10 @@ def analyze_project(project_id):
                     (project_id, all_functions[-1] if all_functions else None, 'main')
                 )
                 
+        log_analysis(project_id, "Function extraction complete", total_functions=len(all_functions))
+        
         # --- SECOND PASS: Detect Function Calls ---
-        import re
+        logger.debug(f"[Project {project_id}] Starting dependency detection")
         
         # Get all functions with their file contents again to scan for calls
         funcs_query = db.execute_query(
@@ -76,12 +93,13 @@ def analyze_project(project_id):
         )
         
         funcs_data = [dict(row) for row in funcs_query]
+        dependencies_found = 0
         
         for caller in funcs_data:
             # Extract caller's block
             lines = caller['content'].split('\n')
             start = max(0, caller['start_line'] - 1)
-            end = caller['end_line']
+            end = min(len(lines), caller['end_line'])
             caller_code = '\n'.join(lines[start:end])
             
             # Check against all other functions
@@ -100,6 +118,13 @@ def analyze_project(project_id):
                         VALUES (?, ?, ?, ?)''',
                         (project_id, caller['id'], callee['id'], 'direct_call')
                     )
+                    dependencies_found += 1
+        
+        log_analysis(project_id, "Analysis complete", 
+                    functions=len(all_functions), 
+                    dependencies=dependencies_found)
+        
+        logger.info(f"Analysis completed for project {project_id}: {len(all_functions)} functions, {dependencies_found} dependencies")
         
         return jsonify({
             'message': 'Project analyzed',
@@ -108,12 +133,15 @@ def analyze_project(project_id):
         }), 200
     
     except Exception as e:
+        log_error(f"analyze_project (project: {project_id})", e)
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/function/<int:function_id>/ai-summary', methods=['POST'])
 def get_ai_summary(function_id):
     """Get AI summary for function"""
     try:
+        logger.info(f"Requesting AI summary for function {function_id}")
+        
         # Get function details
         row = db.execute_query(
             'SELECT f.*, s.content FROM functions f JOIN source_files s ON f.file_id = s.id WHERE f.id = ?',
@@ -121,6 +149,7 @@ def get_ai_summary(function_id):
         )
         
         if not row:
+            logger.warning(f"Function {function_id} not found")
             return jsonify({'error': 'Function not found'}), 404
         
         func = dict(row[0])
@@ -128,9 +157,11 @@ def get_ai_summary(function_id):
         # Extract function code
         content = func['content']
         lines = content.split('\n')
-        start_line = func['start_line'] - 1
-        end_line = func['end_line']
+        start_line = max(0, (func.get('start_line') or 1) - 1)
+        end_line = min(len(lines), func.get('end_line') or len(lines))
         func_code = '\n'.join(lines[start_line:end_line])
+        
+        log_ai_call(function_id, "Extracted function code", code_lines=end_line-start_line)
         
         # Check LMStudio connection first
         client = LMStudioClient()
@@ -139,15 +170,20 @@ def get_ai_summary(function_id):
         if connection_status['status'] != 'connected':
             # LMStudio not available - return error immediately without timeout
             summary = f"⚠️ AI Analiz Hatası: {connection_status['message']}\n\nLMStudio sunucusu çalışmıyor. Lütfen LMStudio'yu başlatmaya çalışın (http://localhost:1234)"
+            log_ai_call(function_id, "LMStudio not connected", error=connection_status['message'])
         else:
             # Get AI summary
+            log_ai_call(function_id, "Calling LMStudio API", signature=func['signature'])
             summary = client.analyze_function(func_code, func['signature'])
+            log_ai_call(function_id, "AI summary received", summary_length=len(summary))
         
         # Save summary
         db.execute_update(
             'UPDATE functions SET ai_summary = ? WHERE id = ?',
             (summary, function_id)
         )
+        
+        logger.info(f"AI summary generated and saved for function {function_id}")
         
         return jsonify({
             'function_id': function_id,
@@ -156,6 +192,7 @@ def get_ai_summary(function_id):
         }), 200
     
     except Exception as e:
+        log_error(f"get_ai_summary (function: {function_id})", e)
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/function/<int:function_id>', methods=['GET'])
@@ -180,7 +217,7 @@ def get_function_details(function_id):
         if func.get('content') and func.get('start_line') and func.get('end_line'):
             lines = func['content'].split('\n')
             start = max(0, func['start_line'] - 1)
-            end = func['end_line']
+            end = min(len(lines), func['end_line'])
             func['source_code'] = '\n'.join(lines[start:end])
         else:
             func['source_code'] = 'Kaynak kod bulunamadı veya ayrıştırılamadı.'

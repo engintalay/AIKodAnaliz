@@ -40,10 +40,6 @@ class LMStudioClient:
     def analyze_function(self, code: str, signature: str) -> str:
         """Get AI summary for a function"""
         
-        # Truncate code if too long
-        if len(code) > self.context_limit:
-            code = code[:self.context_limit] + "\n# ... (truncated)"
-        
         prompt = f"""You are a code analyzer. Analyze this function and provide a brief summary of what it does, its inputs, and outputs. Be concise and avoid repetition.
 
 Function Signature: {signature}
@@ -99,9 +95,6 @@ Summary:"""
     
     def suggest_improvements(self, code: str) -> str:
         """Get improvement suggestions for code"""
-        
-        if len(code) > self.context_limit:
-            code = code[:self.context_limit] + "\n# ... (truncated)"
         
         prompt = f"""Review this code and suggest 2-3 key improvements for readability, efficiency, or best practices. Be brief.
 

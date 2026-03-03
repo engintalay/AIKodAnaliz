@@ -390,6 +390,107 @@ body {
     flex: 1;
 }
 
+/* Message Modal */
+.message-modal {
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.message-modal.visible {
+    display: flex;
+}
+
+.message-modal-content {
+    background-color: #fefefe;
+    padding: 2rem;
+    border-radius: 12px;
+    max-width: 450px;
+    width: 90%;
+    position: relative;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    text-align: center;
+    animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-50px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.message-close {
+    position: absolute;
+    right: 1rem;
+    top: 1rem;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #7f8c8d;
+    line-height: 1;
+}
+
+.message-close:hover {
+    color: #e74c3c;
+}
+
+.message-modal-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    height: 50px;
+}
+
+.message-modal-content h3 {
+    color: #2c3e50;
+    margin-bottom: 0.5rem;
+    font-size: 1.3rem;
+}
+
+.message-modal-content p {
+    color: #555;
+    margin-bottom: 1.5rem;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.message-modal-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: center;
+}
+
+.message-modal-actions button {
+    min-width: 100px;
+}
+
+/* Message modal types */
+.message-modal.error .message-modal-content {
+    border-left: 4px solid #e74c3c;
+}
+
+.message-modal.success .message-modal-content {
+    border-left: 4px solid #27ae60;
+}
+
+.message-modal.info .message-modal-content {
+    border-left: 4px solid #3498db;
+}
+
+.message-modal.warning .message-modal-content {
+    border-left: 4px solid #f39c12;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .projects-grid {
@@ -450,4 +551,234 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
     background: #555;
+}
+
+/* Login Section */
+.login-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.login-box {
+    background: white;
+    padding: 3rem;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    max-width: 400px;
+    width: 90%;
+}
+
+.login-box h1 {
+    text-align: center;
+    color: #2c3e50;
+    margin-bottom: 0.5rem;
+}
+
+.login-subtitle {
+    text-align: center;
+    color: #7f8c8d;
+    margin-bottom: 2rem;
+    font-size: 0.9rem;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    color: #34495e;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #bdc3c7;
+    border-radius: 4px;
+    font-size: 1rem;
+}
+
+.btn-full {
+    width: 100%;
+    margin-top: 1rem;
+}
+
+.login-info {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: #ecf0f1;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+
+.login-info p {
+    margin: 0.25rem 0;
+}
+
+.error-message {
+    background: #e74c3c;
+    color: white;
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin-top: 1rem;
+    text-align: center;
+}
+
+/* Upload Progress Styles */
+.upload-progress-container {
+    background: white;
+    padding: 2rem;
+    border-radius: 8px;
+    max-width: 600px;
+    margin: 2rem 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.upload-progress-container h3 {
+    margin-bottom: 1rem;
+    color: #2c3e50;
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 30px;
+    background-color: #ecf0f1;
+    border-radius: 15px;
+    overflow: hidden;
+    margin-bottom: 1rem;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #3498db 0%, #2ecc71 100%);
+    width: 0%;
+    transition: width 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
+    font-size: 0.85rem;
+}
+
+.progress-text {
+    font-size: 1rem;
+    color: #2c3e50;
+    font-weight: 500;
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    background: #f8f9fa;
+    border-radius: 4px;
+}
+
+.progress-details {
+    max-height: 200px;
+    overflow-y: auto;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 0.75rem;
+    font-size: 0.85rem;
+}
+
+.progress-detail {
+    padding: 0.25rem 0;
+    color: #495057;
+    line-height: 1.5;
+}
+
+.progress-detail:not(:last-child) {
+    border-bottom: 1px solid #e9ecef;
+    margin-bottom: 0.25rem;
+    padding-bottom: 0.5rem;
+}
+
+/* Files List */
+.files-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.file-item {
+    background: #f9f9f9;
+    padding: 1rem;
+    border-left: 4px solid #95a5a6;
+    border-radius: 4px;
+}
+
+.file-item h4 {
+    color: #2c3e50;
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+}
+
+.file-item p {
+    font-size: 0.85rem;
+    color: #7f8c8d;
+    margin-bottom: 0.25rem;
+}
+
+.file-item small {
+    font-size: 0.8rem;
+    color: #95a5a6;
+}
+
+/* Detail Header */
+.detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+.detail-header h2 {
+    margin: 0;
+}
+
+/* Functions Search */
+.functions-search {
+    margin-bottom: 1rem;
+}
+
+.functions-search input {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #bdc3c7;
+    border-radius: 4px;
+    font-size: 1rem;
+}
+
+/* Package and Class Groups */
+.package-group {
+    margin-bottom: 1.5rem;
+}
+
+.package-header {
+    background: #2c3e50;
+    color: white;
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    margin-bottom: 0.5rem;
+}
+
+.class-group {
+    margin-left: 1rem;
+    border-left: 2px solid #3498db;
+    padding-left: 1rem;
+    margin-bottom: 1rem;
+}
+
+.class-header {
+    color: #2980b9;
+    margin: 0.75rem 0;
+    cursor: pointer;
+    user-select: none;
 }

@@ -3,6 +3,54 @@ let currentProjectId = null;
 let cy = null;
 
 // ============================================
+// SECTION: Message Modal Functions
+// ============================================
+
+function showMessage(title, message, type = 'info') {
+    const modal = document.getElementById('messageModal');
+    const iconElement = document.getElementById('messageIcon');
+    
+    // Set icon based on type
+    const icons = {
+        'error': '❌',
+        'success': '✅',
+        'info': 'ℹ️',
+        'warning': '⚠️'
+    };
+    
+    iconElement.textContent = icons[type] || '❌';
+    
+    // Set content
+    document.getElementById('messageTitle').textContent = title;
+    document.getElementById('messageText').textContent = message;
+    
+    // Remove old type classes and add new one
+    modal.className = 'message-modal visible ' + type;
+}
+
+function closeMessageModal() {
+    const modal = document.getElementById('messageModal');
+    modal.classList.remove('visible');
+}
+
+// Alias functions for compatibility with different message types
+function showError(title, message) {
+    showMessage(title, message, 'error');
+}
+
+function showSuccess(title, message) {
+    showMessage(title, message, 'success');
+}
+
+function showInfo(title, message) {
+    showMessage(title, message, 'info');
+}
+
+function showWarning(title, message) {
+    showMessage(title, message, 'warning');
+}
+
+// ============================================
 // SECTION: Utility Functions
 // ============================================
 
@@ -58,7 +106,7 @@ async function loadProjects() {
             projectsList.appendChild(card);
         });
     } catch (error) {
-        alert('Projeler yüklenirken hata: ' + error);
+        showError('Projeler Yükleme Hatası', 'Projeler yüklenirken hata oluştu: ' + error);
     }
 }
 
@@ -84,7 +132,7 @@ async function viewProject(projectId) {
         // Load files
         await loadFiles();
     } catch (error) {
-        alert('Proje açılırken hata: ' + error);
+        showError('Proje Açma Hatası', 'Proje açılırken hata oluştu: ' + error);
     }
 }
 
@@ -93,10 +141,10 @@ async function deleteProject(projectId) {
 
     try {
         await fetch(`${API_URL}/projects/${projectId}`, { method: 'DELETE' });
-        alert('Proje silindi');
+        showSuccess('Başarılı', 'Proje silindi');
         loadProjects();
     } catch (error) {
-        alert('Proje silinirken hata: ' + error);
+        showError('Silme Hatası', 'Proje silinirken hata oluştu: ' + error);
     }
 }
 
@@ -113,6 +161,83 @@ function showSettings() {
 // SECTION: Upload & Analysis
 // ============================================
 
+let uploadPolling = null;
+
+async function pollUploadProgress(taskId, projectId) {
+    const progressBar = document.getElementById('uploadProgressBar');
+    const progressText = document.getElementById('uploadProgressText');
+    const progressDetails = document.getElementById('uploadProgressDetails');
+    
+    const poll = async () => {
+        try {
+            const response = await fetch(`${API_URL}/projects/progress/${taskId}`);
+            
+            if (!response.ok) {
+                clearInterval(uploadPolling);
+                return;
+            }
+            
+            const progress = await response.json();
+            
+            // Update progress bar
+            if (progressBar) {
+                progressBar.style.width = `${progress.progress}%`;
+                progressBar.textContent = `${progress.progress}%`;
+            }
+            
+            // Update status text
+            if (progressText) {
+                progressText.textContent = progress.current_step || 'İşleniyor...';
+            }
+            
+            // Update details list
+            if (progressDetails && progress.details && progress.details.length > 0) {
+                const lastDetails = progress.details.slice(-5); // Show last 5 details
+                progressDetails.innerHTML = lastDetails.map(detail => 
+                    `<div class="progress-detail">• ${detail.message}</div>`
+                ).join('');
+                // Auto-scroll to bottom
+                progressDetails.scrollTop = progressDetails.scrollHeight;
+            }
+            
+            // Check if completed
+            if (progress.status === 'completed') {
+                clearInterval(uploadPolling);
+                
+                // Start analysis
+                progressText.textContent = 'Kod analizi başlatılıyor...';
+                
+                try {
+                    const analysisResponse = await fetch(`${API_URL}/analysis/project/${projectId}`, {
+                        method: 'POST'
+                    });
+                    const analysisResult = await analysisResponse.json();
+                    
+                    showSuccess('İşlem Tamamlandı', 
+                        `✓ Proje yüklendi ve analiz edildi!\n${analysisResult.functions_found} fonksiyon bulundu.`);
+                    
+                    document.getElementById('uploadForm').reset();
+                    document.getElementById('uploadProgress').style.display = 'none';
+                    loadProjects();
+                } catch (analysisError) {
+                    showError('Analiz Hatası', 'Analiz sırasında hata: ' + analysisError);
+                    document.getElementById('uploadProgress').style.display = 'none';
+                }
+            } else if (progress.status === 'failed') {
+                clearInterval(uploadPolling);
+                showError('Yükleme Başarısız', progress.current_step || 'Bilinmeyen hata');
+                document.getElementById('uploadProgress').style.display = 'none';
+            }
+        } catch (error) {
+            console.error('Progress polling error:', error);
+        }
+    };
+    
+    // Poll every 500ms
+    uploadPolling = setInterval(poll, 500);
+    poll(); // Initial call
+}
+
 document.getElementById('uploadForm')?.addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -121,7 +246,7 @@ document.getElementById('uploadForm')?.addEventListener('submit', async (e) => {
     const file = document.getElementById('projectFile').files[0];
 
     if (!file) {
-        alert('Lütfen bir dosya seçin');
+        showError('Dosya Seçilmedi', 'Lütfen bir dosya seçin');
         return;
     }
 
@@ -131,8 +256,22 @@ document.getElementById('uploadForm')?.addEventListener('submit', async (e) => {
     formData.append('description', desc);
 
     try {
-        document.getElementById('uploadProgress').style.display = 'block';
+        // Show progress UI
+        const progressSection = document.getElementById('uploadProgress');
+        progressSection.style.display = 'block';
+        
+        const progressBar = document.getElementById('uploadProgressBar');
+        const progressText = document.getElementById('uploadProgressText');
+        const progressDetails = document.getElementById('uploadProgressDetails');
+        
+        if (progressBar) {
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+        }
+        if (progressText) progressText.textContent = 'Yükleme başlatılıyor...';
+        if (progressDetails) progressDetails.innerHTML = '';
 
+        // Start upload
         const response = await fetch(`${API_URL}/projects/upload`, {
             method: 'POST',
             body: formData
@@ -140,24 +279,15 @@ document.getElementById('uploadForm')?.addEventListener('submit', async (e) => {
 
         const result = await response.json();
 
-        if (response.ok) {
-            alert(`Proje başarıyla yüklendi!\n${result.files_processed} dosya işlendi`);
-
-            // Analyze project
-            const analysisResponse = await fetch(`${API_URL}/analysis/project/${result.project_id}`, {
-                method: 'POST'
-            });
-            const analysisResult = await analysisResponse.json();
-            alert(`Analiz tamamlandı: ${analysisResult.functions_found} fonksiyon bulundu`);
-
-            document.getElementById('uploadForm').reset();
-            loadProjects();
+        if (response.ok && result.task_id) {
+            // Start polling for progress
+            pollUploadProgress(result.task_id, result.project_id);
         } else {
-            alert('Hata: ' + result.error);
+            showError('Yükleme Hatası', 'Hata: ' + (result.error || 'Bilinmeyen hata'));
+            progressSection.style.display = 'none';
         }
     } catch (error) {
-        alert('Yükleme hatası: ' + error);
-    } finally {
+        showError('Yükleme Hatası', 'Yükleme hatası oluştu: ' + error);
         document.getElementById('uploadProgress').style.display = 'none';
     }
 });
@@ -294,7 +424,7 @@ async function exportDiagram() {
         a.download = `diagram_${currentProjectId}.png`;
         a.click();
     } catch (error) {
-        alert('PNG dışa aktarımı hatayla sonuçlandı');
+        showError('Dışa Aktarma Hatası', 'PNG dışa aktarımı hatayla sonuçlandı');
     }
 }
 
@@ -438,13 +568,13 @@ async function saveFunctionSummary() {
         });
 
         if (response.ok) {
-            alert('Özet başarıyla kaydedildi!');
+            showSuccess('Başarılı', 'Özet başarıyla kaydedildi!');
             loadFunctions(); // Refresh lists behind the modal optionally
         } else {
-            alert('Kaydetme hatası oluştu.');
+            showError('Kaydetme Hatası', 'Kaydetme hatası oluştu.');
         }
     } catch (error) {
-        alert('Hata: ' + error);
+        showError('Hata', 'Hata: ' + error);
     }
 }
 
@@ -467,11 +597,11 @@ async function generateAISummary() {
             loadFunctions(); // optionally refresh list in background
         } else {
             summaryArea.value = oldText;
-            alert('AI analiz hatası: ' + aiResult.error);
+            showError('AI Analiz Hatası', 'AI analiz hatası: ' + aiResult.error);
         }
     } catch (error) {
         summaryArea.value = oldText;
-        alert('AI analiz bağlantı hatası: ' + error);
+        showError('Bağlantı Hatası', 'AI analiz bağlantı hatası: ' + error);
     } finally {
         summaryArea.disabled = false;
     }
@@ -566,10 +696,10 @@ async function addMark() {
                 comment: comment
             })
         });
-        alert('İşaret eklendi');
+        showSuccess('Başarılı', 'İşaret eklendi');
         loadMarks();
     } catch (error) {
-        alert('İşaret eklenirken hata: ' + error);
+        showError('İşaret Ekleme Hatası', 'İşaret eklenirken hata oluştu: ' + error);
     }
 }
 
@@ -635,9 +765,9 @@ async function saveLMSettings() {
                 })
             });
         }
-        alert('Ayarlar kaydedildi');
+        showSuccess('Başarılı', 'Ayarlar kaydedildi');
     } catch (error) {
-        alert('Ayarlar kaydedilirken hata: ' + error);
+        showError('Ayarlar Kaydetme Hatası', 'Ayarlar kaydedilirken hata oluştu: ' + error);
     }
 }
 

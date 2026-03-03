@@ -75,9 +75,17 @@
                     <input type="file" id="projectFile" accept=".zip" required>
                     <button type="submit" class="btn btn-primary">Yükle ve Analiz Et</button>
                 </form>
-                <div id="uploadProgress" style="display:none;">
-                    <p>Yükleniyor...</p>
-                    <progress id="uploadBar" max="100" value="0"></progress>
+                
+                <!-- Enhanced Progress Display -->
+                <div id="uploadProgress" class="upload-progress-container" style="display:none;">
+                    <h3>Yükleme İlerlemesi</h3>
+                    <div class="progress-bar-container">
+                        <div id="uploadProgressBar" class="progress-bar">0%</div>
+                    </div>
+                    <div id="uploadProgressText" class="progress-text">Başlatılıyor...</div>
+                    <div id="uploadProgressDetails" class="progress-details">
+                        <!-- Detailed steps will appear here -->
+                    </div>
                 </div>
             </div>
 
@@ -181,6 +189,19 @@
     </div>
 
     <!-- Modals -->
+    <!-- Message Modal for alerts and notifications -->
+    <div id="messageModal" class="message-modal">
+        <div class="message-modal-content">
+            <span class="message-close" onclick="closeMessageModal()">&times;</span>
+            <div class="message-modal-icon" id="messageIcon"></div>
+            <h3 id="messageTitle"></h3>
+            <p id="messageText"></p>
+            <div class="message-modal-actions">
+                <button class="btn btn-primary" onclick="closeMessageModal()">Tamam</button>
+            </div>
+        </div>
+    </div>
+
     <div id="functionModal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="closeFunctionModal()">&times;</span>

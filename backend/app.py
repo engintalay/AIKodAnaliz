@@ -9,11 +9,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.config import DATABASE_PATH, UPLOAD_DIR
 from backend.database import db
 from backend.routes import project, analysis, user, ai_settings, diagram
+from backend.logger import logger
 
 # Setup Flask app with static and template folders
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, 'frontend')
 STATIC_DIR = os.path.join(FRONTEND_DIR, '')
+LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 
 app = Flask(__name__, 
     static_folder=os.path.join(FRONTEND_DIR, ''),
@@ -24,6 +26,14 @@ CORS(app)
 
 # Ensure directories exist
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+logger.info("="*60)
+logger.info("AIKodAnaliz Backend Starting...")
+logger.info(f"Upload directory: {UPLOAD_DIR}")
+logger.info(f"Logs directory: {LOGS_DIR}")
+logger.info(f"Database: {DATABASE_PATH}")
+logger.info("="*60)
 
 # Register blueprints
 app.register_blueprint(project.bp)

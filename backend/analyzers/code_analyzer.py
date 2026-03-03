@@ -132,7 +132,7 @@ class CodeAnalyzer:
                 'name': func_name,
                 'type': 'function' if func_name not in ['main', 'constructor'] else 'entry',
                 'start_line': line_num,
-                'end_line': line_num + 5,  # Approximate
+                'end_line': self._find_block_end_line(content, match.start(), match.end(), line_num),
                 'parameters': params,
                 'return_type': 'void',  # Default
                 'signature': content[match.start():match.end()].strip(),
@@ -192,7 +192,7 @@ class CodeAnalyzer:
                 'name': func_name,
                 'type': 'function',
                 'start_line': line_num,
-                'end_line': line_num + 10,
+                'end_line': self._find_block_end_line(content, match.start(), match.end(), line_num),
                 'parameters': params,
                 'return_type': 'mixed',
                 'signature': match.group(0),
@@ -235,7 +235,7 @@ class CodeAnalyzer:
                 'name': func_name,
                 'type': 'function',
                 'start_line': line_num,
-                'end_line': line_num + 1,
+                'end_line': self._find_block_end_line(content, match.start(), match.end(), line_num),
                 'parameters': match.group(2).split(','),
                 'return_type': None,
                 'signature': match.group(0),
@@ -280,3 +280,47 @@ class CodeAnalyzer:
             if match:
                 imports.append(match.group(1))
         return imports
+
+    def _find_block_end_line(self, content: str, match_start: int, match_end: int, start_line: int) -> int:
+        """Find end line of a function-like block by balancing braces from match position."""
+        open_idx = content.find('{', match_end)
+
+        if open_idx == -1:
+            return start_line
+
+        depth = 0
+        in_single_quote = False
+        in_double_quote = False
+        escaped = False
+
+        for i in range(open_idx, len(content)):
+            ch = content[i]
+
+            if escaped:
+                escaped = False
+                continue
+
+            if ch == '\\':
+                escaped = True
+                continue
+
+            if ch == "'" and not in_double_quote:
+                in_single_quote = not in_single_quote
+                continue
+
+            if ch == '"' and not in_single_quote:
+                in_double_quote = not in_double_quote
+                continue
+
+            if in_single_quote or in_double_quote:
+                continue
+
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    return content[:i + 1].count('\n') + 1
+
+        # Fallback if block is not balanced
+        return content.count('\n') + 1
