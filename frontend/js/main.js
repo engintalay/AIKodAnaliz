@@ -168,6 +168,21 @@ document.getElementById('uploadForm')?.addEventListener('submit', async (e) => {
 
 async function loadDiagramData() {
     try {
+        // Check if Cytoscape is loaded
+        if (typeof cytoscape === 'undefined') {
+            console.error('Cytoscape library not loaded. Waiting...');
+            // Wait for Cytoscape to load
+            await new Promise(resolve => {
+                const checkInterval = setInterval(() => {
+                    if (typeof cytoscape !== 'undefined') {
+                        clearInterval(checkInterval);
+                        resolve();
+                    }
+                }, 100);
+                setTimeout(() => clearInterval(checkInterval), 5000); // 5 second timeout
+            });
+        }
+        
         const response = await fetch(`${API_URL}/diagram/project/${currentProjectId}`);
         const data = await response.json();
         
