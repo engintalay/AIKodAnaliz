@@ -586,11 +586,11 @@ async function loadFunctions() {
                     const calledBy = Array.isArray(func.called_by_functions) ? func.called_by_functions : [];
 
                     const calledHtml = called.length > 0
-                        ? called.map(c => `<span class="dep-chip">${c.function_name}</span>`).join(' ')
+                        ? called.map(c => `<span class="dep-chip" data-func-id="${c.id}" style="cursor: pointer;">${c.function_name}</span>`).join(' ')
                         : '<span class="dep-empty">Yok</span>';
 
                     const calledByHtml = calledBy.length > 0
-                        ? calledBy.map(c => `<span class="dep-chip dep-chip-caller">${c.function_name}</span>`).join(' ')
+                        ? calledBy.map(c => `<span class="dep-chip dep-chip-caller" data-func-id="${c.id}" style="cursor: pointer;">${c.function_name}</span>`).join(' ')
                         : '<span class="dep-empty">Yok</span>';
 
                     const item = document.createElement('div');
@@ -610,6 +610,20 @@ async function loadFunctions() {
                     `;
                     item.onclick = () => showFunctionDetails(func.id);
                     clsContent.appendChild(item);
+                    
+                    // Attach click handlers to dependency chips
+                    item.querySelectorAll('.dep-chip[data-func-id]').forEach(chip => {
+                        chip.onclick = (e) => {
+                            e.stopPropagation(); // Prevent triggering parent click
+                            const funcId = chip.dataset.funcId;
+                            if (funcId) {
+                                showFunctionDetails(parseInt(funcId));
+                            }
+                        };
+                        chip.style.transition = 'all 0.2s';
+                        chip.onmouseover = () => chip.style.opacity = '0.7';
+                        chip.onmouseout = () => chip.style.opacity = '1';
+                    });
                 });
                 pkgContent.appendChild(clsDiv);
             }
@@ -635,11 +649,32 @@ async function showFunctionDetails(functionId) {
         const modal = document.getElementById('functionModal');
         document.getElementById('funcModalTitle').textContent = func.function_name;
 
-        // Meta info display
+        // Build dependency chips HTML
+        const called = Array.isArray(func.called_functions) ? func.called_functions : [];
+        const calledBy = Array.isArray(func.called_by_functions) ? func.called_by_functions : [];
+
+        const calledHtml = called.length > 0
+            ? called.map(c => `<span class="dep-chip" data-func-id="${c.id}" style="cursor: pointer; margin: 2px 4px 2px 0;">${c.function_name}</span>`).join('')
+            : '<span class="dep-empty">Yok</span>';
+
+        const calledByHtml = calledBy.length > 0
+            ? calledBy.map(c => `<span class="dep-chip dep-chip-caller" data-func-id="${c.id}" style="cursor: pointer; margin: 2px 4px 2px 0;">${c.function_name}</span>`).join('')
+            : '<span class="dep-empty">Yok</span>';
+
+        // Meta info display with dependencies
         document.getElementById('funcModalContent').innerHTML = `
             <p><strong>Tür:</strong> ${func.function_type}</p>
             <p><strong>Parametreler:</strong> ${Array.isArray(func.parameters) ? func.parameters.join(', ') : (func.parameters || 'Yok')}</p>
             <p><strong>Dönüş Tipi:</strong> ${func.return_type || 'Yok'}</p>
+            <hr style="margin: 15px 0; border: none; border-top: 1px solid #ddd;">
+            <div style="margin-top: 15px;">
+                <p><strong>Çağırdığı Fonksiyonlar:</strong></p>
+                <div style="padding: 8px 0;">${calledHtml}</div>
+            </div>
+            <div style="margin-top: 15px;">
+                <p><strong>Bunu Çağıran Fonksiyonlar:</strong></p>
+                <div style="padding: 8px 0;">${calledByHtml}</div>
+            </div>
         `;
 
         // Update Text Areas
@@ -647,6 +682,22 @@ async function showFunctionDetails(functionId) {
         document.getElementById('funcModalSource').textContent = func.source_code || 'Kaynak kod yok.';
 
         modal.classList.add('visible');
+
+        // Attach click handlers to dependency chips in modal
+        setTimeout(() => {
+            modal.querySelectorAll('.dep-chip[data-func-id]').forEach(chip => {
+                chip.onclick = (e) => {
+                    e.stopPropagation();
+                    const funcId = chip.dataset.funcId;
+                    if (funcId) {
+                        showFunctionDetails(parseInt(funcId));
+                    }
+                };
+                chip.style.transition = 'all 0.2s';
+                chip.onmouseover = () => chip.style.opacity = '0.7';
+                chip.onmouseout = () => chip.style.opacity = '1';
+            });
+        }, 0);
     } catch (error) {
         console.error('Fonksiyon detayları yükleme hatası:', error);
     }

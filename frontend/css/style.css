@@ -272,11 +272,35 @@ body {
     font-size: 0.75rem;
     margin-right: 6px;
     margin-top: 4px;
+    border: 1px solid #a9d0e9;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.dep-chip:hover {
+    background: #d1e9f7;
+    color: #0d3d66;
+    border-color: #5fa3c8;
+    transform: translateY(-2px);
+    box-shadow: 0 2px 6px rgba(33, 97, 140, 0.2);
+}
+
+.dep-chip:active {
+    transform: translateY(0);
 }
 
 .dep-chip-caller {
     background: #eafaf1;
     color: #1e8449;
+    border-color: #a7d8c4;
+}
+
+.dep-chip-caller:hover {
+    background: #d5f5e7;
+    color: #0d4c23;
+    border-color: #52b788;
+    transform: translateY(-2px);
+    box-shadow: 0 2px 6px rgba(30, 132, 73, 0.2);
 }
 
 .dep-empty {
