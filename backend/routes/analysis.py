@@ -6,6 +6,16 @@ import json
 
 bp = Blueprint('analysis', __name__, url_prefix='/api/analysis')
 
+@bp.route('/test-connection', methods=['GET'])
+def test_lmstudio_connection():
+    """Test LMStudio connection"""
+    try:
+        client = LMStudioClient()
+        status = client.test_connection()
+        return jsonify(status), 200 if status['status'] == 'connected' else 503
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @bp.route('/project/<int:project_id>', methods=['POST'])
 def analyze_project(project_id):
     """Analyze entire project"""
