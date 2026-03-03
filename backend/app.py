@@ -33,6 +33,17 @@ logger.info("AIKodAnaliz Backend Starting...")
 logger.info(f"Upload directory: {UPLOAD_DIR}")
 logger.info(f"Logs directory: {LOGS_DIR}")
 logger.info(f"Database: {DATABASE_PATH}")
+
+# Check analyzer status
+try:
+    from backend.analyzers.advanced_analyzer import TREE_SITTER_REQUIRED
+    if TREE_SITTER_REQUIRED:
+        logger.info("✓ Tree-Sitter analyzer: AVAILABLE")
+    else:
+        logger.warning("⚠ Tree-Sitter analyzer: NOT AVAILABLE")
+except Exception as e:
+    logger.warning(f"⚠ Tree-Sitter check failed: {e}")
+
 logger.info("="*60)
 
 # Register blueprints

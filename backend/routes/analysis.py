@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 from backend.database import db
-from backend.analyzers.code_analyzer import CodeAnalyzer
+from backend.analyzers.advanced_analyzer import AdvancedCodeAnalyzer
 from backend.lmstudio_client import LMStudioClient
 from backend.progress_tracker import progress_tracker
 from backend.logger import logger, log_analysis, log_ai_call, log_error
@@ -23,8 +23,18 @@ def test_lmstudio_connection():
 @bp.route('/project/<int:project_id>', methods=['POST'])
 def analyze_project(project_id):
     """Analyze entire project"""
+    task_id = request.args.get('task_id')
     try:
         logger.info(f"Starting analysis for project {project_id}")
+        
+        if task_id:
+            progress_tracker.start_task(task_id, total_steps=100)
+            progress_tracker.update(
+                task_id,
+                progress=2,
+                step='Analiz hazırlanıyor...',
+                detail=f'Proje {project_id} için analiz başlatıldı'
+            )
         
         # Get all files in project
         rows = db.execute_query(
@@ -32,11 +42,22 @@ def analyze_project(project_id):
             (project_id,)
         )
         
+        if task_id:
+            progress_tracker.update(
+                task_id,
+                progress=8,
+                step='Kaynak dosyalar alındı',
+                detail=f'Toplam {len(rows)} dosya analiz kuyruğunda'
+            )
+        
         log_analysis(project_id, "Retrieved source files", count=len(rows))
         
-        analyzer = CodeAnalyzer()
+        analyzer = AdvancedCodeAnalyzer()
         all_functions = []
         all_entry_points = []
+        skipped_unsupported = 0
+        skipped_with_error = 0
+        total_files = len(rows) if rows else 1
         
         for idx, row in enumerate(rows):
             file_id = row[0]
@@ -45,13 +66,54 @@ def analyze_project(project_id):
             file_name = row[3]
             
             logger.debug(f"[Project {project_id}] Analyzing file {idx+1}/{len(rows)}: {file_name}")
+            if task_id:
+                file_progress = 10 + int(((idx + 1) / total_files) * 70)
+                progress_tracker.update(
+                    task_id,
+                    progress=file_progress,
+                    step=f'Analiz ediliyor: {file_name} ({idx+1}/{len(rows)})',
+                    detail=f'Dosya işleniyor: {file_name}'
+                )
             
-            # Analyze file
-            result = analyzer.analyze(file_name, content, language)
+            # Analyze file. Unsupported languages should not abort the whole project analysis.
+            try:
+                result = analyzer.analyze(file_name, content, language)
+            except ValueError as e:
+                skipped_unsupported += 1
+                logger.debug(
+                    f"[Project {project_id}] Skipped unsupported file: {file_name} "
+                    f"(language={language}, reason={e})"
+                )
+                if task_id:
+                    progress_tracker.update(
+                        task_id,
+                        detail=f'Atlandı (desteklenmeyen dil): {file_name} [{language}]'
+                    )
+                continue
+            except Exception as e:
+                skipped_with_error += 1
+                logger.warning(
+                    f"[Project {project_id}] File analysis failed: {file_name} "
+                    f"(language={language}, error={e})"
+                )
+                if task_id:
+                    progress_tracker.update(
+                        task_id,
+                        detail=f'Atlandı (analiz hatası): {file_name}'
+                    )
+                continue
             
             log_analysis(project_id, f"Analyzed {file_name}", 
                         functions_found=len(result.get('functions', [])),
                         language=language)
+            if task_id:
+                progress_tracker.update(
+                    task_id,
+                    detail=(
+                        f'Analiz tamam: {file_name} | '
+                        f"{len(result.get('functions', []))} fonksiyon"
+                    )
+                )
             
             # Store functions
             for func in result.get('functions', []):
@@ -79,6 +141,19 @@ def analyze_project(project_id):
                 )
                 
         log_analysis(project_id, "Function extraction complete", total_functions=len(all_functions))
+        if task_id:
+            progress_tracker.update(
+                task_id,
+                progress=85,
+                step='Fonksiyon çağrıları çıkarılıyor...',
+                detail='Bağımlılık analizi başlatıldı'
+            )
+        log_analysis(
+            project_id,
+            "Files skipped during analysis",
+            unsupported=skipped_unsupported,
+            failed=skipped_with_error
+        )
         
         # --- SECOND PASS: Detect Function Calls ---
         logger.debug(f"[Project {project_id}] Starting dependency detection")
@@ -123,16 +198,29 @@ def analyze_project(project_id):
         log_analysis(project_id, "Analysis complete", 
                     functions=len(all_functions), 
                     dependencies=dependencies_found)
+        if task_id:
+            progress_tracker.complete(
+                task_id,
+                success=True,
+                message=(
+                    f'Analiz tamamlandı: {len(all_functions)} fonksiyon, '
+                    f'{dependencies_found} bağımlılık'
+                )
+            )
         
         logger.info(f"Analysis completed for project {project_id}: {len(all_functions)} functions, {dependencies_found} dependencies")
         
         return jsonify({
             'message': 'Project analyzed',
             'functions_found': len(all_functions),
-            'entry_points_found': len(all_entry_points)
+            'entry_points_found': len(all_entry_points),
+            'files_skipped_unsupported': skipped_unsupported,
+            'files_skipped_failed': skipped_with_error
         }), 200
     
     except Exception as e:
+        if task_id:
+            progress_tracker.complete(task_id, success=False, message=f'Analiz hatası: {e}')
         log_error(f"analyze_project (project: {project_id})", e)
         return jsonify({'error': str(e)}), 500
 

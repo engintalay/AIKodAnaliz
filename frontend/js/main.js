@@ -162,6 +162,7 @@ function showSettings() {
 // ============================================
 
 let uploadPolling = null;
+let analysisPolling = null;
 
 async function pollUploadProgress(taskId, projectId) {
     const progressBar = document.getElementById('uploadProgressBar');
@@ -204,25 +205,9 @@ async function pollUploadProgress(taskId, projectId) {
             if (progress.status === 'completed') {
                 clearInterval(uploadPolling);
                 
-                // Start analysis
+                // Start analysis with its own progress task
                 progressText.textContent = 'Kod analizi başlatılıyor...';
-                
-                try {
-                    const analysisResponse = await fetch(`${API_URL}/analysis/project/${projectId}`, {
-                        method: 'POST'
-                    });
-                    const analysisResult = await analysisResponse.json();
-                    
-                    showSuccess('İşlem Tamamlandı', 
-                        `✓ Proje yüklendi ve analiz edildi!\n${analysisResult.functions_found} fonksiyon bulundu.`);
-                    
-                    document.getElementById('uploadForm').reset();
-                    document.getElementById('uploadProgress').style.display = 'none';
-                    loadProjects();
-                } catch (analysisError) {
-                    showError('Analiz Hatası', 'Analiz sırasında hata: ' + analysisError);
-                    document.getElementById('uploadProgress').style.display = 'none';
-                }
+                startAnalysisWithProgress(projectId);
             } else if (progress.status === 'failed') {
                 clearInterval(uploadPolling);
                 showError('Yükleme Başarısız', progress.current_step || 'Bilinmeyen hata');
@@ -236,6 +221,100 @@ async function pollUploadProgress(taskId, projectId) {
     // Poll every 500ms
     uploadPolling = setInterval(poll, 500);
     poll(); // Initial call
+}
+
+async function startAnalysisWithProgress(projectId) {
+    const progressBar = document.getElementById('uploadProgressBar');
+    const progressText = document.getElementById('uploadProgressText');
+    const progressDetails = document.getElementById('uploadProgressDetails');
+    const progressTitle = document.querySelector('#uploadProgress h3');
+
+    if (progressTitle) {
+        progressTitle.textContent = 'Analiz İlerlemesi';
+    }
+
+    const analysisTaskId = (window.crypto && window.crypto.randomUUID)
+        ? window.crypto.randomUUID()
+        : `analysis-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
+    if (progressBar) {
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+    }
+    if (progressText) {
+        progressText.textContent = 'Analiz görevi oluşturuluyor...';
+    }
+    if (progressDetails) {
+        progressDetails.innerHTML = '<div class="progress-detail">• Analiz başlatılıyor...</div>';
+    }
+
+    const poll = async () => {
+        try {
+            const response = await fetch(`${API_URL}/projects/progress/${analysisTaskId}`);
+            if (!response.ok) return;
+
+            const progress = await response.json();
+
+            if (progressBar) {
+                progressBar.style.width = `${progress.progress}%`;
+                progressBar.textContent = `${progress.progress}%`;
+            }
+
+            if (progressText) {
+                progressText.textContent = progress.current_step || 'Analiz sürüyor...';
+            }
+
+            if (progressDetails && progress.details && progress.details.length > 0) {
+                const lastDetails = progress.details.slice(-8);
+                progressDetails.innerHTML = lastDetails.map(detail =>
+                    `<div class="progress-detail">• ${detail.message}</div>`
+                ).join('');
+                progressDetails.scrollTop = progressDetails.scrollHeight;
+            }
+
+            if (progress.status === 'completed') {
+                clearInterval(analysisPolling);
+            }
+
+            if (progress.status === 'failed') {
+                clearInterval(analysisPolling);
+            }
+        } catch (error) {
+            console.error('Analysis progress polling error:', error);
+        }
+    };
+
+    analysisPolling = setInterval(poll, 500);
+    poll();
+
+    try {
+        const analysisResponse = await fetch(
+            `${API_URL}/analysis/project/${projectId}?task_id=${encodeURIComponent(analysisTaskId)}`,
+            { method: 'POST' }
+        );
+        const analysisResult = await analysisResponse.json();
+
+        clearInterval(analysisPolling);
+
+        if (!analysisResponse.ok) {
+            throw new Error(analysisResult.error || 'Bilinmeyen analiz hatası');
+        }
+
+        showSuccess(
+            'İşlem Tamamlandı',
+            `✓ Proje yüklendi ve analiz edildi!\n` +
+            `${analysisResult.functions_found} fonksiyon bulundu.\n` +
+            `Atlanan (desteklenmeyen): ${analysisResult.files_skipped_unsupported || 0}`
+        );
+
+        document.getElementById('uploadForm').reset();
+        document.getElementById('uploadProgress').style.display = 'none';
+        loadProjects();
+    } catch (analysisError) {
+        clearInterval(analysisPolling);
+        showError('Analiz Hatası', 'Analiz sırasında hata: ' + analysisError.message);
+        document.getElementById('uploadProgress').style.display = 'none';
+    }
 }
 
 document.getElementById('uploadForm')?.addEventListener('submit', async (e) => {
@@ -263,6 +342,8 @@ document.getElementById('uploadForm')?.addEventListener('submit', async (e) => {
         const progressBar = document.getElementById('uploadProgressBar');
         const progressText = document.getElementById('uploadProgressText');
         const progressDetails = document.getElementById('uploadProgressDetails');
+        const progressTitle = document.querySelector('#uploadProgress h3');
+        if (progressTitle) progressTitle.textContent = 'Yükleme İlerlemesi';
         
         if (progressBar) {
             progressBar.style.width = '0%';
