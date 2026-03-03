@@ -1,4 +1,5 @@
-const API_URL = 'http://localhost:5000/api';
+// API URL: Use current hostname/port dynamically, but override /api path on root
+const API_URL = `${window.location.protocol}//${window.location.host}/api`;
 let currentProjectId = null;
 let cy = null;
 
