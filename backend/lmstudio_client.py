@@ -11,6 +11,8 @@ class LMStudioClient:
         self.temperature = LMSTUDIO_TEMPERATURE
         self.top_p = LMSTUDIO_TOP_P
         self.context_limit = CONTEXT_LIMIT_TOKENS
+        # Local models can have long first-token delays while loading.
+        self.request_timeout = 120
     
     def test_connection(self) -> dict:
         """Test connection to LMStudio"""
@@ -40,7 +42,8 @@ class LMStudioClient:
     def analyze_function(self, code: str, signature: str) -> str:
         """Get AI summary for a function"""
         
-        prompt = f"""You are a code analyzer. Analyze this function and provide a brief summary of what it does, its inputs, and outputs. Be concise and avoid repetition.
+        prompt = f"""Bu fonksiyonu analiz et ve SADECE TÜRKÇE yanıt ver.
+    Kısa, net ve tekrar etmeyen bir özet üret.
 
 Function Signature: {signature}
 
@@ -49,7 +52,7 @@ Code:
 {code}
 ```
 
-Provide a clear, concise summary (max 200 words) of:
+En fazla 200 kelimeyle şunları açıkla:
 1. What the function does
 2. Input parameters and their purpose
 3. Return value/output
@@ -64,6 +67,10 @@ Summary:"""
                 json={
                     "model": "local-model",
                     "messages": [
+                        {
+                            "role": "system",
+                            "content": "Yanıt dili zorunlu olarak Türkçe olmalı. İngilizce veya başka dil kullanma."
+                        },
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": self.temperature,
@@ -71,7 +78,7 @@ Summary:"""
                     "max_tokens": self.max_tokens,
                     "stream": False
                 },
-                timeout=30
+                timeout=self.request_timeout
             )
             
             if response.status_code == 200:
@@ -87,7 +94,10 @@ Summary:"""
                 return f"Error: LMStudio returned {response.status_code}"
         
         except requests.exceptions.Timeout:
-            return "Error: LMStudio request timed out. Check if model is loaded."
+            return (
+                f"Error: LMStudio request timed out after {self.request_timeout} seconds. "
+                "Model yüklü ve hazır olduğundan emin olun."
+            )
         except requests.exceptions.ConnectionError:
             return "Error: Cannot connect to LMStudio. Make sure it's running."
         except Exception as e:
@@ -112,13 +122,17 @@ Suggestions:"""
                 json={
                     "model": "local-model",
                     "messages": [
+                        {
+                            "role": "system",
+                            "content": "Yanıt dili zorunlu olarak Türkçe olmalı. İngilizce veya başka dil kullanma."
+                        },
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": self.temperature,
                     "max_tokens": 500,
                     "stream": False
                 },
-                timeout=30
+                timeout=self.request_timeout
             )
             
             if response.status_code == 200:

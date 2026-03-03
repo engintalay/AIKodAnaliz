@@ -581,6 +581,17 @@ async function loadFunctions() {
                 clsDiv.appendChild(clsContent);
 
                 funcs.forEach(func => {
+                    const called = Array.isArray(func.called_functions) ? func.called_functions : [];
+                    const calledBy = Array.isArray(func.called_by_functions) ? func.called_by_functions : [];
+
+                    const calledHtml = called.length > 0
+                        ? called.map(c => `<span class="dep-chip">${c.function_name}</span>`).join(' ')
+                        : '<span class="dep-empty">Yok</span>';
+
+                    const calledByHtml = calledBy.length > 0
+                        ? calledBy.map(c => `<span class="dep-chip dep-chip-caller">${c.function_name}</span>`).join(' ')
+                        : '<span class="dep-empty">Yok</span>';
+
                     const item = document.createElement('div');
                     item.className = 'function-item searchable-item';
                     item.dataset.search = `${func.function_name} ${func.ai_summary || ''}`.toLowerCase();
@@ -590,6 +601,10 @@ async function loadFunctions() {
                         <div class="function-meta">
                             Satırlar: ${func.start_line}-${func.end_line}
                             <br/><small>Dosya: ${func.file_path || 'Bilinmiyor'}</small>
+                            <div class="function-deps">
+                                <div><strong>Çağırdığı Fonksiyonlar:</strong> ${calledHtml}</div>
+                                <div><strong>Bunu Çağıran Fonksiyonlar:</strong> ${calledByHtml}</div>
+                            </div>
                         </div>
                     `;
                     item.onclick = () => showFunctionDetails(func.id);

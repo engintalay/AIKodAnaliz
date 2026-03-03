@@ -8,6 +8,12 @@ import json
 import uuid
 import re
 
+CALL_NAME_PATTERN = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(')
+CALL_KEYWORDS = {
+    'if', 'for', 'while', 'switch', 'catch', 'return', 'new', 'super', 'this',
+    'else', 'try', 'throw', 'typeof', 'sizeof'
+}
+
 bp = Blueprint('analysis', __name__, url_prefix='/api/analysis')
 
 @bp.route('/test-connection', methods=['GET'])
@@ -157,6 +163,9 @@ def analyze_project(project_id):
         
         # --- SECOND PASS: Detect Function Calls ---
         logger.debug(f"[Project {project_id}] Starting dependency detection")
+
+        # Rebuild dependencies for this project on each analysis run.
+        db.execute_update('DELETE FROM function_calls WHERE project_id = ?', (project_id,))
         
         # Get all functions with their file contents again to scan for calls
         funcs_query = db.execute_query(
@@ -170,29 +179,39 @@ def analyze_project(project_id):
         funcs_data = [dict(row) for row in funcs_query]
         dependencies_found = 0
         
+        inserted_pairs = set()
         for caller in funcs_data:
             # Extract caller's block
             lines = caller['content'].split('\n')
             start = max(0, caller['start_line'] - 1)
             end = min(len(lines), caller['end_line'])
             caller_code = '\n'.join(lines[start:end])
+
+            # Find all call-like names: foo(...)
+            called_names = {
+                match.group(1)
+                for match in CALL_NAME_PATTERN.finditer(caller_code)
+                if match.group(1) not in CALL_KEYWORDS
+            }
             
             # Check against all other functions
             for callee in funcs_data:
                 # Basic check: Don't link function to itself
                 if caller['id'] == callee['id']:
                     continue
-                
-                # Check for usage of callee['function_name'] in caller's block
-                # Search for word boundaries + function name + opening parenthesis
-                call_pattern = r'\b' + re.escape(callee['function_name']) + r'\s*\('
-                if re.search(call_pattern, caller_code):
+
+                if callee['function_name'] in called_names:
+                    pair = (caller['id'], callee['id'])
+                    if pair in inserted_pairs:
+                        continue
+
                     db.execute_insert(
                         '''INSERT INTO function_calls 
                         (project_id, caller_function_id, callee_function_id, call_type)
                         VALUES (?, ?, ?, ?)''',
                         (project_id, caller['id'], callee['id'], 'direct_call')
                     )
+                    inserted_pairs.add(pair)
                     dependencies_found += 1
         
         log_analysis(project_id, "Analysis complete", 
@@ -319,6 +338,24 @@ def get_function_details(function_id):
                 func['parameters'] = json.loads(func['parameters'])
             except:
                 func['parameters'] = func['parameters'].split(',')
+
+        # Add call graph neighbors for function detail view
+        called_rows = db.execute_query(
+            '''SELECT f2.id, f2.function_name
+               FROM function_calls fc
+               JOIN functions f2 ON fc.callee_function_id = f2.id
+               WHERE fc.caller_function_id = ?''',
+            (function_id,)
+        )
+        caller_rows = db.execute_query(
+            '''SELECT f1.id, f1.function_name
+               FROM function_calls fc
+               JOIN functions f1 ON fc.caller_function_id = f1.id
+               WHERE fc.callee_function_id = ?''',
+            (function_id,)
+        )
+        func['called_functions'] = [dict(row) for row in called_rows]
+        func['called_by_functions'] = [dict(row) for row in caller_rows]
         
         return jsonify(func), 200
     
@@ -361,6 +398,38 @@ def get_project_functions(project_id):
             (project_id,)
         )
         functions = [dict(row) for row in rows]
+
+        # Build caller/callee maps for function tab
+        dep_rows = db.execute_query(
+            '''SELECT fc.caller_function_id, fc.callee_function_id,
+                      caller.function_name AS caller_name,
+                      callee.function_name AS callee_name
+               FROM function_calls fc
+               JOIN functions caller ON caller.id = fc.caller_function_id
+               JOIN functions callee ON callee.id = fc.callee_function_id
+               WHERE fc.project_id = ?''',
+            (project_id,)
+        )
+
+        called_map = {}
+        caller_map = {}
+        for dep in dep_rows:
+            caller_id = dep['caller_function_id']
+            callee_id = dep['callee_function_id']
+            called_map.setdefault(caller_id, []).append({
+                'id': callee_id,
+                'function_name': dep['callee_name']
+            })
+            caller_map.setdefault(callee_id, []).append({
+                'id': caller_id,
+                'function_name': dep['caller_name']
+            })
+
+        for func in functions:
+            func_id = func['id']
+            func['called_functions'] = called_map.get(func_id, [])
+            func['called_by_functions'] = caller_map.get(func_id, [])
+
         return jsonify(functions), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
