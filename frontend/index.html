@@ -204,8 +204,13 @@
 
     <div id="functionModal" class="modal">
         <div class="modal-content">
-            <span class="close" onclick="closeFunctionModal()">&times;</span>
-            <h3 id="funcModalTitle"></h3>
+            <div class="modal-header">
+                <h3 id="funcModalTitle" style="margin: 0;"></h3>
+                <div class="modal-controls">
+                    <button class="modal-btn" onclick="toggleFullscreenModal()" title="Tam Ekran (F11)" id="fullscreenBtn">⛶</button>
+                    <span class="close" onclick="closeFunctionModal()">&times;</span>
+                </div>
+            </div>
 
             <div id="funcModalContent">
                 <!-- Meta data will be injected here -->

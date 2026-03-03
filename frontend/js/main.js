@@ -705,7 +705,24 @@ async function generateAISummary() {
 }
 
 function closeFunctionModal() {
-    document.getElementById('functionModal').classList.remove('visible');
+    const modal = document.getElementById('functionModal');
+    modal.classList.remove('visible');
+    // Reset fullscreen when closing
+    const content = modal.querySelector('.modal-content');
+    if (content.classList.contains('fullscreen')) {
+        content.classList.remove('fullscreen');
+        document.getElementById('fullscreenBtn').textContent = '⛶';
+    }
+}
+
+function toggleFullscreenModal() {
+    const modal = document.getElementById('functionModal');
+    const content = modal.querySelector('.modal-content');
+    const btn = document.getElementById('fullscreenBtn');
+    
+    content.classList.toggle('fullscreen');
+    btn.textContent = content.classList.contains('fullscreen') ? '✕' : '⛶';
+    btn.title = content.classList.contains('fullscreen') ? 'Normal Görünüm (F11)' : 'Tam Ekran (F11)';
 }
 
 function setupSearchListener() {
