@@ -940,6 +940,46 @@ function toggleFullscreenModal() {
     btn.title = content.classList.contains('fullscreen') ? 'Normal Görünüm (F11)' : 'Tam Ekran (F11)';
 }
 
+// Lazy-load dependency chips when class accordion opens
+function populateDependencies(classContent) {
+    classContent.querySelectorAll('.function-deps[data-deps-loaded="false"]').forEach(depsDiv => {
+        const item = depsDiv.closest('.function-item');
+        if (!item) return;
+        
+        const called = JSON.parse(item.dataset.called || '[]');
+        const calledBy = JSON.parse(item.dataset.calledBy || '[]');
+        
+        const calledHtml = called.length > 0
+            ? called.map(c => `<span class="dep-chip" data-func-id="${c.id}" style="cursor: pointer;">${c.function_name}</span>`).join(' ')
+            : '<span class="dep-empty">Yok</span>';
+        
+        const calledByHtml = calledBy.length > 0
+            ? calledBy.map(c => `<span class="dep-chip dep-chip-caller" data-func-id="${c.id}" style="cursor: pointer;">${c.function_name}</span>`).join(' ')
+            : '<span class="dep-empty">Yok</span>';
+        
+        // Update HTML with dependency chips
+        const divs = depsDiv.querySelectorAll('div');
+        if (divs[0]) divs[0].innerHTML = `<strong>Çağırdığı Fonksiyonlar:</strong> ${calledHtml}`;
+        if (divs[1]) divs[1].innerHTML = `<strong>Bunu Çağıran Fonksiyonlar:</strong> ${calledByHtml}`;
+        
+        // Attach click handlers to newly created chips
+        depsDiv.querySelectorAll('.dep-chip[data-func-id]').forEach(chip => {
+            chip.onclick = (e) => {
+                e.stopPropagation();
+                const funcId = chip.dataset.funcId;
+                if (funcId) {
+                    showFunctionDetails(parseInt(funcId));
+                }
+            };
+            chip.style.transition = 'all 0.2s';
+            chip.onmouseover = () => chip.style.opacity = '0.7';
+            chip.onmouseout = () => chip.style.opacity = '1';
+        });
+        
+        depsDiv.setAttribute('data-deps-loaded', 'true');
+    });
+}
+
 function setupSearchListener() {
     const searchInput = document.getElementById('searchFunctionsText');
     if (!searchInput) return;
