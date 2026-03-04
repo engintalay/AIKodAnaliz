@@ -13,11 +13,14 @@ class LMStudioClient:
         self.context_limit = CONTEXT_LIMIT_TOKENS
         # Local models can have long first-token delays while loading.
         self.request_timeout = 120
+        # Never inherit OS/env proxy settings.
+        self.session = requests.Session()
+        self.session.trust_env = False
     
     def test_connection(self) -> dict:
         """Test connection to LMStudio"""
         try:
-            response = requests.get(f"{self.api_url}/models", timeout=5)
+            response = self.session.get(f"{self.api_url}/models", timeout=5)
             if response.status_code == 200:
                 return {
                     'status': 'connected',
@@ -61,7 +64,7 @@ En fazla 200 kelimeyle şunları açıkla:
 Summary:"""
         
         try:
-            response = requests.post(
+            response = self.session.post(
                 f"{self.api_url}/chat/completions",
                 headers={"Content-Type": "application/json"},
                 json={
@@ -116,7 +119,7 @@ Code:
 Suggestions:"""
         
         try:
-            response = requests.post(
+            response = self.session.post(
                 f"{self.api_url}/chat/completions",
                 headers={"Content-Type": "application/json"},
                 json={

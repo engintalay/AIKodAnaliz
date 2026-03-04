@@ -3,6 +3,15 @@ from flask_cors import CORS
 import os
 import sys
 
+# Disable proxy usage inside application process
+for _proxy_var in [
+    'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY',
+    'http_proxy', 'https_proxy', 'all_proxy'
+]:
+    os.environ.pop(_proxy_var, None)
+os.environ['NO_PROXY'] = '*'
+os.environ['no_proxy'] = '*'
+
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
