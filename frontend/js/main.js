@@ -113,27 +113,42 @@ async function loadProjects() {
 
 async function viewProject(projectId) {
     currentProjectId = projectId;
+    console.log('viewProject called with projectId:', projectId);
 
     try {
         const response = await fetch(`${API_URL}/projects/${projectId}`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
         const project = await response.json();
 
         document.getElementById('projectTitle').textContent = project.name;
         showSection('projectDetailSection');
 
         // Load diagram
+        console.log('Loading diagram...');
         await loadDiagramData();
+        console.log('Diagram loaded');
 
         // Load functions
+        console.log('Loading functions...');
         await loadFunctions();
+        console.log('Functions loaded');
 
         // Load marks
+        console.log('Loading marks...');
         await loadMarks();
+        console.log('Marks loaded');
 
         // Load files
+        console.log('Loading files...');
         await loadFiles();
+        console.log('Files loaded');
     } catch (error) {
-        showError('Proje Açma Hatası', 'Proje açılırken hata oluştu: ' + error);
+        console.error('viewProject error:', error);
+        showError('Proje Yükleme Hatası', 'Hata: ' + error.message);
     }
 }
 
@@ -401,6 +416,9 @@ async function loadDiagramData() {
         // Initialize Cytoscape
         const container = document.getElementById('diagramContainer');
 
+        // Create set of valid node IDs for defensive filtering
+        const validNodeIds = new Set(data.nodes.map(node => node.id.toString()));
+
         cy = cytoscape({
             container: container,
             elements: [
@@ -411,14 +429,17 @@ async function loadDiagramData() {
                         type: node.type,
                         summary: node.summary
                     },
-                    classes: node.type
+                    classes: (node.is_entry_point ? 'entry ' : '') + (node.type || '')
                 })),
-                ...data.edges.map(edge => ({
-                    data: {
-                        source: edge.from.toString(),
-                        target: edge.to.toString()
-                    }
-                }))
+                ...data.edges
+                    // Filter out edges with nonexistent nodes (defensive check)
+                    .filter(edge => validNodeIds.has(edge.from.toString()) && validNodeIds.has(edge.to.toString()))
+                    .map(edge => ({
+                        data: {
+                            source: edge.from.toString(),
+                            target: edge.to.toString()
+                        }
+                    }))
             ],
             style: [
                 {
@@ -479,6 +500,26 @@ async function loadDiagramData() {
         cy.on('tap', 'node', function (evt) {
             const node = evt.target;
             showFunctionDetails(node.data('id'));
+        
+                // Display entry points legend
+                if (data.entry_points && data.entry_points.length > 0) {
+                    const legendDiv = document.getElementById('diagramLegend');
+                    const entryPointsList = document.getElementById('entryPointsList');
+            
+                    // Get entry point names from nodes
+                    const entryPointNames = data.nodes
+                        .filter(node => data.entry_points.includes(node.id))
+                        .map(node => node.label);
+            
+                    if (entryPointNames.length > 0) {
+                        entryPointsList.innerHTML = entryPointNames
+                            .map(name => `<div style="padding: 4px 8px; background: white; margin: 2px 0; border-left: 3px solid #27ae60; border-radius: 2px;">🟢 ${name}</div>`)
+                            .join('');
+                        legendDiv.style.display = 'block';
+                    }
+                } else {
+                    document.getElementById('diagramLegend').style.display = 'none';
+                }
         });
 
     } catch (error) {
@@ -516,8 +557,26 @@ async function exportDiagram() {
 
 async function loadFunctions() {
     try {
-        const response = await fetch(`${API_URL}/analysis/project/${currentProjectId}/functions`);
+        console.log('loadFunctions started. currentProjectId:', currentProjectId, 'API_URL:', API_URL);
+        
+        if (!currentProjectId) {
+            console.error('loadFunctions: currentProjectId is null!');
+            showError('Hata', 'Proje seçilmedi. Lütfen bir proje açınız.');
+            return;
+        }
+        
+        const url = `${API_URL}/analysis/project/${currentProjectId}/functions`;
+        console.log('Fetching from URL:', url);
+        
+        const response = await fetch(url);
+        console.log('Response status:', response.status, 'ok:', response.ok);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
         const functions = await response.json();
+        console.log('Functions loaded, count:', functions.length);
 
         const list = document.getElementById('functionsList');
         list.innerHTML = '';
@@ -542,10 +601,11 @@ async function loadFunctions() {
             const pkgHeader = document.createElement('h3');
             pkgHeader.className = 'package-header';
             pkgHeader.style.cssText = 'background: #2c3e50; color: white; padding: 8px 12px; margin-bottom: 5px; border-radius: 4px; cursor: pointer; user-select: none; display: flex; justify-content: space-between;';
-            pkgHeader.innerHTML = `<span>📦 ${pkgName}</span> <span>▼</span>`;
+            pkgHeader.innerHTML = `<span>📦 ${pkgName}</span> <span>▶</span>`;
 
             const pkgContent = document.createElement('div');
             pkgContent.className = 'package-content';
+            pkgContent.style.display = 'none'; // Default: collapsed
 
             pkgHeader.onclick = () => {
                 const isHidden = pkgContent.style.display === 'none';
@@ -567,15 +627,21 @@ async function loadFunctions() {
                 const clsHeader = document.createElement('h4');
                 clsHeader.className = 'class-header';
                 clsHeader.style.cssText = 'color: #2980b9; margin: 10px 0 5px 0; cursor: pointer; user-select: none; display: flex; align-items: center;';
-                clsHeader.innerHTML = `<span style="margin-right: 5px;">▼</span> 🏷️ ${clsName}`;
+                clsHeader.innerHTML = `<span style="margin-right: 5px;">▶</span> 🏷️ ${clsName}`;
 
                 const clsContent = document.createElement('div');
                 clsContent.className = 'class-content';
+                clsContent.style.display = 'none'; // Default: collapsed
 
                 clsHeader.onclick = () => {
                     const isHidden = clsContent.style.display === 'none';
                     clsContent.style.display = isHidden ? 'block' : 'none';
                     clsHeader.innerHTML = `<span style="margin-right: 5px;">${isHidden ? '▼' : '▶'}</span> 🏷️ ${clsName}`;
+                    
+                    // Lazy-load dependencies when class opens
+                    if (isHidden) {
+                        setTimeout(() => populateDependencies(clsContent), 0);
+                    }
                 };
 
                 clsDiv.appendChild(clsHeader);
@@ -585,45 +651,30 @@ async function loadFunctions() {
                     const called = Array.isArray(func.called_functions) ? func.called_functions : [];
                     const calledBy = Array.isArray(func.called_by_functions) ? func.called_by_functions : [];
 
-                    const calledHtml = called.length > 0
-                        ? called.map(c => `<span class="dep-chip" data-func-id="${c.id}" style="cursor: pointer;">${c.function_name}</span>`).join(' ')
-                        : '<span class="dep-empty">Yok</span>';
-
-                    const calledByHtml = calledBy.length > 0
-                        ? calledBy.map(c => `<span class="dep-chip dep-chip-caller" data-func-id="${c.id}" style="cursor: pointer;">${c.function_name}</span>`).join(' ')
-                        : '<span class="dep-empty">Yok</span>';
-
                     const item = document.createElement('div');
                     item.className = 'function-item searchable-item';
                     item.dataset.search = `${func.function_name} ${func.ai_summary || ''}`.toLowerCase();
+                    
+                    // Store dependencies as data attributes (lazy-load on accordion open)
+                    item.dataset.funcId = func.id;
+                    item.dataset.called = JSON.stringify(called);
+                    item.dataset.calledBy = JSON.stringify(calledBy);
+                    
+                    // Minimal HTML - dependencies lazy-loaded when class opens
                     item.innerHTML = `
                         <h5>${func.function_name} <small>(${func.function_type})</small></h5>
                         <p>${func.ai_summary || 'Özet henüz oluşturulmadı'}</p>
                         <div class="function-meta">
                             Satırlar: ${func.start_line}-${func.end_line}
                             <br/><small>Dosya: ${func.file_path || 'Bilinmiyor'}</small>
-                            <div class="function-deps">
-                                <div><strong>Çağırdığı Fonksiyonlar:</strong> ${calledHtml}</div>
-                                <div><strong>Bunu Çağıran Fonksiyonlar:</strong> ${calledByHtml}</div>
+                            <div class="function-deps" data-deps-loaded="false">
+                                <div><strong>Çağırdığı Fonksiyonlar:</strong> <span class="deps-placeholder">Yükleniyor...</span></div>
+                                <div><strong>Bunu Çağıran Fonksiyonlar:</strong> <span class="deps-placeholder">Yükleniyor...</span></div>
                             </div>
                         </div>
                     `;
                     item.onclick = () => showFunctionDetails(func.id);
                     clsContent.appendChild(item);
-                    
-                    // Attach click handlers to dependency chips
-                    item.querySelectorAll('.dep-chip[data-func-id]').forEach(chip => {
-                        chip.onclick = (e) => {
-                            e.stopPropagation(); // Prevent triggering parent click
-                            const funcId = chip.dataset.funcId;
-                            if (funcId) {
-                                showFunctionDetails(parseInt(funcId));
-                            }
-                        };
-                        chip.style.transition = 'all 0.2s';
-                        chip.onmouseover = () => chip.style.opacity = '0.7';
-                        chip.onmouseout = () => chip.style.opacity = '1';
-                    });
                 });
                 pkgContent.appendChild(clsDiv);
             }
@@ -641,10 +692,25 @@ async function loadFunctions() {
 let currentModalFunctionId = null;
 
 async function showFunctionDetails(functionId) {
+    // Hide error state when loading new function
+    document.getElementById('funcModalError').style.display = 'none';
+    
     try {
         currentModalFunctionId = functionId;
-        const response = await fetch(`${API_URL}/analysis/function/${functionId}`);
+        const response = await fetch(`${API_URL}/analysis/function/${functionId}`, {
+            signal: AbortSignal.timeout(15000) // 15 second timeout
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
         let func = await response.json();
+        
+        // Validate response data
+        if (!func || typeof func !== 'object') {
+            throw new Error('Geçersiz sunucu yanıtı (invalid JSON)');
+        }
 
         const modal = document.getElementById('functionModal');
         document.getElementById('funcModalTitle').textContent = func.function_name;
@@ -682,6 +748,15 @@ async function showFunctionDetails(functionId) {
         document.getElementById('funcModalSource').textContent = func.source_code || 'Kaynak kod yok.';
 
         modal.classList.add('visible');
+        
+        // Show copy button if there's source code
+        const copyBtn = document.getElementById('copyCodeBtn');
+        if (copyBtn && func.source_code && func.source_code.trim() !== 'Kaynak kod yok.') {
+            copyBtn.style.display = 'inline-block';
+            copyBtn.textContent = '📋 Kopyala';
+        } else if (copyBtn) {
+            copyBtn.style.display = 'none';
+        }
 
         // Attach click handlers to dependency chips in modal
         setTimeout(() => {
@@ -699,7 +774,96 @@ async function showFunctionDetails(functionId) {
             });
         }, 0);
     } catch (error) {
+        // User-friendly error handling
+        const errorDiv = document.getElementById('funcModalError');
+        const errorMsg = document.getElementById('funcModalErrorMessage');
+        
+        let userMessage = 'Bilinmeyen bir hata oluştu.';
+        
+        // Detect error type
+        if (error.name === 'AbortError') {
+            userMessage = 'İstek zaman aşımına uğradı. Fonksiyon çok uzun yanıt vermiş olabilir.';
+        } else if (error instanceof TypeError) {
+            if (error.message.includes('fetch')) {
+                userMessage = 'Sunucuya bağlanılamadı. Lütfen ağ bağlantınızı kontrol edin.';
+            } else {
+                userMessage = 'Sunucu yanıtı işlenemedi: ' + error.message;
+            }
+        } else if (error.message.includes('HTTP')) {
+            userMessage = 'Sunucu hatası: ' + error.message + '. Lütfen yeniden deneyin.';
+        } else {
+            userMessage = 'Hata: ' + error.message;
+        }
+        
+        errorMsg.textContent = userMessage;
+        errorDiv.style.display = 'block';
+        
+        // Show modal with error state
+        const modal = document.getElementById('functionModal');
+        modal.classList.add('visible');
+        
+        // Hide copy button on error
+        const copyBtn = document.getElementById('copyCodeBtn');
+        if (copyBtn) copyBtn.style.display = 'none';
+        
         console.error('Fonksiyon detayları yükleme hatası:', error);
+    }
+}
+
+// Retry loading function
+function retryFunctionLoad() {
+    if (currentModalFunctionId) {
+        showFunctionDetails(currentModalFunctionId);
+    }
+}
+
+// Copy function code to clipboard
+function copyFunctionCode() {
+    const codeElement = document.getElementById('funcModalSource');
+    if (!codeElement || !codeElement.textContent) {
+        showError('Hata', 'Kopyalanacak kod bulunamadı');
+        return;
+    }
+    
+    const code = codeElement.textContent;
+    
+    // Try modern Clipboard API first
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(code).then(() => {
+            const btn = document.getElementById('copyCodeBtn');
+            const oldText = btn.textContent;
+            btn.textContent = '✅ Kopyalandı!';
+            setTimeout(() => {
+                btn.textContent = oldText;
+            }, 2000);
+        }).catch(err => {
+            fallbackCopyToClipboard(code);
+        });
+    } else {
+        // Fallback for older browsers
+        fallbackCopyToClipboard(code);
+    }
+}
+
+// Fallback copy method
+function fallbackCopyToClipboard(text) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    document.body.appendChild(textarea);
+    textarea.select();
+    
+    try {
+        document.execCommand('copy');
+        const btn = document.getElementById('copyCodeBtn');
+        const oldText = btn.textContent;
+        btn.textContent = '✅ Kopyalandı!';
+        setTimeout(() => {
+            btn.textContent = oldText;
+        }, 2000);
+    } catch (err) {
+        showError('Hata', 'Kopyalama başarısız oldu: ' + err.message);
+    } finally {
+        document.body.removeChild(textarea);
     }
 }
 
@@ -1001,7 +1165,7 @@ function checkSession() {
 async function handleLogin(e) {
     e.preventDefault();
 
-    const username = document.getElementById('loginUsername').value;
+    const username = document.getElementById('loginUsername').value.trim();
     const password = document.getElementById('loginPassword').value;
     const errorDiv = document.getElementById('loginError');
 
@@ -1027,11 +1191,16 @@ async function handleLogin(e) {
             // Load projects
             loadProjects();
         } else {
-            errorDiv.textContent = data.error || 'Giriş başarısız';
+            const serverMessage = data.error || 'Giriş başarısız';
+            if (response.status === 401) {
+                errorDiv.textContent = `${serverMessage}. Demo: admin/admin123 veya user/user123`;
+            } else {
+                errorDiv.textContent = serverMessage;
+            }
             errorDiv.style.display = 'block';
         }
     } catch (error) {
-        errorDiv.textContent = 'Hata: ' + error;
+        errorDiv.textContent = 'Sunucuya bağlanılamadı. Backend çalışıyor mu kontrol edin.';
         errorDiv.style.display = 'block';
     }
 }

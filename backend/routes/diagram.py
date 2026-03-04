@@ -9,9 +9,10 @@ def get_diagram_data(project_id):
     """Get diagram data (nodes and edges)"""
     try:
         # Get all functions (exclude "if" statements - they're not real functions)
+        # REDUCED from 50 to 30 nodes to minimize memory usage
         func_rows = db.execute_query(
             '''SELECT id, function_name, function_type, file_id, ai_summary 
-            FROM functions WHERE project_id = ? AND function_name != 'if' LIMIT 50''',
+            FROM functions WHERE project_id = ? AND function_name != 'if' LIMIT 30''',
             (project_id,)
         )
         
@@ -24,29 +25,49 @@ def get_diagram_data(project_id):
         
         # Build nodes
         nodes = []
+        node_ids = set()  # Track which function IDs are in the diagram
+        
+        # Detect entry points (functions with no incoming calls)
+        called_in = set()
+        for dep_row in dep_rows:
+            called_in.add(dep_row[1])  # callee_function_id
+        
+        entry_point_ids = set()
         for row in func_rows:
+            func_id = row[0]
+            node_ids.add(func_id)  # Add to node_ids set
+            if func_id not in called_in:
+                entry_point_ids.add(func_id)
+        
+        for row in func_rows:
+            func_id = row[0]
+            is_entry = func_id in entry_point_ids
             nodes.append({
-                'id': row[0],
+                'id': func_id,
                 'label': row[1],
                 'type': row[2],
                 'summary': row[4] or 'No summary',
-                'title': f"{row[1]} ({row[2]})"
+                'title': f"{row[1]} ({row[2]})",
+                'is_entry_point': is_entry
             })
         
-        # Build edges
+        # Build edges - only include edges where both source and target exist in nodes
         edges = []
         for row in dep_rows:
             from_id = row[0]
             to_id = row[1]
-            edges.append({
-                'from': from_id,
-                'to': to_id
-            })
+            # Only add edge if both nodes exist in the diagram
+            if from_id in node_ids and to_id in node_ids:
+                edges.append({
+                    'from': from_id,
+                    'to': to_id
+                })
         
         return jsonify({
             'nodes': nodes,
             'edges': edges,
-            'project_id': project_id
+           'project_id': project_id,
+           'entry_points': list(entry_point_ids)
         }), 200
     
     except Exception as e:

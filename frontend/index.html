@@ -21,7 +21,7 @@
                     <form id="loginForm">
                         <div class="form-group">
                             <label>Kullanıcı Adı</label>
-                            <input type="text" id="loginUsername" placeholder="admin veya demo" required>
+                            <input type="text" id="loginUsername" placeholder="admin veya user" required>
                         </div>
 
                         <div class="form-group">
@@ -35,7 +35,7 @@
                     <div class="login-info">
                         <p><strong>Demo Hesapları:</strong></p>
                         <p>👤 admin / admin123</p>
-                        <p>👤 users / user123</p>
+                        <p>👤 user / user123</p>
                     </div>
 
                     <div id="loginError" class="error-message" style="display:none;"></div>
@@ -113,6 +113,10 @@
                             <button class="btn btn-secondary" onclick="zoomIn()">🔍 + Yaklaş</button>
                             <button class="btn btn-secondary" onclick="zoomOut()">🔍 - Uzaklaş</button>
                             <button class="btn btn-secondary" onclick="fitDiagram()">📐 Sığdır</button>
+                                                <div id="diagramLegend" style="background: #f5f5f5; padding: 10px; margin-top: 10px; border-radius: 4px; font-size: 13px; display: none;">
+                                                    <strong>📍 Giriş Noktaları (Entry Points):</strong>
+                                                    <div id="entryPointsList" style="margin-top: 8px; max-height: 100px; overflow-y: auto;"></div>
+                                                </div>
                         </div>
                         <div id="diagramContainer" class="diagram-container"></div>
                     </div>
@@ -212,12 +216,22 @@
                 </div>
             </div>
 
+            <!-- Error State Section -->
+            <div id="funcModalError" style="display: none; background: #fee; border: 1px solid #f88; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
+                <div style="color: #c33; font-weight: bold; margin-bottom: 10px;">⚠️ Hata Oluştu</div>
+                <p id="funcModalErrorMessage" style="margin: 0 0 10px 0; color: #666; font-size: 14px;"></p>
+                <button class="btn btn-primary" onclick="retryFunctionLoad()" style="padding: 6px 12px; font-size: 12px;">🔄 Yeniden Dene</button>
+                <button class="btn btn-secondary" onclick="closeFunctionModal()" style="padding: 6px 12px; font-size: 12px; margin-left: 5px;">✕ Kapat</button>
+            </div>
+
             <div id="funcModalContent">
                 <!-- Meta data will be injected here -->
             </div>
 
             <div style="margin-top: 15px;">
-                <label style="font-weight: bold; display: block; margin-bottom: 5px;">Fonksiyon Özeti:</label>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                    <label style="font-weight: bold;">Fonksiyon Özeti:</label>
+                </div>
                 <textarea id="funcModalSummary"
                     style="width: 100%; height: 80px; font-family: inherit; padding: 8px; border-radius: 4px; border: 1px solid #ccc;"></textarea>
 
@@ -230,7 +244,10 @@
             </div>
 
             <div style="margin-top: 15px;">
-                <label style="font-weight: bold; display: block; margin-bottom: 5px;">Kaynak Kod:</label>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                    <label style="font-weight: bold;">Kaynak Kod:</label>
+                    <button class="btn btn-secondary" id="copyCodeBtn" onclick="copyFunctionCode()" style="padding: 4px 10px; font-size: 11px; display: none;">📋 Kopyala</button>
+                </div>
                 <pre
                     style="background: #282c34; color: #abb2bf; padding: 10px; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 13px; max-height: 250px; overflow-y: auto;"><code id="funcModalSource"></code></pre>
             </div>
@@ -242,7 +259,7 @@
     </div>
 
     <!-- Load libraries before main.js -->
-    <script src="https://unpkg.com/cytoscape@3/dist/cytoscape.umd.js"></script>
+    <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <script src="/static/js/main.js"></script>
 </body>

@@ -6,12 +6,27 @@ from config.config import DATABASE_PATH
 class Database:
     def __init__(self):
         self.db_path = DATABASE_PATH
+        self.connection_timeout = 30
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
+
+    def _connect(self):
+        """Create a configured sqlite connection for better concurrency handling."""
+        conn = sqlite3.connect(self.db_path, timeout=self.connection_timeout)
+        self._apply_pragmas(conn)
+        return conn
+
+    def _apply_pragmas(self, conn):
+        """Apply SQLite pragmas to reduce locking and improve write concurrency."""
+        cursor = conn.cursor()
+        cursor.execute('PRAGMA journal_mode = WAL')
+        cursor.execute('PRAGMA busy_timeout = 30000')
+        cursor.execute('PRAGMA synchronous = NORMAL')
+        cursor.execute('PRAGMA foreign_keys = ON')
     
     def _init_db(self):
         """Initialize database schema"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             cursor = conn.cursor()
             
             # Users table
@@ -169,11 +184,13 @@ class Database:
     
     def get_connection(self):
         """Get database connection"""
-        return sqlite3.connect(self.db_path)
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        return conn
     
     def execute_query(self, query, params=None):
         """Execute SELECT query"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             if params:
@@ -184,7 +201,7 @@ class Database:
     
     def execute_insert(self, query, params=None):
         """Execute INSERT query"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             cursor = conn.cursor()
             if params:
                 cursor.execute(query, params)
@@ -195,12 +212,20 @@ class Database:
     
     def execute_update(self, query, params=None):
         """Execute UPDATE query"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             cursor = conn.cursor()
             if params:
                 cursor.execute(query, params)
             else:
                 cursor.execute(query)
+            conn.commit()
+            return cursor.rowcount
+    
+    def execute_many(self, query, params_list):
+        """Execute INSERT/UPDATE with multiple parameter sets (batch operation)"""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.executemany(query, params_list)
             conn.commit()
             return cursor.rowcount
 

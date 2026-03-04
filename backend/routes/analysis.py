@@ -9,10 +9,63 @@ import uuid
 import re
 
 CALL_NAME_PATTERN = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(')
+PY_IMPORT_PATTERN = re.compile(r'^\s*(?:from\s+[\w\.]+\s+import\s+([\w\s,\*]+)|import\s+([\w\.,\s]+))', re.MULTILINE)
+JS_IMPORT_PATTERN = re.compile(r'^\s*import\s+(?:([\w\{\}\s,\*]+)\s+from\s+)?[\"\'][^\"\']+[\"\']', re.MULTILINE)
+JAVA_IMPORT_PATTERN = re.compile(r'^\s*import\s+(?:static\s+)?([\w\.\*]+)\s*;', re.MULTILINE)
 CALL_KEYWORDS = {
     'if', 'for', 'while', 'switch', 'catch', 'return', 'new', 'super', 'this',
     'else', 'try', 'throw', 'typeof', 'sizeof'
 }
+COMMON_EXTERNAL_CALLS = {
+    'print', 'len', 'str', 'int', 'float', 'dict', 'list', 'set', 'tuple',
+    'fetch', 'setTimeout', 'setInterval', 'require', 'console', 'log',
+    'System', 'Math', 'String', 'Integer', 'Long', 'Double'
+}
+
+
+def extract_imported_symbols(content, language):
+    """Return imported/external symbol names so they are not mapped as project-internal calls."""
+    symbols = set()
+    lang = (language or '').lower()
+
+    if lang == 'python':
+        for match in PY_IMPORT_PATTERN.finditer(content or ''):
+            from_imports = match.group(1)
+            direct_imports = match.group(2)
+
+            if from_imports:
+                for item in from_imports.split(','):
+                    token = item.strip().split(' as ')[-1].strip()
+                    if token and token != '*':
+                        symbols.add(token)
+
+            if direct_imports:
+                for item in direct_imports.split(','):
+                    module_name = item.strip().split(' as ')[-1].strip().split('.')[-1]
+                    if module_name:
+                        symbols.add(module_name)
+
+    elif lang in ('javascript', 'typescript'):
+        for match in JS_IMPORT_PATTERN.finditer(content or ''):
+            imported = (match.group(1) or '').strip()
+            if not imported:
+                continue
+            imported = imported.replace('{', '').replace('}', '')
+            for item in imported.split(','):
+                token = item.strip().split(' as ')[-1].strip()
+                if token and token != '*':
+                    symbols.add(token)
+
+    elif lang == 'java':
+        for match in JAVA_IMPORT_PATTERN.finditer(content or ''):
+            imported_path = match.group(1)
+            if not imported_path:
+                continue
+            leaf = imported_path.split('.')[-1]
+            if leaf and leaf != '*':
+                symbols.add(leaf)
+
+    return symbols
 
 bp = Blueprint('analysis', __name__, url_prefix='/api/analysis')
 
@@ -161,7 +214,7 @@ def analyze_project(project_id):
             failed=skipped_with_error
         )
         
-        # --- SECOND PASS: Detect Function Calls ---
+        # --- SECOND PASS: Detect Function Calls (OPTIMIZED) ---
         logger.debug(f"[Project {project_id}] Starting dependency detection")
 
         # Rebuild dependencies for this project on each analysis run.
@@ -169,7 +222,7 @@ def analyze_project(project_id):
         
         # Get all functions with their file contents again to scan for calls
         funcs_query = db.execute_query(
-            '''SELECT f.id, f.function_name, f.start_line, f.end_line, s.content 
+            '''SELECT f.id, f.file_id, f.function_name, f.start_line, f.end_line, s.content, s.language
                FROM functions f 
                JOIN source_files s ON f.file_id = s.id 
                WHERE f.project_id = ?''',
@@ -178,14 +231,31 @@ def analyze_project(project_id):
         
         funcs_data = [dict(row) for row in funcs_query]
         dependencies_found = 0
+        total_funcs = len(funcs_data)
         
+        # ✅ OPTIMIZATION 1: Build hash table for O(1) lookup instead of O(n²) nested loop
+        func_name_map = {func['function_name']: func['id'] for func in funcs_data}
+        imported_symbols_by_file = {}
+        
+        # ✅ OPTIMIZATION 2: Collect all inserts for batch operation
+        function_calls_batch = []
         inserted_pairs = set()
-        for caller in funcs_data:
+        
+        for idx, caller in enumerate(funcs_data):
             # Extract caller's block
             lines = caller['content'].split('\n')
             start = max(0, caller['start_line'] - 1)
             end = min(len(lines), caller['end_line'])
             caller_code = '\n'.join(lines[start:end])
+
+            # Determine file-level external/imported symbols once and cache by file_id
+            file_id = caller['file_id']
+            if file_id not in imported_symbols_by_file:
+                imported_symbols_by_file[file_id] = extract_imported_symbols(
+                    caller.get('content', ''),
+                    caller.get('language', '')
+                )
+            file_imported_symbols = imported_symbols_by_file[file_id]
 
             # Find all call-like names: foo(...)
             called_names = {
@@ -193,26 +263,61 @@ def analyze_project(project_id):
                 for match in CALL_NAME_PATTERN.finditer(caller_code)
                 if match.group(1) not in CALL_KEYWORDS
             }
+            local_called_names = {
+                name for name in called_names
+                if name not in COMMON_EXTERNAL_CALLS and name not in file_imported_symbols
+            }
             
-            # Check against all other functions
-            for callee in funcs_data:
-                # Basic check: Don't link function to itself
-                if caller['id'] == callee['id']:
-                    continue
-
-                if callee['function_name'] in called_names:
-                    pair = (caller['id'], callee['id'])
+            # ✅ OPTIMIZATION 1: Only iterate through found calls (not all functions)
+            for called_name in local_called_names:
+                if called_name in func_name_map:
+                    callee_id = func_name_map[called_name]
+                    
+                    # Basic check: Don't link function to itself
+                    if caller['id'] == callee_id:
+                        continue
+                    
+                    pair = (caller['id'], callee_id)
                     if pair in inserted_pairs:
                         continue
-
+                    
+                    # Collect for batch insert
+                    function_calls_batch.append(
+                        (project_id, caller['id'], callee_id, 'direct_call')
+                    )
+                    inserted_pairs.add(pair)
+                    dependencies_found += 1
+            
+            # ✅ OPTIMIZATION 3: Update progress during dependency detection
+            if task_id and total_funcs > 0:
+                progress_percent = (idx + 1) / total_funcs
+                dep_progress = 82 + int(progress_percent * 18)  # 82%-100% range
+                progress_tracker.update(
+                    task_id,
+                    progress=dep_progress,
+                    step='Fonksiyon çağrıları tespit ediliyor...',
+                    detail=f'Bağımlılık analizi: {idx+1}/{total_funcs} fonksiyon ({int(progress_percent*100)}%)'
+                )
+        
+        # ✅ OPTIMIZATION 2: Batch insert all at once (single transaction)
+        if function_calls_batch:
+            try:
+                db.execute_many(
+                    '''INSERT INTO function_calls 
+                    (project_id, caller_function_id, callee_function_id, call_type)
+                    VALUES (?, ?, ?, ?)''',
+                    function_calls_batch
+                )
+                logger.debug(f"[Project {project_id}] Batch inserted {len(function_calls_batch)} function calls")
+            except Exception as e:
+                logger.warning(f"[Project {project_id}] Batch insert failed: {e}, falling back to individual inserts")
+                for insert_data in function_calls_batch:
                     db.execute_insert(
                         '''INSERT INTO function_calls 
                         (project_id, caller_function_id, callee_function_id, call_type)
                         VALUES (?, ?, ?, ?)''',
-                        (project_id, caller['id'], callee['id'], 'direct_call')
+                        insert_data
                     )
-                    inserted_pairs.add(pair)
-                    dependencies_found += 1
         
         log_analysis(project_id, "Analysis complete", 
                     functions=len(all_functions), 
