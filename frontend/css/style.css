@@ -414,8 +414,8 @@ body {
     background-color: #fefefe;
     padding: 2rem;
     border-radius: 8px;
-    width: 85%;
-    max-width: 900px;
+    width: 95%;
+    max-width: 1200px;
     max-height: 95vh;
     overflow-y: auto;
     position: relative;
