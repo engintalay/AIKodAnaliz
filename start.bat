@@ -66,6 +66,17 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
+REM Disable proxy environment variables
+echo [INFO] Disabling proxy settings...
+set HTTP_PROXY=
+set HTTPS_PROXY=
+set ALL_PROXY=
+set http_proxy=
+set https_proxy=
+set all_proxy=
+set NO_PROXY=*
+set no_proxy=*
+
 REM Install dependencies
 echo [INFO] Installing dependencies...
 pip install -r requirements.txt

@@ -200,8 +200,15 @@ def import_git_project():
             clone_dir
         ]
         
+        # Create environment without proxy settings
+        git_env = os.environ.copy()
+        for proxy_var in ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']:
+            git_env.pop(proxy_var, None)
+        git_env['NO_PROXY'] = '*'
+        git_env['no_proxy'] = '*'
+        
         try:
-            result = subprocess.run(clone_command, capture_output=True, text=True, timeout=300)
+            result = subprocess.run(clone_command, capture_output=True, text=True, timeout=300, env=git_env)
             if result.returncode != 0:
                 logger.error(f"Git clone failed: {result.stderr}")
                 raise Exception(f"Git clone failed: {result.stderr}")
