@@ -7,6 +7,8 @@ from backend.progress_tracker import progress_tracker
 from backend.logger import logger, log_upload, log_error
 from config.config import UPLOAD_DIR
 import uuid
+import subprocess
+import shutil
 
 bp = Blueprint('project', __name__, url_prefix='/api/projects')
 
@@ -154,6 +156,147 @@ def upload_project():
     except Exception as e:
         log_error(f"upload_project (task: {task_id})", e, project_name=project_name)
         progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
+        return jsonify({'error': str(e), 'task_id': task_id}), 500
+
+@bp.route('/import-git', methods=['POST'])
+def import_git_project():
+    """Clone and analyze project from Git repository"""
+    data = request.get_json()
+    
+    repo_url = data.get('url', '').strip()
+    branch = data.get('branch', 'main').strip()
+    project_name = data.get('name', '').strip()
+    project_desc = data.get('description', '').strip()
+    
+    if not repo_url or not project_name:
+        return jsonify({'error': 'Git URL and Project Name are required'}), 400
+    
+    task_id = str(uuid.uuid4())
+    logger.info(f"Starting Git import: {project_name} from {repo_url} | Task: {task_id}")
+    
+    try:
+        progress_tracker.start_task(task_id, total_steps=100)
+        progress_tracker.update(task_id, progress=5, step='Proje kaydı oluşturuluyor...', detail='Veritabanına proje kaydediliyor')
+        
+        # Create project record
+        project_id = db.execute_insert(
+            'INSERT INTO projects (name, description, admin_id) VALUES (?, ?, ?)',
+            (project_name, project_desc, 1)
+        )
+        
+        log_upload(project_id, "Project record created (Git)", task_id=task_id, name=project_name, url=repo_url)
+        progress_tracker.update(task_id, progress=10, step='Repository klonlanıyor...', detail=f'URL: {repo_url}')
+        
+        # Clone repository
+        clone_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}_git')
+        os.makedirs(clone_dir, exist_ok=True)
+        
+        clone_command = [
+            'git', 'clone', 
+            '--branch', branch,
+            '--depth', '1',  # Shallow clone for speed
+            '--progress',
+            repo_url,
+            clone_dir
+        ]
+        
+        try:
+            result = subprocess.run(clone_command, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                logger.error(f"Git clone failed: {result.stderr}")
+                raise Exception(f"Git clone failed: {result.stderr}")
+        except subprocess.TimeoutExpired:
+            raise Exception("Git clone timeout (5 minutes)")
+        except FileNotFoundError:
+            raise Exception("Git is not installed on the system")
+        
+        log_upload(project_id, "Repository cloned", clone_dir=clone_dir)
+        progress_tracker.update(task_id, progress=30, step='Dosyalar tarıyor ve işleniyor...', detail='Kaynak dosyalar veritabanına aktarılıyor')
+        
+        # Process cloned files (same as ZIP extraction)
+        processed_files = 0
+        skipped_files = 0
+        all_files = []
+        
+        # Collect all files
+        for root, dirs, files in os.walk(clone_dir):
+            # Skip .git directory
+            if '.git' in dirs:
+                dirs.remove('.git')
+            
+            for file_name in files:
+                file_path = os.path.join(root, file_name)
+                all_files.append((file_path, file_name))
+        
+        total_to_process = len(all_files)
+        logger.debug(f"[Project {project_id}] Found {total_to_process} files to process from Git")
+        
+        for idx, (file_path, file_name) in enumerate(all_files):
+            rel_path = os.path.relpath(file_path, clone_dir)
+            
+            # Update progress
+            current_progress = 30 + int((idx / total_to_process) * 60) if total_to_process > 0 else 30
+            progress_tracker.update(
+                task_id, 
+                progress=current_progress, 
+                step=f'Dosya işleniyor: {file_name} ({idx + 1}/{total_to_process})',
+                detail=f'İşleniyor: {rel_path}'
+            )
+            
+            # Determine language
+            ext = os.path.splitext(file_name)[1].lower().lstrip('.')
+            language = ext if ext else 'unknown'
+            
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                
+                # Store in database
+                file_id = db.execute_insert(
+                    '''INSERT INTO source_files 
+                    (project_id, file_path, file_name, language, content)
+                    VALUES (?, ?, ?, ?, ?)''',
+                    (project_id, rel_path, file_name, language, content)
+                )
+                processed_files += 1
+                logger.debug(f"[Project {project_id}] Processed: {rel_path} (ID: {file_id})")
+            except Exception as e:
+                skipped_files += 1
+                logger.warning(f"[Project {project_id}] Skipped {rel_path}: {str(e)}")
+                progress_tracker.update(task_id, detail=f'Atlandı (okunamadı): {rel_path}')
+                continue
+        
+        log_upload(project_id, "File processing complete", processed=processed_files, skipped=skipped_files)
+        progress_tracker.update(task_id, progress=95, step='Temizlik yapılıyor...', detail='Geçici dosyalar siliniyor')
+        
+        # Clean up cloned directory
+        shutil.rmtree(clone_dir, ignore_errors=True)
+        logger.debug(f"[Project {project_id}] Temporary clone directory removed")
+        
+        progress_tracker.complete(task_id, success=True, message=f'Tamamlandı! {processed_files} dosya işlendi, {skipped_files} atlandı')
+        logger.info(f"Git import completed: Project {project_id} | Files: {processed_files} processed, {skipped_files} skipped")
+        
+        return jsonify({
+            'project_id': project_id,
+            'task_id': task_id,
+            'name': project_name,
+            'files_processed': processed_files,
+            'files_skipped': skipped_files,
+            'message': 'Git project imported successfully'
+        }), 201
+    
+    except Exception as e:
+        log_error(f"import_git_project (task: {task_id})", e, project_name=project_name, repo_url=repo_url)
+        progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
+        
+        # Try to clean up failed clone
+        try:
+            clone_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}_git')
+            if os.path.exists(clone_dir):
+                shutil.rmtree(clone_dir, ignore_errors=True)
+        except:
+            pass
+        
         return jsonify({'error': str(e), 'task_id': task_id}), 500
 
 @bp.route('/<int:project_id>/files', methods=['GET'])

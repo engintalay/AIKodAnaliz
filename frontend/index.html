@@ -68,17 +68,34 @@
 
             <!-- Upload Section -->
             <div id="uploadSection" class="section">
-                <h2>Proje Yükle</h2>
-                <form id="uploadForm" class="upload-form">
-                    <input type="text" id="projectName" placeholder="Proje Adı" required>
+                <h2>Proje Ekle</h2>
+                
+                <!-- Upload Method Toggle -->
+                <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; border-bottom: 2px solid #ecf0f1; padding-bottom: 1rem;">
+                    <button class="btn btn-secondary" id="zipUploadTab" onclick="switchUploadMode('zip')" style="background: #3498db; color: white;">📦 ZIP Yükle</button>
+                    <button class="btn btn-secondary" id="gitImportTab" onclick="switchUploadMode('git')">🔗 Git Repository</button>
+                </div>
+                
+                <!-- ZIP Upload Form -->
+                <form id="uploadForm" class="upload-form" style="display: block;">
+                    <input type="text" id="projectName" placeholder="Proje Adı (ZIP dosya adından otomatik)" required>
                     <input type="text" id="projectDesc" placeholder="Proje Açıklaması">
                     <input type="file" id="projectFile" accept=".zip" required>
                     <button type="submit" class="btn btn-primary">Yükle ve Analiz Et</button>
                 </form>
                 
+                <!-- Git Import Form -->
+                <form id="gitImportForm" class="upload-form" style="display: none;">
+                    <input type="text" id="gitRepoUrl" placeholder="Git Repository URL (https://github.com/user/repo)" required>
+                    <input type="text" id="gitBranch" placeholder="Branch (opsiyonel, default: main)">
+                    <input type="text" id="gitProjectName" placeholder="Proje Adı (repodan otomatik)" required>
+                    <input type="text" id="gitProjectDesc" placeholder="Proje Açıklaması">
+                    <button type="submit" class="btn btn-primary">Clone ve Analiz Et</button>
+                </form>
+                
                 <!-- Enhanced Progress Display -->
                 <div id="uploadProgress" class="upload-progress-container" style="display:none;">
-                    <h3>Yükleme İlerlemesi</h3>
+                    <h3>İşlem İlerlemesi</h3>
                     <div class="progress-bar-container">
                         <div id="uploadProgressBar" class="progress-bar">0%</div>
                     </div>
@@ -161,7 +178,7 @@
                         <div class="setting-item">
                             <label>Sıcaklık (Temperature):</label>
                             <input type="range" id="temperature" min="0" max="1" step="0.1" value="0.7">
-                            <span id="tempValue">0.7</span>
+                            <span id="temperatureValue">0.7</span>
                         </div>
                         <div class="setting-item">
                             <label>Top P:</label>
@@ -233,7 +250,7 @@
                     <label style="font-weight: bold;">Fonksiyon Özeti:</label>
                 </div>
                 <textarea id="funcModalSummary"
-                    style="width: 100%; height: 80px; font-family: inherit; padding: 8px; border-radius: 4px; border: 1px solid #ccc;"></textarea>
+                    style="width: 100%; height: 350px; font-family: inherit; padding: 8px; border-radius: 4px; border: 1px solid #ccc; resize: vertical;"></textarea>
 
                 <div style="text-align: right; margin-top: 5px; margin-bottom: 15px;">
                     <button class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;"
@@ -249,7 +266,7 @@
                     <button class="btn btn-secondary" id="copyCodeBtn" onclick="copyFunctionCode()" style="padding: 4px 10px; font-size: 11px; display: none;">📋 Kopyala</button>
                 </div>
                 <pre
-                    style="background: #282c34; color: #abb2bf; padding: 10px; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 13px; max-height: 250px; overflow-y: auto;"><code id="funcModalSource"></code></pre>
+                    style="background: #282c34; color: #abb2bf; padding: 10px; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 13px; max-height: 600px; overflow-y: auto; resize: vertical;"><code id="funcModalSource"></code></pre>
             </div>
 
             <div class="modal-actions" style="margin-top: 20px;">

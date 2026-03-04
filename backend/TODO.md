@@ -157,7 +157,7 @@
 - `COMMON_EXTERNAL_CALLS` filtresi ile yaygın runtime/builtin çağrıları dependency graph'a eklenmiyor
 - Sadece proje içi fonksiyonlar `function_calls` tablosuna yazılıyor
 
-### [ ] Git Repository'den Proje Import
+### [x] Git Repository'den Proje Import
 **Sorun:** Şu anda sadece ZIP dosya upload/manual desteklenmiyor, Git repo linki paste etme yok
 **Çözüm Gereken:**
 - "Git Repository URL" input field ekle upload form'unda
@@ -167,6 +167,28 @@
 
 **Tahmini Süre:** 4-6 saat
 **Dosyalar:** frontend/index.html (form), backend/routes/project.py (new endpoint)
+
+**Uygulanan Çözüm (4 Mart 2026):**
+- Frontend: Upload mode toggles (ZIP ↔ Git Repository)
+  - `switchUploadMode()` function: ZIP/Git formları switch ediliyor
+  - Git form: URL, branch, project name, description inputs
+  - Aynı progress tracking UI kullanılıyor
+- Backend: `@bp.route('/import-git', methods=['POST'])` endpoint eklendi
+  - Git clone (--depth 1, shallow clone for speed)
+  - .git directory skipped (only source files processed)
+  - Same file processing & database insertion as ZIP
+  - Error handling: cleanup on failure
+  - Timeout: 5 minutes pour clone operation
+  
+**Code Changes:**
+- `frontend/index.html`: Toggle buttons + Git form eklendi
+- `frontend/js/main.js`: `switchUploadMode()` function, Git form submit handler
+- `backend/routes/project.py`: `import_git_project()` endpoint, subprocess for git clone
+- Import: `subprocess`, `shutil` eklendi
+
+**Requirements:** Git binary gerekli (`git` command available on system)
+
+**Status:** ✅ Syntax OK, ready for testing
 
 ---
 

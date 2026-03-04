@@ -166,6 +166,30 @@ async function deleteProject(projectId) {
 
 function showUpload() {
     showSection('uploadSection');
+    switchUploadMode('zip');  // Default to ZIP upload
+}
+
+function switchUploadMode(mode) {
+    const zipForm = document.getElementById('uploadForm');
+    const gitForm = document.getElementById('gitImportForm');
+    const zipTab = document.getElementById('zipUploadTab');
+    const gitTab = document.getElementById('gitImportTab');
+
+    if (mode === 'zip') {
+        zipForm.style.display = 'block';
+        gitForm.style.display = 'none';
+        zipTab.style.background = '#3498db';
+        zipTab.style.color = 'white';
+        gitTab.style.background = '';
+        gitTab.style.color = '';
+    } else {
+        zipForm.style.display = 'none';
+        gitForm.style.display = 'block';
+        zipTab.style.background = '';
+        zipTab.style.color = '';
+        gitTab.style.background = '#3498db';
+        gitTab.style.color = 'white';
+    }
 }
 
 function showSettings() {
@@ -385,6 +409,67 @@ document.getElementById('uploadForm')?.addEventListener('submit', async (e) => {
         }
     } catch (error) {
         showError('Yükleme Hatası', 'Yükleme hatası oluştu: ' + error);
+        document.getElementById('uploadProgress').style.display = 'none';
+    }
+});
+
+// Git Repository Import Handler
+document.getElementById('gitImportForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const repoUrl = document.getElementById('gitRepoUrl').value.trim();
+    const branch = document.getElementById('gitBranch').value.trim() || 'main';
+    const projectName = document.getElementById('gitProjectName').value.trim();
+    const projectDesc = document.getElementById('gitProjectDesc').value.trim();
+
+    if (!repoUrl || !projectName) {
+        showError('Gerekli Alan Eksik', 'Git URL ve Proje Adı gereklidir');
+        return;
+    }
+
+    try {
+        // Show progress UI
+        const progressSection = document.getElementById('uploadProgress');
+        progressSection.style.display = 'block';
+        
+        const progressBar = document.getElementById('uploadProgressBar');
+        const progressText = document.getElementById('uploadProgressText');
+        const progressDetails = document.getElementById('uploadProgressDetails');
+        const progressTitle = document.querySelector('#uploadProgress h3');
+        if (progressTitle) progressTitle.textContent = 'Git Clone ve Analiz İlerlemesi';
+        
+        if (progressBar) {
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+        }
+        if (progressText) progressText.textContent = 'Repository klonlanıyor...';
+        if (progressDetails) progressDetails.innerHTML = '';
+
+        // Start Git import
+        const response = await fetch(`${API_URL}/projects/import-git`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                url: repoUrl,
+                branch: branch,
+                name: projectName,
+                description: projectDesc
+            })
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.task_id) {
+            // Start polling for progress
+            pollUploadProgress(result.task_id, result.project_id);
+        } else {
+            showError('Git Import Hatası', 'Hata: ' + (result.error || 'Bilinmeyen hata'));
+            progressSection.style.display = 'none';
+        }
+    } catch (error) {
+        showError('Git Import Hatası', 'Hata oluştu: ' + error.message);
         document.getElementById('uploadProgress').style.display = 'none';
     }
 });
@@ -1110,33 +1195,73 @@ async function loadSettings() {
         const response = await fetch(`${API_URL}/ai-settings`);
         const settings = await response.json();
 
-        // TODO: Load settings into form
+        // Load settings into form
+        if (settings.temperature !== undefined) {
+            const tempInput = document.getElementById('temperature');
+            if (tempInput) {
+                tempInput.value = settings.temperature;
+                const tempValue = document.getElementById('temperatureValue');
+                if (tempValue) tempValue.textContent = settings.temperature;
+            }
+        }
+        
+        if (settings.top_p !== undefined) {
+            const topPInput = document.getElementById('topP');
+            if (topPInput) {
+                topPInput.value = settings.top_p;
+                const topPValue = document.getElementById('topPValue');
+                if (topPValue) topPValue.textContent = settings.top_p;
+            }
+        }
+        
+        if (settings.max_tokens !== undefined) {
+            const maxTokensInput = document.getElementById('maxTokens');
+            if (maxTokensInput) {
+                maxTokensInput.value = settings.max_tokens;
+            }
+        }
+        
+        console.log('Settings loaded from database:', settings);
     } catch (error) {
         console.error('Ayarlar yükleme hatası:', error);
     }
 }
 
 async function saveLMSettings() {
+    const tempValue = parseFloat(document.getElementById('temperature').value);
+    const topPValue = parseFloat(document.getElementById('topP').value);
+    const maxTokensValue = parseInt(document.getElementById('maxTokens').value);
+
     const settings = {
-        temperature: document.getElementById('temperature').value,
-        top_p: document.getElementById('topP').value,
-        max_tokens: document.getElementById('maxTokens').value
+        temperature: { value: tempValue, type: 'float' },
+        top_p: { value: topPValue, type: 'float' },
+        max_tokens: { value: maxTokensValue, type: 'integer' }
     };
 
     try {
-        for (const [key, value] of Object.entries(settings)) {
-            await fetch(`${API_URL}/ai-settings/${key}`, {
+        console.log('Saving settings:', settings);
+        
+        for (const [key, setting] of Object.entries(settings)) {
+            const response = await fetch(`${API_URL}/ai-settings/${key}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    value: value,
-                    type: typeof value
+                    value: setting.value,
+                    type: setting.type
                 })
             });
+            
+            if (!response.ok) {
+                throw new Error(`Failed to save ${key}: ${response.statusText}`);
+            }
+            
+            console.log(`Setting ${key} saved successfully`);
         }
-        showSuccess('Başarılı', 'Ayarlar kaydedildi');
+        
+        showSuccess('Başarılı', 'Ayarlar kaydedildi ve sisteme uygulandı');
     } catch (error) {
-        showError('Ayarlar Kaydetme Hatası', 'Ayarlar kaydedilirken hata oluştu: ' + error);
+        console.error('Ayarlar Kaydetme Hatası:', error);
+        showError('Ayarlar Kaydetme Hatası', 'Ayarlar kaydedilirken hata oluştu: ' + error.message);
     }
 }
 
