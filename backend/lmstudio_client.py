@@ -88,10 +88,7 @@ Summary:"""
                 data = response.json()
                 summary = data['choices'][0]['message']['content'].strip()
                 
-                # Limit output to prevent repetition/rambling
-                if len(summary) > 500:
-                    summary = summary[:500] + "..."
-                
+                # Return full summary without truncation
                 return summary
             else:
                 return f"Error: LMStudio returned {response.status_code}"

@@ -420,6 +420,28 @@ body {
     overflow-y: auto;
     position: relative;
     transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-content > div:not(.modal-header):not(.modal-controls):not(.modal-actions) {
+    flex-shrink: 0;
+}
+
+.modal-content #funcModalContent {
+    flex-shrink: 0;
+}
+
+.modal-content #funcModalSummary {
+    flex-shrink: 1;
+    max-height: 35vh !important;
+    overflow-y: auto !important;
+}
+
+.modal-content pre {
+    flex-shrink: 1;
+    max-height: 45vh !important;
+    overflow-y: auto !important;
 }
 
 .modal-content.fullscreen {
