@@ -12,7 +12,7 @@ bp = Blueprint('user', __name__, url_prefix='/api/users')
 def login():
     """User login"""
     data = request.json
-    username = data.get('username')
+    username = (data.get('username') or '').strip()
     password = data.get('password')
     
     if not username or not password:
@@ -57,7 +57,7 @@ def register():
         return jsonify({'error': 'Only admins can create users'}), 403
     
     data = request.json
-    username = data.get('username')
+    username = (data.get('username') or '').strip()
     password = data.get('password')
     role = data.get('role', 'analyzer')
     
@@ -180,11 +180,11 @@ def get_all_users():
 def admin_create_user():
     """Admin: Create new user"""
     data = request.json
-    username = data.get('username')
+    username = (data.get('username') or '').strip()
     password = data.get('password')
     role = data.get('role', 'analyzer')
-    full_name = data.get('full_name', '')
-    email = data.get('email', '')
+    full_name = (data.get('full_name') or '').strip()
+    email = (data.get('email') or '').strip()
     
     if not username or not password:
         return jsonify({'error': 'Username and password required'}), 400
@@ -218,7 +218,8 @@ def admin_get_user(user_id):
     """Admin: Get user details"""
     try:
         rows = db.execute_query(
-            '''SELECT u.*, s.theme, s.notifications_enabled, s.items_per_page
+            '''SELECT u.id, u.username, u.role, u.full_name, u.email, u.is_active, u.created_at,
+                      s.theme, s.notifications_enabled, s.items_per_page
                FROM users u
                LEFT JOIN user_settings s ON u.id = s.user_id
                WHERE u.id = ?''',
@@ -313,7 +314,7 @@ def get_user_settings():
         
         rows = db.execute_query(
             '''SELECT u.id, u.username, u.role, u.full_name, u.email,
-                      s.theme, s.notifications_enabled, s.items_per_page, s.default_filter
+                      s.theme, s.notifications_enabled, s.items_per_page, s.default_filter, s.ai_api_url
                FROM users u
                LEFT JOIN user_settings s ON u.id = s.user_id
                WHERE u.id = ?''',
@@ -373,6 +374,10 @@ def update_user_settings():
         if 'default_filter' in data:
             settings_updates.append('default_filter = ?')
             settings_params.append(data['default_filter'])
+
+        if 'ai_api_url' in data:
+            settings_updates.append('ai_api_url = ?')
+            settings_params.append((data['ai_api_url'] or '').strip() or None)
         
         if settings_updates:
             settings_params.append(user_id)
@@ -380,6 +385,45 @@ def update_user_settings():
             db.execute_update(query, settings_params)
         
         return jsonify({'message': 'Settings updated'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/change-password', methods=['PUT'])
+def change_password():
+    """Change password for current logged-in user"""
+    try:
+        user = get_user_from_session()
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+
+        data = request.json or {}
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+
+        if not current_password or not new_password:
+            return jsonify({'error': 'Current password and new password are required'}), 400
+
+        if len(new_password) < 4:
+            return jsonify({'error': 'New password must be at least 4 characters'}), 400
+
+        if current_password == new_password:
+            return jsonify({'error': 'New password must be different from current password'}), 400
+
+        verify_rows = db.execute_query(
+            'SELECT id FROM users WHERE id = ? AND password = ?',
+            [user['id'], current_password]
+        )
+
+        if not verify_rows:
+            return jsonify({'error': 'Current password is incorrect'}), 401
+
+        db.execute_update(
+            'UPDATE users SET password = ? WHERE id = ?',
+            [new_password, user['id']]
+        )
+
+        return jsonify({'message': 'Password updated successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

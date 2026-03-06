@@ -4,9 +4,11 @@ from backend.analyzers.advanced_analyzer import AdvancedCodeAnalyzer
 from backend.lmstudio_client import LMStudioClient
 from backend.progress_tracker import progress_tracker
 from backend.logger import logger, log_analysis, log_ai_call, log_error
+from backend.permission_manager import get_user_from_session
 import json
 import uuid
 import re
+import threading
 
 CALL_NAME_PATTERN = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(')
 QUALIFIED_CALL_PATTERN = re.compile(r'(\w+)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(')  # receiver.method()
@@ -22,6 +24,44 @@ COMMON_EXTERNAL_CALLS = {
     'fetch', 'setTimeout', 'setInterval', 'require', 'console', 'log',
     'System', 'Math', 'String', 'Integer', 'Long', 'Double'
 }
+
+
+def _is_ai_error_response(summary_text):
+    """True when model output is an error payload, not a valid summary."""
+    if not summary_text:
+        return True
+    text = str(summary_text).strip()
+    return (
+        text.startswith('Error:')
+        or 'LMStudio returned 400' in text
+        or text.startswith('⚠️ AI Analiz Hatası:')
+    )
+
+
+def _load_ai_runtime_settings():
+    """Load runtime AI generation parameters from ai_settings table."""
+    ai_settings = {}
+    settings_rows = db.execute_query(
+        'SELECT setting_name, setting_value, data_type FROM ai_settings'
+    )
+    for row in settings_rows:
+        setting = dict(row)
+        name = setting['setting_name']
+        value = setting['setting_value']
+        data_type = setting['data_type']
+
+        if data_type == 'integer':
+            ai_settings[name] = int(value)
+        elif data_type == 'float':
+            ai_settings[name] = float(value)
+        else:
+            ai_settings[name] = value
+
+    return {
+        'temperature': ai_settings.get('temperature'),
+        'top_p': ai_settings.get('top_p'),
+        'max_tokens': ai_settings.get('max_tokens')
+    }
 
 
 def extract_imported_symbols(content, language):
@@ -74,7 +114,8 @@ bp = Blueprint('analysis', __name__, url_prefix='/api/analysis')
 def test_lmstudio_connection():
     """Test LMStudio connection"""
     try:
-        client = LMStudioClient()
+        user = get_user_from_session()
+        client = LMStudioClient(user_id=user['id'] if user else None)
         status = client.test_connection()
         return jsonify(status), 200 if status['status'] == 'connected' else 503
     except Exception as e:
@@ -523,7 +564,7 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
         qualified_name = f"{dep_class}.{dep_name}" if dep_class else dep_name
         
         # If dependency doesn't have summary, generate it recursively
-        if not dep_summary or not dep_summary.strip() or dep_summary.startswith('⚠️'):
+        if not dep_summary or not dep_summary.strip() or dep_summary.startswith('⚠️') or dep_summary.startswith('Error:'):
             logger.info(f"Dependency {qualified_name} (ID: {dep_id}) has no summary, generating recursively...")
             if task_id:
                 progress_tracker.update(
@@ -550,6 +591,12 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
     log_ai_call(function_id, f"Generating summary for {qualified_func_name}", code_lines=end_line-start_line, dependencies=len(dependency_summaries))
     
     if task_id:
+        progress_tracker.set_metrics(
+            task_id,
+            total_functions=max(total_deps, 1),
+            completed_functions=processed,
+            active_thread=threading.current_thread().name,
+        )
         progress_tracker.update(
             task_id,
             step=f"LMStudio'ya gönderiliyor: {qualified_func_name}",
@@ -561,7 +608,27 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
                                      temperature=temperature, top_p=top_p, max_tokens=max_tokens)
     log_ai_call(function_id, "AI summary received", summary_length=len(summary))
     
-    # Save summary
+    if _is_ai_error_response(summary):
+        logger.warning(
+            f"AI summary not saved for function {function_id} ({qualified_func_name}) due to AI error response: {summary[:120]}"
+        )
+        processed += 1
+        if task_id:
+            progress = int((processed / max(total_deps, 1)) * 100)
+            progress_tracker.set_metrics(
+                task_id,
+                total_functions=max(total_deps, 1),
+                completed_functions=processed,
+                active_thread=threading.current_thread().name,
+            )
+            progress_tracker.update(
+                task_id,
+                progress=progress,
+                detail=f"⚠️ Hata alındı, kaydedilmedi: {qualified_func_name}"
+            )
+        return None, processed
+
+    # Save only valid summaries
     db.execute_update(
         'UPDATE functions SET ai_summary = ? WHERE id = ?',
         (summary, function_id)
@@ -570,6 +637,12 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
     processed += 1
     if task_id:
         progress = int((processed / max(total_deps, 1)) * 100)
+        progress_tracker.set_metrics(
+            task_id,
+            total_functions=max(total_deps, 1),
+            completed_functions=processed,
+            active_thread=threading.current_thread().name,
+        )
         progress_tracker.update(
             task_id,
             progress=progress,
@@ -598,12 +671,16 @@ def get_ai_summary(function_id):
             )
         
         # Check LMStudio connection first
-        client = LMStudioClient()
+        user = get_user_from_session()
+        client = LMStudioClient(user_id=user['id'] if user else None)
         connection_status = client.test_connection()
         
         if connection_status['status'] != 'connected':
             # LMStudio not available - return error immediately without timeout
-            summary = f"⚠️ AI Analiz Hatası: {connection_status['message']}\n\nLMStudio sunucusu çalışmıyor. Lütfen LMStudio'yu başlatmaya çalışın (http://localhost:1234)"
+            summary = (
+                f"⚠️ AI Analiz Hatası: {connection_status['message']}\n\n"
+                f"LMStudio sunucusu çalışmıyor. Lütfen LMStudio'yu başlatmaya çalışın ({client.api_url})"
+            )
             log_ai_call(function_id, "LMStudio not connected", error=connection_status['message'])
             
             if task_id:
@@ -612,12 +689,6 @@ def get_ai_summary(function_id):
                     success=False,
                     message=f"LMStudio bağlantı hatası: {connection_status['message']}"
                 )
-            
-            # Save error state
-            db.execute_update(
-                'UPDATE functions SET ai_summary = ? WHERE id = ?',
-                (summary, function_id)
-            )
             
             # Get function name for response
             row = db.execute_query(
@@ -629,8 +700,9 @@ def get_ai_summary(function_id):
             return jsonify({
                 'function_id': function_id,
                 'function_name': func_name,
-                'summary': summary
-            }), 200
+                'summary': summary,
+                'saved': False
+            }), 503
         
         if task_id:
             progress_tracker.update(
@@ -656,39 +728,36 @@ def get_ai_summary(function_id):
                 step='AI özeti üretiliyor...',
                 detail=f'Toplam {total_deps} fonksiyon özetlenecek'
             )
+            progress_tracker.set_metrics(
+                task_id,
+                total_functions=max(total_deps, 1),
+                completed_functions=0,
+                active_thread=threading.current_thread().name,
+            )
         
-        # Get AI settings from database
-        ai_settings = {}
-        settings_rows = db.execute_query(
-            'SELECT setting_name, setting_value, data_type FROM ai_settings'
-        )
-        for row in settings_rows:
-            setting = dict(row)
-            name = setting['setting_name']
-            value = setting['setting_value']
-            data_type = setting['data_type']
-            
-            # Convert to proper type
-            if data_type == 'integer':
-                ai_settings[name] = int(value)
-            elif data_type == 'float':
-                ai_settings[name] = float(value)
-            else:
-                ai_settings[name] = value
-        
-        # Extract relevant parameters for AI call
-        temperature = ai_settings.get('temperature')
-        top_p = ai_settings.get('top_p')
-        max_tokens = ai_settings.get('max_tokens')
+        settings = _load_ai_runtime_settings()
+        temperature = settings['temperature']
+        top_p = settings['top_p']
+        max_tokens = settings['max_tokens']
         
         # Generate summary recursively (will handle dependencies automatically)
         summary, _ = _generate_ai_summary_recursive(function_id, client, task_id=task_id, total_deps=total_deps,
                                                    temperature=temperature, top_p=top_p, max_tokens=max_tokens)
         
         if not summary:
+            # Distinguish missing function from failed AI generation
+            row = db.execute_query(
+                'SELECT function_name FROM functions WHERE id = ?',
+                (function_id,)
+            )
+            if not row:
+                if task_id:
+                    progress_tracker.complete(task_id, success=False, message='Fonksiyon bulunamadı')
+                return jsonify({'error': 'Function not found'}), 404
+
             if task_id:
-                progress_tracker.complete(task_id, success=False, message='Fonksiyon bulunamadı')
-            return jsonify({'error': 'Function not found'}), 404
+                progress_tracker.complete(task_id, success=False, message='AI yanıtı geçersiz olduğu için kaydedilmedi')
+            return jsonify({'error': 'AI response was invalid and not saved'}), 502
         
         # Get function name for response
         row = db.execute_query(
@@ -720,10 +789,14 @@ def get_ai_summary(function_id):
 def analyze_file_missing_functions(file_id):
     """Analyze all missing function summaries in a file"""
     try:
+        task_id = request.args.get('task_id')
+
         # Get all functions in this file without summaries
         func_result = db.execute_query(
             '''SELECT f.id FROM functions f
-               WHERE f.file_id = ? AND (f.ai_summary IS NULL OR f.ai_summary = '' OR f.ai_summary LIKE '⚠️%')
+               WHERE f.file_id = ? AND (
+                   f.ai_summary IS NULL OR f.ai_summary = '' OR f.ai_summary LIKE '⚠️%' OR f.ai_summary LIKE 'Error:%'
+               )
                ORDER BY f.id''',
             (file_id,)
         )
@@ -732,45 +805,62 @@ def analyze_file_missing_functions(file_id):
             return jsonify({
                 'success': True,
                 'message': 'Bu dosyanın tüm fonksiyonlarının özeti var',
-                'functions_analyzed': 0
+                'functions_analyzed': 0,
+                'task_id': task_id
             }), 200
+
+        total_funcs = len(func_result)
+        if task_id:
+            progress_tracker.start_task(task_id, total_steps=100)
+            progress_tracker.set_metrics(
+                task_id,
+                total_functions=total_funcs,
+                completed_functions=0,
+                active_thread=threading.current_thread().name,
+            )
+            progress_tracker.update(
+                task_id,
+                progress=5,
+                step='Dosya analizi hazırlanıyor...',
+                detail=f'Toplam {total_funcs} fonksiyon analiz edilecek'
+            )
         
         # Create LMStudio client
-        client = LMStudioClient()
+        user = get_user_from_session()
+        client = LMStudioClient(user_id=user['id'] if user else None)
         connection_status = client.test_connection()
         
         if connection_status['status'] != 'connected':
+            if task_id:
+                progress_tracker.complete(task_id, success=False, message=f"LMStudio bağlantı hatası: {connection_status['message']}")
             return jsonify({
                 'success': False,
                 'error': f"LMStudio bağlantı hatası: {connection_status['message']}"
             }), 503
         
-        # Get AI settings from database
-        ai_settings = {}
-        settings_rows = db.execute_query(
-            'SELECT setting_name, setting_value, data_type FROM ai_settings'
-        )
-        for row in settings_rows:
-            setting = dict(row)
-            name = setting['setting_name']
-            value = setting['setting_value']
-            data_type = setting['data_type']
-            
-            if data_type == 'integer':
-                ai_settings[name] = int(value)
-            elif data_type == 'float':
-                ai_settings[name] = float(value)
-            else:
-                ai_settings[name] = value
-        
-        temperature = ai_settings.get('temperature')
-        top_p = ai_settings.get('top_p')
-        max_tokens = ai_settings.get('max_tokens')
+        settings = _load_ai_runtime_settings()
+        temperature = settings['temperature']
+        top_p = settings['top_p']
+        max_tokens = settings['max_tokens']
         
         # Analyze each function
         analyzed = 0
-        for func_row in func_result:
+        for idx, func_row in enumerate(func_result):
             func_id = func_row[0]
+
+            if task_id:
+                progress_tracker.update(
+                    task_id,
+                    progress=min(95, 10 + int((idx / max(total_funcs, 1)) * 85)),
+                    step=f'Fonksiyon analizi ({idx + 1}/{total_funcs})',
+                    detail=f'Fonksiyon ID {func_id} analiz ediliyor'
+                )
+                progress_tracker.set_metrics(
+                    task_id,
+                    total_functions=total_funcs,
+                    completed_functions=analyzed,
+                    active_thread=threading.current_thread().name,
+                )
             
             # Get total functions to set up progress tracking
             dep_count_rows = db.execute_query(
@@ -790,21 +880,218 @@ def analyze_file_missing_functions(file_id):
                 total_deps=total_deps
             )
             
-            if summary and not summary.startswith('Error'):
+            if summary and not _is_ai_error_response(summary):
                 analyzed += 1
+
+            if task_id:
+                progress_tracker.set_metrics(
+                    task_id,
+                    total_functions=total_funcs,
+                    completed_functions=analyzed,
+                    active_thread=threading.current_thread().name,
+                )
+
+        if task_id:
+            progress_tracker.complete(task_id, success=True, message=f'Dosya analizi tamamlandı ({analyzed}/{total_funcs})')
         
         return jsonify({
             'success': True,
             'functions_analyzed': analyzed,
-            'message': f'{analyzed} fonksiyon İncelendi'
+            'functions_total': total_funcs,
+            'message': f'{analyzed} fonksiyon İncelendi',
+            'task_id': task_id
         }), 200
     
     except Exception as e:
         log_error(f"analyze_file_missing_functions (file: {file_id})", e)
+        task_id = request.args.get('task_id')
+        if task_id:
+            progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
         return jsonify({
             'success': False,
             'error': str(e)
         }), 500
+
+
+@bp.route('/errors', methods=['GET'])
+def list_error_summaries():
+    """List functions whose AI summary starts with Error:"""
+    try:
+        project_id = request.args.get('project_id')
+
+        query = '''SELECT f.id as function_id, f.function_name, f.class_name, f.ai_summary,
+                          f.project_id, p.name as project_name, s.file_path
+                   FROM functions f
+                   LEFT JOIN projects p ON f.project_id = p.id
+                   LEFT JOIN source_files s ON f.file_id = s.id
+                   WHERE f.ai_summary LIKE 'Error:%' '''
+        params = []
+
+        if project_id:
+            query += ' AND f.project_id = ? '
+            params.append(project_id)
+
+        query += ' ORDER BY f.project_id, s.file_path, f.id '
+
+        rows = db.execute_query(query, params)
+        items = []
+        for row in rows:
+            item = dict(row)
+            class_name = item.get('class_name')
+            fn_name = item.get('function_name')
+            item['qualified_name'] = f"{class_name}.{fn_name}" if class_name else fn_name
+            items.append(item)
+
+        return jsonify({'total': len(items), 'items': items}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/errors/clear', methods=['POST'])
+def clear_error_summaries():
+    """Clear Error: summaries (set ai_summary to NULL)."""
+    try:
+        data = request.json or {}
+        function_ids = data.get('function_ids')
+        project_id = data.get('project_id')
+
+        if function_ids:
+            placeholders = ','.join(['?'] * len(function_ids))
+            params = list(function_ids)
+            query = f"UPDATE functions SET ai_summary = NULL WHERE id IN ({placeholders}) AND ai_summary LIKE 'Error:%'"
+            cleared = db.execute_update(query, params)
+        elif project_id:
+            cleared = db.execute_update(
+                "UPDATE functions SET ai_summary = NULL WHERE project_id = ? AND ai_summary LIKE 'Error:%'",
+                [project_id]
+            )
+        else:
+            cleared = db.execute_update(
+                "UPDATE functions SET ai_summary = NULL WHERE ai_summary LIKE 'Error:%'"
+            )
+
+        return jsonify({'success': True, 'cleared': cleared}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@bp.route('/errors/reanalyze', methods=['POST'])
+def reanalyze_error_summaries():
+    """Re-analyze functions with Error: summaries recursively (including errored dependencies)."""
+    task_id = request.args.get('task_id')
+    try:
+        data = request.json or {}
+        function_ids = data.get('function_ids')
+        project_id = data.get('project_id')
+
+        if function_ids:
+            placeholders = ','.join(['?'] * len(function_ids))
+            rows = db.execute_query(
+                f"SELECT id FROM functions WHERE id IN ({placeholders})",
+                list(function_ids)
+            )
+        elif project_id:
+            rows = db.execute_query(
+                "SELECT id FROM functions WHERE project_id = ? AND ai_summary LIKE 'Error:%' ORDER BY id",
+                [project_id]
+            )
+        else:
+            rows = db.execute_query(
+                "SELECT id FROM functions WHERE ai_summary LIKE 'Error:%' ORDER BY id"
+            )
+
+        targets = [dict(r)['id'] for r in rows]
+        total = len(targets)
+
+        if total == 0:
+            return jsonify({'success': True, 'message': 'Yeniden analiz gerektiren Error özeti bulunamadı', 'total': 0}), 200
+
+        if task_id:
+            progress_tracker.start_task(task_id, total_steps=100)
+            progress_tracker.set_metrics(
+                task_id,
+                total_functions=total,
+                completed_functions=0,
+                active_thread=threading.current_thread().name,
+            )
+            progress_tracker.update(task_id, progress=5, step='Error özetleri yeniden analiz ediliyor...', detail=f'{total} fonksiyon işlenecek')
+
+        user = get_user_from_session()
+        client = LMStudioClient(user_id=user['id'] if user else None)
+        connection_status = client.test_connection()
+        if connection_status['status'] != 'connected':
+            if task_id:
+                progress_tracker.complete(task_id, success=False, message=f"LMStudio bağlantı hatası: {connection_status['message']}")
+            return jsonify({'success': False, 'error': connection_status['message']}), 503
+
+        settings = _load_ai_runtime_settings()
+        temperature = settings['temperature']
+        top_p = settings['top_p']
+        max_tokens = settings['max_tokens']
+
+        completed = 0
+        success_count = 0
+        failed_count = 0
+
+        for idx, function_id in enumerate(targets):
+            if task_id:
+                progress_tracker.update(
+                    task_id,
+                    progress=min(95, 10 + int((idx / max(total, 1)) * 85)),
+                    step=f'Error özeti yeniden analiz ({idx + 1}/{total})',
+                    detail=f'Fonksiyon ID {function_id}'
+                )
+
+            dep_count_rows = db.execute_query(
+                '''SELECT COUNT(DISTINCT fc.callee_function_id) as cnt
+                   FROM function_calls fc
+                   WHERE fc.caller_function_id = ?''',
+                (function_id,)
+            )
+            total_deps = dict(dep_count_rows[0])['cnt'] + 1 if dep_count_rows else 1
+
+            summary, _ = _generate_ai_summary_recursive(
+                function_id,
+                client,
+                total_deps=total_deps,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens
+            )
+
+            completed += 1
+            if summary and not _is_ai_error_response(summary):
+                success_count += 1
+            else:
+                failed_count += 1
+
+            if task_id:
+                progress_tracker.set_metrics(
+                    task_id,
+                    total_functions=total,
+                    completed_functions=completed,
+                    active_thread=threading.current_thread().name,
+                )
+
+        if task_id:
+            progress_tracker.complete(
+                task_id,
+                success=True,
+                message=f'Reanalyze tamamlandı ({success_count}/{total})'
+            )
+
+        return jsonify({
+            'success': True,
+            'total': total,
+            'reanalyzed': success_count,
+            'failed': failed_count,
+            'task_id': task_id,
+            'message': f'{success_count} fonksiyon başarıyla yeniden analiz edildi'
+        }), 200
+    except Exception as e:
+        if task_id:
+            progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @bp.route('/function/<int:function_id>', methods=['GET'])
 def get_function_details(function_id):

@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from backend.database import db
+from backend.permission_manager import get_user_from_session
 
 bp = Blueprint('ai_settings', __name__, url_prefix='/api/ai-settings')
 
@@ -59,7 +60,8 @@ def test_lmstudio():
     """Test LMStudio connection"""
     try:
         from backend.lmstudio_client import LMStudioClient
-        client = LMStudioClient()
+        user = get_user_from_session()
+        client = LMStudioClient(user_id=user['id'] if user else None)
         result = client.test_connection()
         return jsonify(result), 200
     except Exception as e:

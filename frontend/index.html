@@ -182,6 +182,11 @@
             <div id="reportSection" class="section">
                 <h2>📊 AI Özet Kapsama Raporu</h2>
                 <button class="btn btn-primary" onclick="loadReport()">📊 Rapor Oluştur</button>
+                <div id="analysisMonitor" style="display:none; margin-top: 16px; background: #f8fbff; border: 1px solid #d6e9ff; border-radius: 6px; padding: 12px;">
+                    <h3 style="margin: 0 0 8px 0;">🤖 AI Analiz İşleri</h3>
+                    <div id="analysisGlobalStats" style="font-size: 13px; color: #2c3e50; margin-bottom: 8px;"></div>
+                    <div id="analysisTaskList"></div>
+                </div>
                 <div id="reportContainer" style="margin-top: 20px;">
                     <!-- Report will be loaded here -->
                 </div>
@@ -194,7 +199,7 @@
                     <div class="settings-group">
                         <h3>LMStudio Ayarları</h3>
                         <div class="setting-item">
-                            <label>API URL:</label>
+                            <label>API URL (Kullanıcıya Özel):</label>
                             <input type="text" id="apiUrl" placeholder="http://localhost:1234/v1">
                         </div>
                         <div class="setting-item">
@@ -243,6 +248,23 @@
                                 <option value="postgresql">PostgreSQL (Gelecek)</option>
                             </select>
                         </div>
+                    </div>
+
+                    <div class="settings-group">
+                        <h3>Şifre Değiştir</h3>
+                        <div class="setting-item">
+                            <label>Mevcut Şifre:</label>
+                            <input type="password" id="currentPassword" placeholder="Mevcut şifrenizi girin">
+                        </div>
+                        <div class="setting-item">
+                            <label>Yeni Şifre:</label>
+                            <input type="password" id="newPassword" placeholder="Yeni şifre (en az 4 karakter)">
+                        </div>
+                        <div class="setting-item">
+                            <label>Yeni Şifre (Tekrar):</label>
+                            <input type="password" id="confirmNewPassword" placeholder="Yeni şifreyi tekrar girin">
+                        </div>
+                        <button class="btn btn-primary" onclick="changePassword()">Şifreyi Değiştir</button>
                     </div>
                 </div>
             </div>

@@ -2,13 +2,259 @@
 // SECTION: Report Functions
 // ============================================
 
+const analysisJobs = new Map();
+
+function formatEta(seconds) {
+    if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
+    const s = Math.max(0, parseInt(seconds, 10));
+    if (s < 60) return `${s} sn`;
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m} dk ${r} sn`;
+}
+
+function renderAnalysisMonitor() {
+    const monitor = document.getElementById('analysisMonitor');
+    const list = document.getElementById('analysisTaskList');
+    const stats = document.getElementById('analysisGlobalStats');
+    if (!monitor || !list || !stats) return;
+
+    const jobs = Array.from(analysisJobs.values());
+    if (jobs.length === 0) {
+        monitor.style.display = 'none';
+        list.innerHTML = '';
+        stats.textContent = '';
+        return;
+    }
+
+    monitor.style.display = 'block';
+
+    let totalFunctions = 0;
+    let completedFunctions = 0;
+    let remainingFunctions = 0;
+    let etaTotal = 0;
+    let etaCount = 0;
+
+    jobs.forEach(job => {
+        const m = job.metrics || {};
+        totalFunctions += m.total_functions || 0;
+        completedFunctions += m.completed_functions || 0;
+        remainingFunctions += m.remaining_functions || 0;
+        if (typeof m.estimated_remaining_seconds === 'number' && job.status === 'started') {
+            etaTotal += m.estimated_remaining_seconds;
+            etaCount += 1;
+        }
+    });
+
+    const combinedEta = etaCount > 0 ? Math.round(etaTotal / etaCount) : null;
+    stats.innerHTML = `
+        <strong>Aktif İş:</strong> ${jobs.filter(j => j.status === 'started').length} |
+        <strong>Toplam Fonksiyon:</strong> ${totalFunctions} |
+        <strong>Biten:</strong> ${completedFunctions} |
+        <strong>Kalan:</strong> ${remainingFunctions} |
+        <strong>Tahmini Süre:</strong> ${formatEta(combinedEta)}
+    `;
+
+    list.innerHTML = jobs.map(job => {
+        const m = job.metrics || {};
+        const progress = job.progress || 0;
+        const color = job.status === 'completed' ? '#27ae60' : job.status === 'failed' ? '#e74c3c' : '#3498db';
+        const threadName = m.active_thread || '-';
+        return `
+            <div style="background:white; border:1px solid #e4ecf5; border-left:4px solid ${color}; border-radius:4px; padding:8px; margin-bottom:8px;">
+                <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                    <div><strong>${job.label}</strong> <span style="color:#7f8c8d; font-size:12px;">(${job.taskId})</span></div>
+                    <div style="font-size:12px; color:${color}; font-weight:bold;">${job.status.toUpperCase()} - ${progress}%</div>
+                </div>
+                <div style="height:8px; background:#ecf0f1; border-radius:4px; overflow:hidden; margin:6px 0;">
+                    <div style="width:${progress}%; height:100%; background:${color};"></div>
+                </div>
+                <div style="font-size:12px; color:#2c3e50;">
+                    Thread: <strong>${threadName}</strong> |
+                    Başlayan: <strong>${m.total_functions || 0}</strong> |
+                    Biten: <strong>${m.completed_functions || 0}</strong> |
+                    Kalan: <strong>${m.remaining_functions || 0}</strong> |
+                    ETA: <strong>${formatEta(m.estimated_remaining_seconds)}</strong>
+                </div>
+                <div style="font-size:12px; color:#555; margin-top:4px;">${job.current_step || '-'}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function removeAnalysisJob(taskId) {
+    const job = analysisJobs.get(taskId);
+    if (job && job.pollTimer) {
+        clearInterval(job.pollTimer);
+    }
+    analysisJobs.delete(taskId);
+    renderAnalysisMonitor();
+}
+
+function pollAnalysisTask(taskId) {
+    const job = analysisJobs.get(taskId);
+    if (!job) return;
+
+    const tick = async () => {
+        try {
+            const response = await fetch(`${API_URL}/projects/progress/${taskId}`);
+            if (!response.ok) {
+                if (response.status === 404) return; // task may not be initialized yet
+                throw new Error(`Progress endpoint error: ${response.status}`);
+            }
+
+            const progress = await response.json();
+            job.progress = progress.progress || 0;
+            job.status = progress.status || 'started';
+            job.current_step = progress.current_step || '';
+            job.metrics = progress.metrics || {};
+            renderAnalysisMonitor();
+
+            if (job.status === 'completed' || job.status === 'failed') {
+                clearInterval(job.pollTimer);
+                job.pollTimer = null;
+                if (job.status === 'completed') {
+                    setTimeout(() => loadReport(), 500);
+                }
+                setTimeout(() => removeAnalysisJob(taskId), 12000);
+            }
+        } catch (err) {
+            job.current_step = `Polling hatası: ${err}`;
+            renderAnalysisMonitor();
+        }
+    };
+
+    tick();
+    job.pollTimer = setInterval(tick, 1200);
+}
+
+function startTrackedAnalysis(taskId, label, requestPromise) {
+    analysisJobs.set(taskId, {
+        taskId,
+        label,
+        status: 'started',
+        progress: 0,
+        current_step: 'Analiz işi kuyruğa alındı...',
+        metrics: {
+            total_functions: 0,
+            completed_functions: 0,
+            remaining_functions: 0,
+            active_thread: null,
+            estimated_remaining_seconds: null,
+        },
+        pollTimer: null,
+    });
+    renderAnalysisMonitor();
+    pollAnalysisTask(taskId);
+
+    requestPromise
+        .then(async (response) => {
+            const data = await response.json().catch(() => ({}));
+            const job = analysisJobs.get(taskId);
+            if (!job) return;
+
+            if (!response.ok) {
+                job.status = 'failed';
+                job.current_step = data.error || `Analiz başarısız (${response.status})`;
+                renderAnalysisMonitor();
+                return;
+            }
+
+            if (data.error) {
+                job.status = 'failed';
+                job.current_step = data.error;
+                renderAnalysisMonitor();
+                return;
+            }
+
+            if (job.status !== 'completed') {
+                job.current_step = data.message || 'Analiz tamamlandı';
+                renderAnalysisMonitor();
+            }
+        })
+        .catch((err) => {
+            const job = analysisJobs.get(taskId);
+            if (!job) return;
+            job.status = 'failed';
+            job.current_step = `İstek hatası: ${err}`;
+            renderAnalysisMonitor();
+        });
+}
+
 function loadReport() {
-    fetch(`${API_URL}/report`)
-        .then(response => response.json())
-        .then(data => {
-            renderReport(data);
+    Promise.all([
+        fetch(`${API_URL}/report`).then(r => r.json()),
+        fetch(`${API_URL}/analysis/errors`).then(r => r.json())
+    ])
+        .then(([reportData, errorData]) => {
+            renderReport(reportData, errorData);
         })
         .catch(err => showError('Hata', `Rapor yüklenirken hata: ${err}`));
+}
+
+function clearErrorSummary(functionId) {
+    fetch(`${API_URL}/analysis/errors/clear`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ function_ids: [functionId] })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showSuccess('Başarılı', 'Error özeti temizlendi');
+            loadReport();
+        } else {
+            showError('Hata', data.error || 'Temizleme başarısız');
+        }
+    })
+    .catch(err => showError('Hata', `Temizleme sırasında hata: ${err}`));
+}
+
+function clearAllErrorSummaries() {
+    if (!confirm('Tüm Error: özetleri temizlemek istiyor musunuz?')) return;
+
+    fetch(`${API_URL}/analysis/errors/clear`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showSuccess('Başarılı', `${data.cleared} adet Error özeti temizlendi`);
+            loadReport();
+        } else {
+            showError('Hata', data.error || 'Toplu temizleme başarısız');
+        }
+    })
+    .catch(err => showError('Hata', `Toplu temizleme sırasında hata: ${err}`));
+}
+
+function reanalyzeErrorSummary(functionId) {
+    const taskId = `ai-error-func-${functionId}-${Date.now()}`;
+    startTrackedAnalysis(
+        taskId,
+        `Error Re-Analyze: #${functionId}`,
+        fetch(`${API_URL}/analysis/errors/reanalyze?task_id=${encodeURIComponent(taskId)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ function_ids: [functionId] })
+        })
+    );
+}
+
+function reanalyzeAllErrorSummaries() {
+    if (!confirm('Tüm Error: özetler tekrar AI analizine sokulacak. Devam edilsin mi?')) return;
+    const taskId = `ai-error-all-${Date.now()}`;
+    startTrackedAnalysis(
+        taskId,
+        'Error Re-Analyze: Tümü',
+        fetch(`${API_URL}/analysis/errors/reanalyze?task_id=${encodeURIComponent(taskId)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        })
+    );
 }
 
 function toggleFileDetails(button, fileId) {
@@ -24,45 +270,31 @@ function toggleFileDetails(button, fileId) {
 
 function analyzeMissingFunctions(projectId, fileName, fileId) {
     if (confirm(`"${fileName}" dosyasındaki tüm eksik özetler oluşturulacak. Devam etmek istiyor musunuz?`)) {
-        showSuccess('Bilgi', `"${fileName}" dosyasının analizi başlatıldı...`);
-        // Get all functions in this file that don't have summaries
-        fetch(`${API_URL}/analysis/file/${fileId}?missing_only=true`, {
-            method: 'POST'
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showSuccess('Başarılı', `Dosya analizi tamamlandı`);
-                setTimeout(() => loadReport(), 1000);
-            } else {
-                showError('Hata', data.error || 'Analiz yapılamadı');
-            }
-        })
-        .catch(err => showError('Hata', `Analiz sırasında hata: ${err}`));
+        const taskId = `ai-file-${fileId}-${Date.now()}`;
+        showSuccess('Bilgi', `"${fileName}" için analiz işi başlatıldı`);
+        startTrackedAnalysis(
+            taskId,
+            `Dosya Analizi: ${fileName}`,
+            fetch(`${API_URL}/analysis/file/${fileId}?missing_only=true&task_id=${encodeURIComponent(taskId)}`, {
+                method: 'POST'
+            })
+        );
     }
 }
 
 function analyzeSingleFunction(functionId) {
     // Generate AI summary for single function
-    const taskId = `task-${Date.now()}`;
-    fetch(`${API_URL}/analysis/function/${functionId}/ai-summary?task_id=${taskId}`, {
-        method: 'POST'
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.summary) {
-            showSuccess('Başarılı', `Fonksiyon özeti oluşturuldu`);
-            setTimeout(() => loadReport(), 500);
-        } else if (data.error) {
-            showError('Hata', data.error);
-        } else {
-            showError('Hata', 'Özet oluşturulamadı');
-        }
-    })
-    .catch(err => showError('Hata', `AI özeti alırken hata: ${err}`));
+    const taskId = `ai-func-${functionId}-${Date.now()}`;
+    startTrackedAnalysis(
+        taskId,
+        `Fonksiyon Analizi: #${functionId}`,
+        fetch(`${API_URL}/analysis/function/${functionId}/ai-summary?task_id=${encodeURIComponent(taskId)}`, {
+            method: 'POST'
+        })
+    );
 }
 
-function renderReport(reportData) {
+function renderReport(reportData, errorData) {
     const container = document.getElementById('reportContainer');
     
     const stats = reportData.statistics;
@@ -87,6 +319,41 @@ function renderReport(reportData) {
                     <div style="color: #7f8c8d; font-size: 14px;">Kapsama Oranı</div>
                 </div>
             </div>
+        </div>
+    `;
+
+    const errorItems = (errorData && Array.isArray(errorData.items)) ? errorData.items : [];
+    html += `
+        <div style="background: #fff8f8; padding: 16px; border-radius: 6px; margin-bottom: 18px; border: 1px solid #ffd9d9;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+                <h3 style="margin:0; color:#c0392b;">🚨 Error: Özetleri</h3>
+                <div style="display:flex; gap:8px;">
+                    <button class="btn btn-sm" onclick="reanalyzeAllErrorSummaries()" style="background:#3498db; color:white; border:none; border-radius:4px; padding:6px 10px; cursor:pointer;">🤖 Tümünü Tekrar Analiz Et</button>
+                    <button class="btn btn-sm" onclick="clearAllErrorSummaries()" style="background:#e67e22; color:white; border:none; border-radius:4px; padding:6px 10px; cursor:pointer;">🧹 Tüm Error Özetlerini Temizle</button>
+                </div>
+            </div>
+            <div style="font-size:13px; color:#7f8c8d; margin-bottom:8px;">Toplam Error özeti: <strong>${errorItems.length}</strong></div>
+            ${errorItems.length === 0 ? `
+                <div style="color:#27ae60; font-size:13px;">✅ Error: ile başlayan özet bulunamadı</div>
+            ` : `
+                <div style="max-height:320px; overflow:auto; border-top:1px solid #f0cfcf; padding-top:8px;">
+                    ${errorItems.map(item => `
+                        <div style="background:white; border:1px solid #f2dede; border-left:4px solid #e74c3c; border-radius:4px; padding:8px; margin-bottom:8px;">
+                            <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                                <div>
+                                    <strong>${item.qualified_name}</strong>
+                                    <div style="font-size:12px; color:#7f8c8d;">${item.project_name || '-'} • ${item.file_path || '-'}</div>
+                                </div>
+                                <div style="display:flex; gap:6px;">
+                                    <button onclick="reanalyzeErrorSummary(${item.function_id})" style="background:#3498db; color:white; border:none; border-radius:3px; padding:4px 8px; cursor:pointer;">🤖 Tekrar AI Analiz</button>
+                                    <button onclick="clearErrorSummary(${item.function_id})" style="background:#e67e22; color:white; border:none; border-radius:3px; padding:4px 8px; cursor:pointer;">🧹 Temizle</button>
+                                </div>
+                            </div>
+                            <div style="font-size:12px; color:#c0392b; margin-top:6px; white-space:pre-wrap;">${(item.ai_summary || '').slice(0, 260)}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            `}
         </div>
     `;
     
@@ -273,11 +540,11 @@ function hideCreateUserForm() {
 }
 
 function createNewUser() {
-    const username = document.getElementById('newUsername').value;
+    const username = document.getElementById('newUsername').value.trim();
     const password = document.getElementById('newPassword').value;
     const role = document.getElementById('newUserRole').value;
-    const fullName = document.getElementById('newUserFullName').value;
-    const email = document.getElementById('newUserEmail').value;
+    const fullName = document.getElementById('newUserFullName').value.trim();
+    const email = document.getElementById('newUserEmail').value.trim();
     
     if (!username || !password) {
         showError('Hata', 'Kullanıcı adı ve şifre gerekli');

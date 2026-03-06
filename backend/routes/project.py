@@ -12,6 +12,34 @@ import shutil
 
 bp = Blueprint('project', __name__, url_prefix='/api/projects')
 
+LANGUAGE_ALIASES = {
+    'js': 'javascript',
+    'mjs': 'javascript',
+    'cjs': 'javascript',
+    'jsx': 'javascript',
+    'ts': 'typescript',
+    'tsx': 'typescript',
+    'htm': 'html',
+    'xhtml': 'html',
+    'jspf': 'jsp',
+    'tag': 'jsp',
+    'tagx': 'jsp',
+}
+
+# WAR içindeki web içeriklerini özellikle dahil et
+WAR_TEXT_EXTENSIONS = {
+    'html', 'htm', 'xhtml', 'jsp', 'jspf', 'tag', 'tagx',
+    'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'css', 'scss', 'sass', 'less',
+    'xml', 'json', 'yml', 'yaml', 'properties', 'sql',
+    'java', 'kt', 'groovy', 'py', 'php', 'txt', 'md'
+}
+
+SKIP_BINARY_EXTENSIONS = {
+    'jar', 'war', 'zip', 'class', 'exe', 'dll', 'so', 'dylib',
+    'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'svgz',
+    'pdf', 'woff', 'woff2', 'ttf', 'eot', 'otf', 'mp3', 'mp4', 'avi', 'mov'
+}
+
 @bp.route('/', methods=['GET'])
 def list_projects():
     """List all projects"""
@@ -62,6 +90,44 @@ def _extract_nested_jars(extract_dir, logger):
         logger.info(f"Successfully extracted {jar_count} JAR files from WAR")
     
     return jar_count
+
+
+def _detect_language(file_name):
+    ext = os.path.splitext(file_name)[1].lower().lstrip('.')
+    if not ext:
+        return 'unknown'
+    return LANGUAGE_ALIASES.get(ext, ext)
+
+
+def _is_binary_file(file_path):
+    """Quick binary detection to avoid indexing unreadable assets."""
+    try:
+        with open(file_path, 'rb') as f:
+            chunk = f.read(2048)
+        if not chunk:
+            return False
+        if b'\x00' in chunk:
+            return True
+        non_text = sum(1 for b in chunk if b < 9 or (13 < b < 32))
+        return (non_text / len(chunk)) > 0.30
+    except Exception:
+        return True
+
+
+def _should_index_file(file_name, file_path, is_war=False):
+    ext = os.path.splitext(file_name)[1].lower().lstrip('.')
+
+    if ext in SKIP_BINARY_EXTENSIONS:
+        return False
+
+    # WAR yüklemelerinde web sayfası için gerekli metin dosyalarını öncelikli indeksle
+    if is_war and ext and ext not in WAR_TEXT_EXTENSIONS:
+        return False
+
+    if _is_binary_file(file_path):
+        return False
+
+    return True
 
 @bp.route('/upload', methods=['POST'])
 def upload_project():
@@ -239,9 +305,13 @@ def get_git_info():
                 detail=f'İşleniyor: {rel_path}'
             )
             
-            # Determine language
-            ext = os.path.splitext(file_name)[1].lower().lstrip('.')
-            language = ext if ext else 'unknown'
+            if not _should_index_file(file_name, file_path, is_war=is_war):
+                skipped_files += 1
+                logger.debug(f"[Project {project_id}] Skipped non-text/binary: {rel_path}")
+                continue
+
+            # Determine language (normalized aliases)
+            language = _detect_language(file_name)
             
             # Read file content
             try:
@@ -379,9 +449,13 @@ def import_git_project():
                 detail=f'İşleniyor: {rel_path}'
             )
             
-            # Determine language
-            ext = os.path.splitext(file_name)[1].lower().lstrip('.')
-            language = ext if ext else 'unknown'
+            if not _should_index_file(file_name, file_path, is_war=False):
+                skipped_files += 1
+                logger.debug(f"[Project {project_id}] Skipped non-text/binary: {rel_path}")
+                continue
+
+            # Determine language (normalized aliases)
+            language = _detect_language(file_name)
             
             try:
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:

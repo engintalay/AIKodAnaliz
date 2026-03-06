@@ -195,11 +195,18 @@ class Database:
                     notifications_enabled BOOLEAN DEFAULT 1,
                     items_per_page INTEGER DEFAULT 20,
                     default_filter TEXT,
+                    ai_api_url TEXT,
                     preferences TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 )
             ''')
+
+            # Backward-compatible migration for existing databases
+            cursor.execute("PRAGMA table_info(user_settings)")
+            existing_columns = {row[1] for row in cursor.fetchall()}
+            if 'ai_api_url' not in existing_columns:
+                cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_api_url TEXT')
             
             # Create demo users if not exist
             cursor.execute("SELECT COUNT(*) FROM users WHERE username = ?", ("admin",))
@@ -233,6 +240,7 @@ class Database:
                 
                 # Initialize AI settings with default values
                 default_settings = [
+                    ('api_url', 'http://localhost:1234/v1', 'string'),
                     ('temperature', '0.7', 'float'),
                     ('top_p', '0.9', 'float'),
                     ('max_tokens', '1000', 'integer'),

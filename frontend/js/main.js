@@ -1463,8 +1463,27 @@ async function loadFiles() {
 
 async function loadSettings() {
     try {
+        const apiUrlInput = document.getElementById('apiUrl');
+        let userApiUrl = '';
+
+        // Load per-user settings first (includes ai_api_url)
+        const userSettingsResp = await fetch(`${API_URL}/users/settings`);
+        if (userSettingsResp.ok) {
+            const userSettings = await userSettingsResp.json();
+            userApiUrl = (userSettings.ai_api_url || '').trim();
+            if (apiUrlInput && userApiUrl) {
+                apiUrlInput.value = userApiUrl;
+            }
+        }
+
+        // Load global AI parameters
         const response = await fetch(`${API_URL}/ai-settings/`);
         const settings = await response.json();
+
+        // Fallback to global api_url if user-specific value is empty
+        if (apiUrlInput && !userApiUrl && settings.api_url !== undefined) {
+            apiUrlInput.value = settings.api_url;
+        }
 
         // Load settings into form
         if (settings.temperature !== undefined) {
@@ -1531,6 +1550,7 @@ async function loadSettings() {
 }
 
 async function saveLMSettings() {
+    const apiUrlValue = document.getElementById('apiUrl').value.trim();
     const tempValue = parseFloat(document.getElementById('temperature').value);
     const topPValue = parseFloat(document.getElementById('topP').value);
     const maxTokensValue = parseInt(document.getElementById('maxTokens').value);
@@ -1551,6 +1571,18 @@ async function saveLMSettings() {
 
     try {
         console.log('Saving settings:', settings);
+
+        // Save per-user AI server URL
+        const userSettingsResponse = await fetch(`${API_URL}/users/settings`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ai_api_url: apiUrlValue })
+        });
+
+        if (!userSettingsResponse.ok) {
+            const errData = await userSettingsResponse.json().catch(() => ({}));
+            throw new Error(errData.error || 'Failed to save user AI server URL');
+        }
         
         for (const [key, setting] of Object.entries(settings)) {
             const response = await fetch(`${API_URL}/ai-settings/${key}`, {
@@ -1594,6 +1626,66 @@ async function testLMConnection() {
     } catch (error) {
         document.getElementById('connectionResult').textContent = 'Hata: ' + error;
         document.getElementById('connectionResult').className = 'error';
+    }
+}
+
+async function changePassword() {
+    const currentPasswordInput = document.getElementById('currentPassword');
+    const newPasswordInput = document.getElementById('newPassword');
+    const confirmNewPasswordInput = document.getElementById('confirmNewPassword');
+
+    if (!currentPasswordInput || !newPasswordInput || !confirmNewPasswordInput) {
+        showError('Hata', 'Şifre alanları bulunamadı');
+        return;
+    }
+
+    const currentPassword = currentPasswordInput.value;
+    const newPassword = newPasswordInput.value;
+    const confirmNewPassword = confirmNewPasswordInput.value;
+
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+        showError('Hata', 'Lütfen tüm şifre alanlarını doldurun');
+        return;
+    }
+
+    if (newPassword.length < 4) {
+        showError('Hata', 'Yeni şifre en az 4 karakter olmalı');
+        return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+        showError('Hata', 'Yeni şifreler eşleşmiyor');
+        return;
+    }
+
+    if (newPassword === currentPassword) {
+        showError('Hata', 'Yeni şifre mevcut şifreyle aynı olamaz');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/users/change-password`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                current_password: currentPassword,
+                new_password: newPassword
+            })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(result.error || 'Şifre güncellenemedi');
+        }
+
+        currentPasswordInput.value = '';
+        newPasswordInput.value = '';
+        confirmNewPasswordInput.value = '';
+
+        showSuccess('Başarılı', 'Şifreniz güncellendi');
+    } catch (error) {
+        showError('Hata', error.message || 'Şifre güncellenirken hata oluştu');
     }
 }
 
@@ -1691,7 +1783,7 @@ async function handleLogin(e) {
         } else {
             const serverMessage = data.error || 'Giriş başarısız';
             if (response.status === 401) {
-                errorDiv.textContent = `${serverMessage}. Demo: admin/admin123 veya user/user123`;
+                errorDiv.textContent = `${serverMessage}. Demo: admin/admin123, developer/developer123 veya analyzer/analyzer123`;
             } else {
                 errorDiv.textContent = serverMessage;
             }
