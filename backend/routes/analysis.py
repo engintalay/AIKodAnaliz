@@ -9,6 +9,7 @@ import uuid
 import re
 
 CALL_NAME_PATTERN = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(')
+QUALIFIED_CALL_PATTERN = re.compile(r'(\w+)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(')  # receiver.method()
 PY_IMPORT_PATTERN = re.compile(r'^\s*(?:from\s+[\w\.]+\s+import\s+([\w\s,\*]+)|import\s+([\w\.,\s]+))', re.MULTILINE)
 JS_IMPORT_PATTERN = re.compile(r'^\s*import\s+(?:([\w\{\}\s,\*]+)\s+from\s+)?[\"\'][^\"\']+[\"\']', re.MULTILINE)
 JAVA_IMPORT_PATTERN = re.compile(r'^\s*import\s+(?:static\s+)?([\w\.\*]+)\s*;', re.MULTILINE)
@@ -233,8 +234,39 @@ def analyze_project(project_id):
         dependencies_found = 0
         total_funcs = len(funcs_data)
         
-        # ✅ OPTIMIZATION 1: Build hash table for O(1) lookup instead of O(n²) nested loop
-        func_name_map = {func['function_name']: func['id'] for func in funcs_data}
+        # ✅ Qualified Name Mapping: Build hash tables for O(1) lookup
+        # Map 1: ClassName.FunctionName → function_id (primary lookup)
+        qualified_map = {}
+        # Map 2: FunctionName → [list of function_ids] (fallback for unqualified calls)
+        func_name_list = {}
+        # Map 3: ClassName → [list of function_ids] (for same-class matching)
+        class_funcs_map = {}
+        
+        for func in funcs_data:
+            func_id = func['id']
+            func_name = func['function_name']
+            class_name = func.get('class_name')
+            
+            # Map 2: Track all functions by name (for fallback)
+            if func_name not in func_name_list:
+                func_name_list[func_name] = []
+            func_name_list[func_name].append({
+                'id': func_id,
+                'class': class_name,
+                'func_data': func
+            })
+            
+            # Map 1: Qualified name (ClassName.FunctionName)
+            if class_name:
+                qualified_key = f"{class_name}.{func_name}"
+                qualified_map[qualified_key] = func_id
+            
+            # Map 3: Track functions by class (for same-class context matching)
+            if class_name:
+                if class_name not in class_funcs_map:
+                    class_funcs_map[class_name] = {}
+                class_funcs_map[class_name][func_name] = func_id
+        
         imported_symbols_by_file = {}
         
         # ✅ OPTIMIZATION 2: Collect all inserts for batch operation
@@ -257,36 +289,94 @@ def analyze_project(project_id):
                 )
             file_imported_symbols = imported_symbols_by_file[file_id]
 
-            # Find all call-like names: foo(...)
-            called_names = {
+            caller_class = caller.get('class_name')
+            caller_id = caller['id']
+            
+            # ✅ Extract QUALIFIED calls first: receiver.method()
+            qualified_calls = set()
+            for match in QUALIFIED_CALL_PATTERN.finditer(caller_code):
+                receiver = match.group(1)
+                method_name = match.group(2)
+                if method_name not in CALL_KEYWORDS:
+                    qualified_calls.add((receiver, method_name))
+            
+            # ✅ Extract UNQUALIFIED calls: foo()
+            unqualified_calls = {
                 match.group(1)
                 for match in CALL_NAME_PATTERN.finditer(caller_code)
                 if match.group(1) not in CALL_KEYWORDS
             }
-            local_called_names = {
-                name for name in called_names
+            
+            # Filter out external/imported symbols
+            unqualified_local = {
+                name for name in unqualified_calls
                 if name not in COMMON_EXTERNAL_CALLS and name not in file_imported_symbols
             }
             
-            # ✅ OPTIMIZATION 1: Only iterate through found calls (not all functions)
-            for called_name in local_called_names:
-                if called_name in func_name_map:
-                    callee_id = func_name_map[called_name]
-                    
-                    # Basic check: Don't link function to itself
-                    if caller['id'] == callee_id:
-                        continue
-                    
-                    pair = (caller['id'], callee_id)
-                    if pair in inserted_pairs:
-                        continue
-                    
-                    # Collect for batch insert
-                    function_calls_batch.append(
-                        (project_id, caller['id'], callee_id, 'direct_call')
+            # ✅ RESOLUTION STRATEGY:
+            # 1. Try Qualified Calls: receiver.method() → ClassName.method()
+            # 2. Try Unqualified in Same Class: method() inside ClassName
+            # 3. Try Global Unqualified: method() anywhere
+            
+            # 1. QUALIFIED CALLS: receiver.method()
+            for receiver, method_name in qualified_calls:
+                # Try to find by ClassName.method pattern
+                for potential_class in class_funcs_map.keys():
+                    qualified_key = f"{potential_class}.{method_name}"
+                    if qualified_key in qualified_map:
+                        callee_id = qualified_map[qualified_key]
+                        
+                        if caller_id == callee_id:
+                            continue
+                        
+                        pair = (caller_id, callee_id)
+                        if pair in inserted_pairs:
+                            continue
+                        
+                        function_calls_batch.append(
+                            (project_id, caller_id, callee_id, 'qualified_call')
+                        )
+                        inserted_pairs.add(pair)
+                        dependencies_found += 1
+                        break  # Found match, stop searching
+            
+            # 2. UNQUALIFIED CALLS: foo()
+            for called_name in unqualified_local:
+                callee_candidates = func_name_list.get(called_name, [])
+                
+                if not callee_candidates:
+                    continue
+                
+                # Priority: Same class > Single match > Skip
+                same_class_candidates = [c for c in callee_candidates if c['class'] == caller_class]
+                
+                if same_class_candidates:
+                    # Prefer same class
+                    callee_id = same_class_candidates[0]['id']
+                elif len(callee_candidates) == 1:
+                    # Only one function with this name globally → use it
+                    callee_id = callee_candidates[0]['id']
+                else:
+                    # Multiple candidates, ambiguous → skip
+                    logger.debug(
+                        f"[Project {project_id}] Ambiguous call '{called_name}' from "
+                        f"{caller_class}.{caller['function_name']} - "
+                        f"multiple targets found. Skipping."
                     )
-                    inserted_pairs.add(pair)
-                    dependencies_found += 1
+                    continue
+                
+                if caller_id == callee_id:
+                    continue
+                
+                pair = (caller_id, callee_id)
+                if pair in inserted_pairs:
+                    continue
+                
+                function_calls_batch.append(
+                    (project_id, caller_id, callee_id, 'unqualified_call')
+                )
+                inserted_pairs.add(pair)
+                dependencies_found += 1
             
             # ✅ OPTIMIZATION 3: Update progress during dependency detection
             if task_id and total_funcs > 0:
@@ -413,7 +503,8 @@ def get_function_details(function_id):
     try:
         row = db.execute_query(
             '''SELECT f.id, f.function_name, f.function_type, f.signature, f.parameters, 
-                      f.return_type, f.ai_summary, f.start_line, f.end_line, s.content 
+                      f.return_type, f.ai_summary, f.start_line, f.end_line, s.content, 
+                      f.class_name
                FROM functions f 
                LEFT JOIN source_files s ON f.file_id = s.id 
                WHERE f.id = ?''',
@@ -443,24 +534,52 @@ def get_function_details(function_id):
                 func['parameters'] = json.loads(func['parameters'])
             except:
                 func['parameters'] = func['parameters'].split(',')
+        
+        # Build qualified name for display
+        qualified_name = func['function_name']
+        if func.get('class_name'):
+            qualified_name = f"{func['class_name']}.{func['function_name']}"
+        func['qualified_name'] = qualified_name
 
-        # Add call graph neighbors for function detail view
+        # Add call graph neighbors with qualified names
         called_rows = db.execute_query(
-            '''SELECT f2.id, f2.function_name
+            '''SELECT f2.id, f2.function_name, f2.class_name
                FROM function_calls fc
                JOIN functions f2 ON fc.callee_function_id = f2.id
                WHERE fc.caller_function_id = ?''',
             (function_id,)
         )
         caller_rows = db.execute_query(
-            '''SELECT f1.id, f1.function_name
+            '''SELECT f1.id, f1.function_name, f1.class_name
                FROM function_calls fc
                JOIN functions f1 ON fc.caller_function_id = f1.id
                WHERE fc.callee_function_id = ?''',
             (function_id,)
         )
-        func['called_functions'] = [dict(row) for row in called_rows]
-        func['called_by_functions'] = [dict(row) for row in caller_rows]
+        
+        # Format with qualified names
+        func['called_functions'] = [
+            {
+                'id': dict(row)['id'],
+                'function_name': dict(row)['function_name'],
+                'class_name': dict(row).get('class_name'),
+                'qualified_name': f"{dict(row)['class_name']}.{dict(row)['function_name']}" 
+                                if dict(row).get('class_name') 
+                                else dict(row)['function_name']
+            }
+            for row in called_rows
+        ]
+        func['called_by_functions'] = [
+            {
+                'id': dict(row)['id'],
+                'function_name': dict(row)['function_name'],
+                'class_name': dict(row).get('class_name'),
+                'qualified_name': f"{dict(row)['class_name']}.{dict(row)['function_name']}" 
+                                if dict(row).get('class_name') 
+                                else dict(row)['function_name']
+            }
+            for row in caller_rows
+        ]
         
         return jsonify(func), 200
     
@@ -502,13 +621,23 @@ def get_project_functions(project_id):
                WHERE f.project_id = ?''',
             (project_id,)
         )
-        functions = [dict(row) for row in rows]
+        functions = []
+        for row in rows:
+            func_dict = dict(row)
+            # Add qualified name for disambiguation
+            class_name = func_dict.get('class_name')
+            func_name = func_dict['function_name']
+            qualified_name = f"{class_name}.{func_name}" if class_name else func_name
+            func_dict['qualified_name'] = qualified_name
+            functions.append(func_dict)
 
         # Build caller/callee maps for function tab
         dep_rows = db.execute_query(
             '''SELECT fc.caller_function_id, fc.callee_function_id,
                       caller.function_name AS caller_name,
-                      callee.function_name AS callee_name
+                      callee.function_name AS callee_name,
+                      caller.class_name AS caller_class,
+                      callee.class_name AS callee_class
                FROM function_calls fc
                JOIN functions caller ON caller.id = fc.caller_function_id
                JOIN functions callee ON callee.id = fc.callee_function_id
@@ -521,13 +650,26 @@ def get_project_functions(project_id):
         for dep in dep_rows:
             caller_id = dep['caller_function_id']
             callee_id = dep['callee_function_id']
+            callee_name = dep['callee_name']
+            caller_name = dep['caller_name']
+            callee_class = dep['callee_class']
+            caller_class = dep['caller_class']
+            
+            # Build qualified names
+            callee_qualified = f"{callee_class}.{callee_name}" if callee_class else callee_name
+            caller_qualified = f"{caller_class}.{caller_name}" if caller_class else caller_name
+            
             called_map.setdefault(caller_id, []).append({
                 'id': callee_id,
-                'function_name': dep['callee_name']
+                'function_name': callee_name,
+                'class_name': callee_class,
+                'qualified_name': callee_qualified
             })
             caller_map.setdefault(callee_id, []).append({
                 'id': caller_id,
-                'function_name': dep['caller_name']
+                'function_name': caller_name,
+                'class_name': caller_class,
+                'qualified_name': caller_qualified
             })
 
         for func in functions:

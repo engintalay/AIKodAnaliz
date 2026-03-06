@@ -12,7 +12,8 @@ class LMStudioClient:
         self.top_p = LMSTUDIO_TOP_P
         self.context_limit = CONTEXT_LIMIT_TOKENS
         # Local models can have long first-token delays while loading.
-        self.request_timeout = 120
+        # Increased timeout for local inference (5 minutes)
+        self.request_timeout = 300
         # Never inherit OS/env proxy settings.
         self.session = requests.Session()
         self.session.trust_env = False

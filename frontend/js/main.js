@@ -156,11 +156,17 @@ async function deleteProject(projectId) {
     if (!confirm('Bu projeyi silmek istediğinizden emin misiniz?')) return;
 
     try {
-        await fetch(`${API_URL}/projects/${projectId}`, { method: 'DELETE' });
+        const response = await fetch(`${API_URL}/projects/${projectId}`, { method: 'DELETE' });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Silme işlemi başarısız');
+        }
+        
         showSuccess('Başarılı', 'Proje silindi');
-        loadProjects();
+        loadProjects(); // Refresh project list
     } catch (error) {
-        showError('Silme Hatası', 'Proje silinirken hata oluştu: ' + error);
+        showError('Silme Hatası', 'Proje silinirken hata oluştu: ' + error.message);
     }
 }
 
@@ -798,18 +804,26 @@ async function showFunctionDetails(functionId) {
         }
 
         const modal = document.getElementById('functionModal');
-        document.getElementById('funcModalTitle').textContent = func.function_name;
+        // Use qualified name (ClassName.functionName) if available, else just function name
+        const displayName = func.qualified_name || func.function_name;
+        document.getElementById('funcModalTitle').textContent = displayName;
 
-        // Build dependency chips HTML
+        // Build dependency chips HTML with qualified names
         const called = Array.isArray(func.called_functions) ? func.called_functions : [];
         const calledBy = Array.isArray(func.called_by_functions) ? func.called_by_functions : [];
 
         const calledHtml = called.length > 0
-            ? called.map(c => `<span class="dep-chip" data-func-id="${c.id}" style="cursor: pointer; margin: 2px 4px 2px 0;">${c.function_name}</span>`).join('')
+            ? called.map(c => {
+                const label = c.qualified_name || c.function_name;
+                return `<span class="dep-chip" data-func-id="${c.id}" style="cursor: pointer; margin: 2px 4px 2px 0;" title="${label}">${label}</span>`;
+            }).join('')
             : '<span class="dep-empty">Yok</span>';
 
         const calledByHtml = calledBy.length > 0
-            ? calledBy.map(c => `<span class="dep-chip dep-chip-caller" data-func-id="${c.id}" style="cursor: pointer; margin: 2px 4px 2px 0;">${c.function_name}</span>`).join('')
+            ? calledBy.map(c => {
+                const label = c.qualified_name || c.function_name;
+                return `<span class="dep-chip dep-chip-caller" data-func-id="${c.id}" style="cursor: pointer; margin: 2px 4px 2px 0;" title="${label}">${label}</span>`;
+            }).join('')
             : '<span class="dep-empty">Yok</span>';
 
         // Meta info display with dependencies

@@ -8,10 +8,10 @@ bp = Blueprint('diagram', __name__, url_prefix='/api/diagram')
 def get_diagram_data(project_id):
     """Get diagram data (nodes and edges)"""
     try:
-        # Get all functions (exclude "if" statements - they're not real functions)
+        # Get all functions with qualified names (include class_name for disambiguation)
         # REDUCED from 50 to 30 nodes to minimize memory usage
         func_rows = db.execute_query(
-            '''SELECT id, function_name, function_type, file_id, ai_summary 
+            '''SELECT id, function_name, function_type, file_id, ai_summary, class_name
             FROM functions WHERE project_id = ? AND function_name != 'if' LIMIT 30''',
             (project_id,)
         )
@@ -41,13 +41,20 @@ def get_diagram_data(project_id):
         
         for row in func_rows:
             func_id = row[0]
+            func_name = row[1]
+            class_name = row[5]
+            # Build qualified label: ClassName.functionName or just functionName
+            qualified_label = f"{class_name}.{func_name}" if class_name else func_name
             is_entry = func_id in entry_point_ids
+            
             nodes.append({
                 'id': func_id,
-                'label': row[1],
+                'label': qualified_label,
+                'function_name': func_name,
+                'class_name': class_name,
                 'type': row[2],
                 'summary': row[4] or 'No summary',
-                'title': f"{row[1]} ({row[2]})",
+                'title': f"{qualified_label} ({row[2]})",
                 'is_entry_point': is_entry
             })
         

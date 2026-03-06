@@ -321,11 +321,27 @@ def get_project_files(project_id):
 
 @bp.route('/<int:project_id>', methods=['DELETE'])
 def delete_project(project_id):
-    """Delete project"""
+    """Delete project and all related data"""
     try:
         import shutil
         
-        # Delete database records
+        # Delete in correct order (child to parent) to respect foreign keys
+        # 1. Delete function calls (references functions)
+        db.execute_update('DELETE FROM function_calls WHERE project_id = ?', (project_id,))
+        
+        # 2. Delete entry points (references functions)
+        db.execute_update('DELETE FROM entry_points WHERE project_id = ?', (project_id,))
+        
+        # 3. Delete user marks (references functions/projects)
+        db.execute_update('DELETE FROM user_marks WHERE project_id = ?', (project_id,))
+        
+        # 4. Delete functions (references source_files)
+        db.execute_update('DELETE FROM functions WHERE project_id = ?', (project_id,))
+        
+        # 5. Delete source files (references projects)
+        db.execute_update('DELETE FROM source_files WHERE project_id = ?', (project_id,))
+        
+        # 6. Finally delete project
         db.execute_update('DELETE FROM projects WHERE id = ?', (project_id,))
         
         # Delete physical files
@@ -333,8 +349,15 @@ def delete_project(project_id):
         if os.path.exists(extract_dir):
             shutil.rmtree(extract_dir)
         
+        # Also try to delete Git clone directory if exists
+        git_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}_git')
+        if os.path.exists(git_dir):
+            shutil.rmtree(git_dir, ignore_errors=True)
+        
+        logger.info(f"Project {project_id} deleted successfully")
         return jsonify({'message': 'Project deleted'}), 200
     except Exception as e:
+        logger.error(f"Error deleting project {project_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/progress/<task_id>', methods=['GET'])
