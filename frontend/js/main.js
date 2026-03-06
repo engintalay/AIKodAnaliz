@@ -205,6 +205,11 @@ function showSettings() {
     loadSettings();
 }
 
+function showReport() {
+    showSection('reportSection');
+    loadReport();
+}
+
 // ============================================
 // SECTION: Upload & Analysis
 // ============================================

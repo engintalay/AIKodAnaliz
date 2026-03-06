@@ -1,10 +1,83 @@
 // ============================================
+// SECTION: Report Functions
+// ============================================
+
+function loadReport() {
+    fetch(`${API_URL}/report`)
+        .then(response => response.json())
+        .then(data => {
+            renderReport(data);
+        })
+        .catch(err => showError('Hata', `Rapor yüklenirken hata: ${err}`));
+}
+
+function renderReport(reportData) {
+    const container = document.getElementById('reportContainer');
+    
+    const stats = reportData.statistics;
+    let html = `
+        <div style="background: white; padding: 20px; border-radius: 4px; margin-bottom: 20px;">
+            <h3>📊 Genel İstatistikler</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                <div style="background: #f0f8ff; padding: 15px; border-radius: 4px;">
+                    <div style="font-size: 24px; font-weight: bold; color: #3498db;">${stats.total}</div>
+                    <div style="color: #7f8c8d; font-size: 14px;">Toplam Fonksiyon</div>
+                </div>
+                <div style="background: #f0fff4; padding: 15px; border-radius: 4px;">
+                    <div style="font-size: 24px; font-weight: bold; color: #27ae60;">${stats.with_summary}</div>
+                    <div style="color: #7f8c8d; font-size: 14px;">✅ Özetlenmiş</div>
+                </div>
+                <div style="background: #fff5f5; padding: 15px; border-radius: 4px;">
+                    <div style="font-size: 24px; font-weight: bold; color: #e74c3c;">${stats.without_summary}</div>
+                    <div style="color: #7f8c8d; font-size: 14px;">❌ Özetlenmeyen</div>
+                </div>
+                <div style="background: #fdf8f0; padding: 15px; border-radius: 4px;">
+                    <div style="font-size: 24px; font-weight: bold; color: #f39c12;">${stats.coverage}</div>
+                    <div style="color: #7f8c8d; font-size: 14px;">Kapsama Oranı</div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Proje detayları
+    if (reportData.projects && reportData.projects.length > 0) {
+        html += '<h3>📁 Proje Bazlı Detaylar</h3>';
+        
+        reportData.projects.forEach(project => {
+            const pStats = project.statistics;
+            html += `
+                <div style="background: white; padding: 15px; margin-bottom: 15px; border-left: 4px solid #3498db; border-radius: 4px;">
+                    <h4 style="margin-top: 0;">${project.name}</h4>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 10px;">
+                        <div><strong>Fonksiyonlar:</strong> ${pStats.total}</div>
+                        <div><strong>Özetlendi:</strong> ${pStats.with_summary} (${pStats.coverage})</div>
+                        <div><strong>Beklemede:</strong> ${pStats.without_summary}</div>
+                    </div>
+            `;
+            
+            // Dosya detayları
+            if (project.files) {
+                html += '<div style="margin-top: 10px;"><strong>Dosyalar:</strong><ul style="margin: 5px 0 0 20px;">';
+                for (const [fileName, fileData] of Object.entries(project.files)) {
+                    html += `<li>${fileName} - ${fileData.with_summary}/${fileData.total} ✅</li>`;
+                }
+                html += '</ul></div>';
+            }
+            
+            html += '</div>';
+        });
+    }
+    
+    container.innerHTML = html;
+}
+
+// ============================================
 // SECTION: Admin Panel Functions
 // ============================================
 
 function showAdminPanel() {
     if (currentUser && currentUser.role === 'admin') {
-        goToSection('adminPanel');
+        showSection('adminPanel');
         loadAllUsers();
     } else {
         showError('Erişim Hatası', 'Sadece admin kullanıcılar erişebilir');
@@ -154,7 +227,7 @@ function deleteUser(userId) {
 
 function showPermissionsPanel() {
     if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'developer')) {
-        goToSection('permissionsPanel');
+        showSection('permissionsPanel');
         loadProjectsForPermissions();
     } else {
         showError('Erişim Hatası', 'Sadece admin ve geliştirici erişebilir');
@@ -314,7 +387,7 @@ function revokePermission(userId) {
 // ============================================
 
 function showSettings() {
-    goToSection('settingsSection');
+    showSection('settingsSection');
     loadUserSettings();
 }
 
