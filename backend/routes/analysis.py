@@ -490,7 +490,7 @@ def analyze_project(project_id):
         log_error(f"analyze_project (project: {project_id})", e)
         return jsonify({'error': str(e)}), 500
 
-def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0, temperature=None, top_p=None, max_tokens=None):
+def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0, temperature=None, top_p=None, max_tokens=None, track_progress=True):
     """Recursively generate AI summaries for function and its dependencies
     
     Args:
@@ -504,6 +504,7 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
         temperature: Model temperature for AI
         top_p: Top-p sampling parameter
         max_tokens: Maximum tokens in response
+        track_progress: Whether this call should update numeric progress percentage
     
     Returns:
         tuple: (str: Generated AI summary, int: updated processed count)
@@ -535,12 +536,18 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
         logger.debug(f"Function {function_id} ({func['function_name']}) already has summary, skipping")
         if task_id:
             processed += 1
-            progress = int((processed / max(total_deps, 1)) * 100)
-            progress_tracker.update(
-                task_id,
-                progress=progress,
-                detail=f"✓ Atlandı (özet var): {func['function_name']}"
-            )
+            if track_progress:
+                progress = int((processed / max(total_deps, 1)) * 100)
+                progress_tracker.update(
+                    task_id,
+                    progress=progress,
+                    detail=f"✓ Atlandı (özet var): {func['function_name']}"
+                )
+            else:
+                progress_tracker.update(
+                    task_id,
+                    detail=f"✓ Atlandı (özet var): {func['function_name']}"
+                )
         return func['ai_summary'], processed
     
     # Get called functions (dependencies)
@@ -572,7 +579,19 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
                     step=f"Alt fonksiyon özeti üretiliyor: {qualified_name}",
                     detail=f"🔄 {qualified_name} (seviye {depth+1})"
                 )
-            dep_summary, processed = _generate_ai_summary_recursive(dep_id, client, visited, depth + 1, task_id, total_deps, processed, temperature, top_p, max_tokens)
+            dep_summary, processed = _generate_ai_summary_recursive(
+                dep_id,
+                client,
+                visited,
+                depth + 1,
+                task_id,
+                total_deps,
+                processed,
+                temperature,
+                top_p,
+                max_tokens,
+                track_progress
+            )
         
         if dep_summary:
             dependency_summaries.append({
@@ -614,18 +633,24 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
         )
         processed += 1
         if task_id:
-            progress = int((processed / max(total_deps, 1)) * 100)
             progress_tracker.set_metrics(
                 task_id,
                 total_functions=max(total_deps, 1),
                 completed_functions=processed,
                 active_thread=threading.current_thread().name,
             )
-            progress_tracker.update(
-                task_id,
-                progress=progress,
-                detail=f"⚠️ Hata alındı, kaydedilmedi: {qualified_func_name}"
-            )
+            if track_progress:
+                progress = int((processed / max(total_deps, 1)) * 100)
+                progress_tracker.update(
+                    task_id,
+                    progress=progress,
+                    detail=f"⚠️ Hata alındı, kaydedilmedi: {qualified_func_name}"
+                )
+            else:
+                progress_tracker.update(
+                    task_id,
+                    detail=f"⚠️ Hata alındı, kaydedilmedi: {qualified_func_name}"
+                )
         return None, processed
 
     # Save only valid summaries
@@ -636,18 +661,24 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
     
     processed += 1
     if task_id:
-        progress = int((processed / max(total_deps, 1)) * 100)
         progress_tracker.set_metrics(
             task_id,
             total_functions=max(total_deps, 1),
             completed_functions=processed,
             active_thread=threading.current_thread().name,
         )
-        progress_tracker.update(
-            task_id,
-            progress=progress,
-            detail=f"✓ Tamamlandı: {qualified_func_name} ({len(summary)} karakter)"
-        )
+        if track_progress:
+            progress = int((processed / max(total_deps, 1)) * 100)
+            progress_tracker.update(
+                task_id,
+                progress=progress,
+                detail=f"✓ Tamamlandı: {qualified_func_name} ({len(summary)} karakter)"
+            )
+        else:
+            progress_tracker.update(
+                task_id,
+                detail=f"✓ Tamamlandı: {qualified_func_name} ({len(summary)} karakter)"
+            )
     
     logger.info(f"AI summary generated and saved for function {function_id} ({qualified_func_name})")
     return summary, processed
@@ -874,10 +905,12 @@ def analyze_file_missing_functions(file_id):
             # Generate summary
             summary, _ = _generate_ai_summary_recursive(
                 func_id, client, 
+                task_id=task_id,
                 temperature=temperature, 
                 top_p=top_p, 
                 max_tokens=max_tokens,
-                total_deps=total_deps
+                total_deps=total_deps,
+                track_progress=False
             )
             
             if summary and not _is_ai_error_response(summary):
@@ -1053,10 +1086,12 @@ def reanalyze_error_summaries():
             summary, _ = _generate_ai_summary_recursive(
                 function_id,
                 client,
+                task_id=task_id,
                 total_deps=total_deps,
                 temperature=temperature,
                 top_p=top_p,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                track_progress=False
             )
 
             completed += 1

@@ -99,11 +99,28 @@ function pollAnalysisTask(taskId) {
         try {
             const response = await fetch(`${API_URL}/projects/progress/${taskId}`);
             if (!response.ok) {
-                if (response.status === 404) return; // task may not be initialized yet
+                if (response.status === 404) {
+                    job.notFoundCount = (job.notFoundCount || 0) + 1;
+                    const ageMs = Date.now() - (job.createdAt || Date.now());
+
+                    // A short initial 404 window is tolerated while backend task is being created.
+                    if (ageMs < 10000 && job.notFoundCount < 8) {
+                        return;
+                    }
+
+                    job.status = 'failed';
+                    job.current_step = 'İlerleme görevi bulunamadı (task timeout/yeniden başlatma).';
+                    renderAnalysisMonitor();
+                    clearInterval(job.pollTimer);
+                    job.pollTimer = null;
+                    setTimeout(() => removeAnalysisJob(taskId), 15000);
+                    return;
+                }
                 throw new Error(`Progress endpoint error: ${response.status}`);
             }
 
             const progress = await response.json();
+            job.notFoundCount = 0;
             job.progress = progress.progress || 0;
             job.status = progress.status || 'started';
             job.current_step = progress.current_step || '';
@@ -119,7 +136,16 @@ function pollAnalysisTask(taskId) {
                 setTimeout(() => removeAnalysisJob(taskId), 12000);
             }
         } catch (err) {
+            job.errorCount = (job.errorCount || 0) + 1;
             job.current_step = `Polling hatası: ${err}`;
+
+            if (job.errorCount >= 5) {
+                job.status = 'failed';
+                clearInterval(job.pollTimer);
+                job.pollTimer = null;
+                setTimeout(() => removeAnalysisJob(taskId), 15000);
+            }
+
             renderAnalysisMonitor();
         }
     };
@@ -142,6 +168,9 @@ function startTrackedAnalysis(taskId, label, requestPromise) {
             active_thread: null,
             estimated_remaining_seconds: null,
         },
+        createdAt: Date.now(),
+        notFoundCount: 0,
+        errorCount: 0,
         pollTimer: null,
     });
     renderAnalysisMonitor();
