@@ -43,8 +43,24 @@ class LMStudioClient:
                 'message': str(e)
             }
     
-    def analyze_function(self, code: str, signature: str) -> str:
-        """Get AI summary for a function"""
+    def analyze_function(self, code: str, signature: str, dependency_summaries: list = None) -> str:
+        """Get AI summary for a function
+        
+        Args:
+            code: Source code of the function
+            signature: Function signature
+            dependency_summaries: List of dicts with 'name' and 'summary' for called functions
+        
+        Returns:
+            str: AI-generated summary in Turkish
+        """
+        
+        # Build context from dependency summaries
+        dependency_context = ""
+        if dependency_summaries:
+            dependency_context = "\n\nBu fonksiyonun çağırdığı alt fonksiyonlar ve görevleri:\n"
+            for dep in dependency_summaries:
+                dependency_context += f"\n- {dep['name']}: {dep['summary']}\n"
         
         prompt = f"""Bu fonksiyonu analiz et ve SADECE TÜRKÇE yanıt ver.
     Kısa, net ve tekrar etmeyen bir özet üret.
@@ -54,7 +70,7 @@ Function Signature: {signature}
 Code:
 ```
 {code}
-```
+```{dependency_context}
 
 En fazla 200 kelimeyle şunları açıkla:
 1. What the function does

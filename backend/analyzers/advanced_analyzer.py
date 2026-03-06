@@ -258,7 +258,30 @@ class AdvancedCodeAnalyzer:
         functions = []
         lines = content.split('\n')
         
-        def traverse(node, parent_class=None):
+        def has_annotation(node, annotation_names):
+            """Check if node has any of the specified annotations"""
+            if not node.parent:
+                return False
+            
+            # Check all children of parent for annotations
+            for sibling in node.parent.children:
+                if sibling.type == 'modifiers':
+                    for modifier_child in sibling.children:
+                        if modifier_child.type in ('marker_annotation', 'annotation'):
+                            # Get annotation name
+                            annotation_text = modifier_child.text.decode('utf-8')
+                            # Remove @ and compare
+                            annotation_name = annotation_text.lstrip('@').split('(')[0]
+                            if annotation_name in annotation_names:
+                                return True
+                elif sibling.type in ('marker_annotation', 'annotation'):
+                    annotation_text = sibling.text.decode('utf-8')
+                    annotation_name = annotation_text.lstrip('@').split('(')[0]
+                    if annotation_name in annotation_names:
+                        return True
+            return False
+        
+        def traverse(node, parent_class=None, parent_class_is_entry=False):
             if node.type == 'method_declaration':
                 name_node = node.child_by_field_name('name')
                 if name_node:
@@ -273,15 +296,28 @@ class AdvancedCodeAnalyzer:
                     sig_end = min(node.start_point[0] + 3, len(lines))
                     signature = ' '.join(lines[node.start_point[0]:sig_end]).strip()
                     
+                    # Check if method is entry point:
+                    # 1. main method
+                    # 2. Method in @Service or @Controller class
+                    # 3. Method with @RequestMapping, @GetMapping, @PostMapping, etc.
+                    controller_annotations = [
+                        'RequestMapping', 'GetMapping', 'PostMapping', 
+                        'PutMapping', 'DeleteMapping', 'PatchMapping'
+                    ]
+                    
+                    is_controller_method = has_annotation(node, controller_annotations)
+                    is_main = func_name == 'main'
+                    is_entry = is_main or parent_class_is_entry or is_controller_method
+                    
                     func_info = {
                         'name': func_name,
-                        'type': 'function' if func_name not in ['main'] else 'entry',
+                        'type': 'entry' if is_entry else 'function',
                         'start_line': start_line,
                         'end_line': end_line,
                         'parameters': params,
                         'return_type': 'void',
                         'signature': signature,
-                        'is_entry': func_name == 'main',
+                        'is_entry': is_entry,
                         'class_name': parent_class,
                         'package_name': package_name
                     }
@@ -294,6 +330,13 @@ class AdvancedCodeAnalyzer:
                     start_line = node.start_point[0] + 1
                     end_line = node.end_point[0] + 1
                     
+                    # Check if class has @Service, @Controller, @RestController, @Component annotations
+                    entry_annotations = [
+                        'Service', 'Controller', 'RestController', 
+                        'Component', 'Repository'
+                    ]
+                    class_is_entry = has_annotation(node, entry_annotations)
+                    
                     class_info = {
                         'name': class_name,
                         'type': 'class',
@@ -302,21 +345,21 @@ class AdvancedCodeAnalyzer:
                         'parameters': [],
                         'return_type': None,
                         'signature': f"class {class_name}",
-                        'is_entry': False,
+                        'is_entry': False,  # Classes themselves are not entry points, only their methods
                         'class_name': None,
                         'package_name': package_name
                     }
                     functions.append(class_info)
                     
-                    # Traverse class body
+                    # Traverse class body - pass entry status to children
                     for child in node.children:
                         if child.type == 'class_body':
                             for item in child.children:
-                                traverse(item, class_name)
+                                traverse(item, class_name, class_is_entry)
                     return
             
             for child in node.children:
-                traverse(child, parent_class)
+                traverse(child, parent_class, parent_class_is_entry)
         
         traverse(node)
         return functions

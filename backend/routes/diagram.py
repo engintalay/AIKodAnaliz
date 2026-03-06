@@ -16,6 +16,15 @@ def get_diagram_data(project_id):
             (project_id,)
         )
         
+        # Get entry points from database
+        entry_rows = db.execute_query(
+            '''SELECT function_id, entry_type FROM entry_points WHERE project_id = ?''',
+            (project_id,)
+        )
+        
+        # Build entry point set
+        entry_point_ids = {row[0] for row in entry_rows}
+        
         # Get dependencies
         dep_rows = db.execute_query(
             '''SELECT caller_function_id, callee_function_id 
@@ -27,22 +36,12 @@ def get_diagram_data(project_id):
         nodes = []
         node_ids = set()  # Track which function IDs are in the diagram
         
-        # Detect entry points (functions with no incoming calls)
-        called_in = set()
-        for dep_row in dep_rows:
-            called_in.add(dep_row[1])  # callee_function_id
-        
-        entry_point_ids = set()
-        for row in func_rows:
-            func_id = row[0]
-            node_ids.add(func_id)  # Add to node_ids set
-            if func_id not in called_in:
-                entry_point_ids.add(func_id)
-        
         for row in func_rows:
             func_id = row[0]
             func_name = row[1]
             class_name = row[5]
+            node_ids.add(func_id)
+            
             # Build qualified label: ClassName.functionName or just functionName
             qualified_label = f"{class_name}.{func_name}" if class_name else func_name
             is_entry = func_id in entry_point_ids

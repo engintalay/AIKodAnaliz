@@ -211,6 +211,7 @@ function showSettings() {
 let uploadPolling = null;
 let analysisPolling = null;
 let reanalysisPolling = null;
+let aiPolling = null;
 
 async function pollUploadProgress(taskId, projectId) {
     const progressBar = document.getElementById('uploadProgressBar');
@@ -1099,24 +1100,104 @@ async function generateAISummary() {
 
     const summaryArea = document.getElementById('funcModalSummary');
     const oldText = summaryArea.value;
+    
+    // Show progress UI
+    const progressDiv = document.getElementById('uploadProgress');
+    const progressBar = document.getElementById('uploadProgressBar');
+    const progressText = document.getElementById('uploadProgressText');
+    const progressDetails = document.getElementById('uploadProgressDetails');
+    const progressTitle = document.querySelector('#uploadProgress h3');
+    
+    if (progressTitle) {
+        progressTitle.textContent = 'AI Özeti Üretiliyor';
+    }
+    
+    progressDiv.style.display = 'block';
+    if (progressBar) {
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+    }
+    if (progressText) {
+        progressText.textContent = 'AI analiz başlatılıyor...';
+    }
+    if (progressDetails) {
+        progressDetails.innerHTML = '<div class="progress-detail">• LMStudio bağlantısı kontrol ediliyor...</div>';
+    }
+    
     summaryArea.value = "AI Yükleniyor... Lütfen bekleyin...";
     summaryArea.disabled = true;
 
+    // Generate task ID for progress tracking
+    const aiTaskId = (window.crypto && window.crypto.randomUUID)
+        ? window.crypto.randomUUID()
+        : `ai-summary-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    
+    // Start polling progress
+    const poll = async () => {
+        try {
+            const response = await fetch(`${API_URL}/projects/progress/${aiTaskId}`);
+            if (!response.ok) return;
+
+            const progress = await response.json();
+
+            if (progressBar) {
+                progressBar.style.width = `${progress.progress}%`;
+                progressBar.textContent = `${progress.progress}%`;
+            }
+
+            if (progressText) {
+                progressText.textContent = progress.current_step || 'AI analiz sürüyor...';
+            }
+
+            if (progressDetails && progress.details && progress.details.length > 0) {
+                const lastDetails = progress.details.slice(-10);  // Show last 10 details
+                progressDetails.innerHTML = lastDetails.map(detail =>
+                    `<div class="progress-detail">• ${detail.message}</div>`
+                ).join('');
+                progressDetails.scrollTop = progressDetails.scrollHeight;
+            }
+
+            if (progress.status === 'completed' || progress.status === 'failed') {
+                clearInterval(aiPolling);
+            }
+        } catch (error) {
+            console.error('AI progress polling error:', error);
+        }
+    };
+    
+    let aiPolling = setInterval(poll, 500);  // Poll every 500ms
+    poll();  // Initial poll
+
     try {
-        const aiResponse = await fetch(`${API_URL}/analysis/function/${currentModalFunctionId}/ai-summary`, {
+        const aiResponse = await fetch(`${API_URL}/analysis/function/${currentModalFunctionId}/ai-summary?task_id=${encodeURIComponent(aiTaskId)}`, {
             method: 'POST'
         });
         const aiResult = await aiResponse.json();
+        
+        clearInterval(aiPolling);
 
         if (aiResponse.ok) {
             summaryArea.value = aiResult.summary;
+            
+            if (progressText) {
+                progressText.textContent = '✓ AI özeti başarıyla oluşturuldu!';
+            }
+            
+            // Hide progress after 2 seconds
+            setTimeout(() => {
+                progressDiv.style.display = 'none';
+            }, 2000);
+            
             loadFunctions(); // optionally refresh list in background
         } else {
             summaryArea.value = oldText;
+            progressDiv.style.display = 'none';
             showError('AI Analiz Hatası', 'AI analiz hatası: ' + aiResult.error);
         }
     } catch (error) {
+        clearInterval(aiPolling);
         summaryArea.value = oldText;
+        progressDiv.style.display = 'none';
         showError('Bağlantı Hatası', 'AI analiz bağlantı hatası: ' + error);
     } finally {
         summaryArea.disabled = false;
