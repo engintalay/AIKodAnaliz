@@ -151,7 +151,7 @@ function pollAnalysisTask(taskId) {
     };
 
     tick();
-    job.pollTimer = setInterval(tick, 1200);
+    job.pollTimer = setInterval(tick, 1500);
 }
 
 function startTrackedAnalysis(taskId, label, requestPromise) {

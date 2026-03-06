@@ -273,8 +273,8 @@ async function pollUploadProgress(taskId, projectId) {
         }
     };
     
-    // Poll every 500ms
-    uploadPolling = setInterval(poll, 500);
+    // Poll every 1500ms to reduce backend load
+    uploadPolling = setInterval(poll, 1500);
     poll(); // Initial call
 }
 
@@ -345,7 +345,7 @@ async function reanalyzeProject(projectId) {
         }
     };
 
-    reanalysisPolling = setInterval(poll, 500);
+    reanalysisPolling = setInterval(poll, 1500);
     poll();
 
     try {
@@ -442,7 +442,7 @@ async function startAnalysisWithProgress(projectId) {
         }
     };
 
-    analysisPolling = setInterval(poll, 500);
+    analysisPolling = setInterval(poll, 1500);
     poll();
 
     try {
@@ -1171,7 +1171,7 @@ async function generateAISummary() {
         }
     };
     
-    let aiPolling = setInterval(poll, 500);  // Poll every 500ms
+    let aiPolling = setInterval(poll, 1500);  // Poll every 1500ms
     poll();  // Initial poll
 
     try {

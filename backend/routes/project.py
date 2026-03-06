@@ -570,7 +570,27 @@ def get_upload_progress(task_id):
         progress = progress_tracker.get_progress(task_id)
         
         if progress is None:
-            return jsonify({'error': 'Task not found'}), 404
+            # Return a terminal payload so older clients can stop polling.
+            return jsonify({
+                'task_id': task_id,
+                'status': 'failed',
+                'progress': 100,
+                'current_step': 'Task not found (expired/restarted).',
+                'details': [
+                    {
+                        'message': 'İlerleme görevi bulunamadı. İstek sonlandırıldı.',
+                        'timestamp': None
+                    }
+                ],
+                'metrics': {
+                    'total_functions': 0,
+                    'completed_functions': 0,
+                    'remaining_functions': 0,
+                    'active_thread': None,
+                    'estimated_remaining_seconds': None,
+                },
+                'task_exists': False
+            }), 200
         
         return jsonify(progress), 200
     except Exception as e:
