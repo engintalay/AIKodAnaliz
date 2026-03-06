@@ -79,11 +79,14 @@
                     <button class="btn btn-secondary" id="gitImportTab" onclick="switchUploadMode('git')">🔗 Git Repository</button>
                 </div>
                 
-                <!-- ZIP Upload Form -->
+                <!-- ZIP/WAR Upload Form -->
                 <form id="uploadForm" class="upload-form" style="display: block;">
-                    <input type="text" id="projectName" placeholder="Proje Adı (ZIP dosya adından otomatik)" required>
+                    <input type="text" id="projectName" placeholder="Proje Adı (dosya adından otomatik)" required>
                     <input type="text" id="projectDesc" placeholder="Proje Açıklaması">
-                    <input type="file" id="projectFile" accept=".zip" required>
+                    <input type="file" id="projectFile" accept=".zip,.war" required>
+                    <div style="font-size: 0.85rem; color: #7f8c8d; margin-top: 5px;">
+                        💾 ZIP veya WAR dosyaları desteklenir
+                    </div>
                     <button type="submit" class="btn btn-primary">Yükle ve Analiz Et</button>
                 </form>
                 

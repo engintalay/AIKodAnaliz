@@ -33,6 +33,36 @@ def get_project(project_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+def _extract_nested_jars(extract_dir, logger):
+    """Extract JAR files nested in WAR (typically in WEB-INF/lib)"""
+    jar_count = 0
+    
+    # Walk through all directories
+    for root, dirs, files in os.walk(extract_dir):
+        for file_name in files:
+            if file_name.lower().endswith('.jar'):
+                jar_path = os.path.join(root, file_name)
+                jar_extract_dir = os.path.join(root, file_name.replace('.jar', '_extracted'))
+                
+                try:
+                    # Create extraction directory
+                    os.makedirs(jar_extract_dir, exist_ok=True)
+                    
+                    # Extract JAR file
+                    with zipfile.ZipFile(jar_path, 'r') as jar_ref:
+                        jar_ref.extractall(jar_extract_dir)
+                        jar_count += 1
+                        logger.debug(f"Extracted JAR: {jar_path} to {jar_extract_dir}")
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to extract JAR {jar_path}: {e}")
+                    continue
+    
+    if jar_count > 0:
+        logger.info(f"Successfully extracted {jar_count} JAR files from WAR")
+    
+    return jar_count
+
 @bp.route('/upload', methods=['POST'])
 def upload_project():
     """Upload and analyze project"""
@@ -44,9 +74,12 @@ def upload_project():
     project_name = request.form.get('name', file.filename.split('.')[0])
     project_desc = request.form.get('description', '')
     
-    if not file.filename.endswith('.zip'):
-        logger.warning(f"Upload attempt with non-ZIP file: {file.filename}")
-        return jsonify({'error': 'Only ZIP files allowed'}), 400
+    file_lower = file.filename.lower()
+    if not (file_lower.endswith('.zip') or file_lower.endswith('.war')):
+        logger.warning(f"Upload attempt with non-ZIP/WAR file: {file.filename}")
+        return jsonify({'error': 'Only ZIP and WAR files allowed'}), 400
+    
+    is_war = file_lower.endswith('.war')
 
 @bp.route('/git-info', methods=['POST'])
 def get_git_info():
@@ -168,9 +201,15 @@ def get_git_info():
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             file_list = zip_ref.namelist()
             total_files = len(file_list)
-            log_upload(project_id, "ZIP extracted", total_files=total_files)
-            progress_tracker.update(task_id, progress=25, step=f'ZIP içeriği çıkarılıyor... ({total_files} dosya bulundu)', detail=f'Toplam {total_files} dosya çıkarılacak')
+            log_upload(project_id, "ZIP/WAR extracted", total_files=total_files)
+            progress_tracker.update(task_id, progress=25, step=f'ZIP/WAR içeriği çıkarılıyor... ({total_files} dosya bulundu)', detail=f'Toplam {total_files} dosya çıkarılacak')
             zip_ref.extractall(extract_dir)
+        
+        # If WAR file, extract nested JARs
+        if is_war:
+            progress_tracker.update(task_id, progress=26, step='WAR içindeki JAR dosyaları çıkarılıyor...', detail='Nested JAR dosyaları taranıyor')
+            logger.info(f"[Project {project_id}] Extracting nested JARs from WAR file")
+            _extract_nested_jars(extract_dir, logger)
         
         progress_tracker.update(task_id, progress=30, step='Dosyalar tarıyor ve işleniyor...', detail='Kaynak dosyalar veritabanına aktarılıyor')
         

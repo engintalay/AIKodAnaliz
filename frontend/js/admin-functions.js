@@ -11,12 +11,14 @@ function loadReport() {
         .catch(err => showError('Hata', `Rapor yüklenirken hata: ${err}`));
 }
 
-function toggleFileDetails(button, fileName) {
-    const detailsDiv = document.querySelector(`.file-details-${fileName}`);
+function toggleFileDetails(button, fileId) {
+    const detailsDiv = document.querySelector(`[data-file-id="${fileId}"]`);
     if (detailsDiv) {
         const isHidden = detailsDiv.style.display === 'none';
         detailsDiv.style.display = isHidden ? 'block' : 'none';
         button.textContent = isHidden ? '📋 Gizle' : '📋 Detaylar';
+    } else {
+        console.error(`Detaylar div bulunamadı. File ID: ${fileId}`);
     }
 }
 
@@ -133,7 +135,7 @@ function renderReport(reportData) {
                                     ` : `
                                         <span style="color: #27ae60; font-weight: bold;">✅ Tamamlandı</span>
                                     `}
-                                    <button class="btn btn-sm" onclick="toggleFileDetails(this, '${fileName}')" 
+                                    <button class="btn btn-sm" onclick="toggleFileDetails(this, ${fileData.file_id})" 
                                             style="padding: 6px 12px; background: #95a5a6; color: white; border: none; border-radius: 3px; cursor: pointer;">
                                         📋 Detaylar
                                     </button>
@@ -141,7 +143,7 @@ function renderReport(reportData) {
                             </div>
                             
                             <!-- Dosya detayları (gizli) -->
-                            <div class="file-details-${fileName}" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd;">
+                            <div data-file-id="${fileData.file_id}" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd;">
                                 <strong>Eksik Özetler:</strong>
                                 ${fileData.missing_functions && fileData.missing_functions.length > 0 ? `
                                     <ul style="margin: 5px 0 0 20px; font-size: 13px;">
