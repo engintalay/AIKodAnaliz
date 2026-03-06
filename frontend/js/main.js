@@ -1,6 +1,7 @@
 // API URL: Use current hostname/port dynamically, but override /api path on root
 const API_URL = `${window.location.protocol}//${window.location.host}/api`;
 let currentProjectId = null;
+let currentUser = null;
 let cy = null;
 
 // ============================================
@@ -1567,8 +1568,6 @@ document.getElementById('topP')?.addEventListener('input', (e) => {
 // SECTION: Authentication
 // ============================================
 
-let currentUser = null;
-
 function checkSession() {
     const user = localStorage.getItem('currentUser');
     const loginSection = document.getElementById('loginSection');
@@ -1581,7 +1580,23 @@ function checkSession() {
         if (loginSection) loginSection.style.display = 'none';
         if (navbar) navbar.style.display = 'flex';
         if (mainContent) mainContent.style.display = 'block';
-        document.getElementById('userInfo').textContent = `👤 ${currentUser.username}`;
+        document.getElementById('userInfo').textContent = `👤 ${currentUser.username} (${currentUser.role})`;
+        
+        // Show admin/developer links based on role
+        const adminLink = document.getElementById('adminLink');
+        const permissionsLink = document.getElementById('permissionsLink');
+        
+        if (currentUser.role === 'admin') {
+            if (adminLink) adminLink.style.display = 'inline-block';
+            if (permissionsLink) permissionsLink.style.display = 'inline-block';
+        } else if (currentUser.role === 'developer') {
+            if (adminLink) adminLink.style.display = 'none';
+            if (permissionsLink) permissionsLink.style.display = 'inline-block';
+        } else {
+            if (adminLink) adminLink.style.display = 'none';
+            if (permissionsLink) permissionsLink.style.display = 'none';
+        }
+        
         return true;
     } else {
         // Show login, hide main UI
@@ -1636,9 +1651,19 @@ async function handleLogin(e) {
 }
 
 function logout() {
-    localStorage.removeItem('currentUser');
-    currentUser = null;
-    checkSession();
+    // Call server logout
+    fetch(`${API_URL}/users/logout`, {
+        method: 'POST'
+    }).then(() => {
+        localStorage.removeItem('currentUser');
+        currentUser = null;
+        checkSession();
+    }).catch(err => {
+        // Even if server fails, still logout locally
+        localStorage.removeItem('currentUser');
+        currentUser = null;
+        checkSession();
+    });
 }
 
 // ============================================

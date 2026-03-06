@@ -49,6 +49,9 @@
             <div class="nav-menu">
                 <span id="userInfo"></span>
                 <a href="#" onclick="loadProjects(); return false;">Projeler</a>
+                <a href="#" onclick="showReport(); return false;">📊 Rapor</a>
+                <a href="#" id="adminLink" style="display:none;" onclick="showAdminPanel(); return false;">⚙️ Yönetim</a>
+                <a href="#" id="permissionsLink" style="display:none;" onclick="showPermissionsPanel(); return false;">🔐 İzinler</a>
                 <a href="#" onclick="showUpload(); return false;">Proje Yükle</a>
                 <a href="#" onclick="showSettings(); return false;">Ayarlar</a>
                 <a href="#" onclick="logout(); return false;">Çık</a>
@@ -172,6 +175,15 @@
                 </div>
             </div>
 
+            <!-- Report Section -->
+            <div id="reportSection" class="section">
+                <h2>📊 AI Özet Kapsama Raporu</h2>
+                <button class="btn btn-primary" onclick="loadReport()">📊 Rapor Oluştur</button>
+                <div id="reportContainer" style="margin-top: 20px;">
+                    <!-- Report will be loaded here -->
+                </div>
+            </div>
+
             <!-- Settings Section -->
             <div id="settingsSection" class="section">
                 <h2>Ayarlar</h2>
@@ -209,6 +221,117 @@
                                 <option value="sqlite">SQLite (Mevcut)</option>
                                 <option value="postgresql">PostgreSQL (Gelecek)</option>
                             </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Admin Panel Section -->
+            <div id="adminPanel" class="section">
+                <h2>⚙️ Yönetim Paneli</h2>
+                
+                <!-- User Management Tab -->
+                <div class="tabs">
+                    <button class="tab-btn active" onclick="switchAdminTab('users')">Kullanıcılar</button>
+                    <button class="tab-btn" onclick="switchAdminTab('roles')">Roller</button>
+                </div>
+
+                <!-- Users Management -->
+                <div id="usersTab" class="tab-content" style="display: block;">
+                    <button class="btn btn-primary" onclick="showCreateUserForm()">+ Yeni Kullanıcı</button>
+                    
+                    <div id="createUserForm" style="display:none; background: #f9f9f9; padding: 15px; margin: 15px 0; border-radius: 4px;">
+                        <h4>Yeni Kullanıcı Oluştur</h4>
+                        <input type="text" id="newUsername" placeholder="Kullanıcı Adı" required>
+                        <input type="password" id="newPassword" placeholder="Şifre" required>
+                        <select id="newUserRole">
+                            <option value="analyzer">Analizci</option>
+                            <option value="developer">Geliştirici</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                        <input type="text" id="newUserFullName" placeholder="Ad Soyad">
+                        <input type="email" id="newUserEmail" placeholder="E-posta">
+                        <button class="btn btn-primary" onclick="createNewUser()">Oluştur</button>
+                        <button class="btn btn-secondary" onclick="hideCreateUserForm()">İptal</button>
+                    </div>
+                    
+                    <div id="usersList" class="users-list" style="margin-top: 15px;">
+                        <!-- Users will be loaded here -->
+                        <p style="text-align: center; color: #999;">Kullanıcılar yükleniyor...</p>
+                    </div>
+                </div>
+
+                <!-- Roles Management -->
+                <div id="rolesTab" class="tab-content" style="display:none;">
+                    <div class="roles-info">
+                        <h4>Rol Tanımları</h4>
+                        
+                        <div class="role-card">
+                            <h5>👑 Admin</h5>
+                            <p>Tüm özelliklere tam erişim</p>
+                            <ul>
+                                <li>✓ Kullanıcı yönetimi</li>
+                                <li>✓ Proje yönetimi</li>
+                                <li>✓ İzin yönetimi</li>
+                                <li>✓ Tüm projelere erişim</li>
+                                <li>✓ AI özet yönetimi</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="role-card">
+                            <h5>👨‍💻 Geliştirici</h5>
+                            <p>Kendi projelerini yönetebilir, diğer kullanıcılara yetki verebilir</p>
+                            <ul>
+                                <li>✓ Proje oluştur/sil</li>
+                                <li>✓ Kendi projelerine yetki ver</li>
+                                <li>✓ Dosya yükle</li>
+                                <li>✗ Diğer projelere erişim</li>
+                                <li>✗ Kullanıcı yönetimi</li>
+                            </ul>
+                        </div>
+                        
+                        <div class="role-card">
+                            <h5>🔍 Analizci</h5>
+                            <p>Sadece yazılım analiziyle ilgilenir, hiçbir değişiklik yapamaz</p>
+                            <ul>
+                                <li>✓ Paylaşılan projeleri görüntüle</li>
+                                <li>✓ Analiz ve diyagramları oku</li>
+                                <li>✗ Hiçbir değişiklik yapamaz (salt okuma)</li>
+                                <li>✗ Proje oluştur</li>
+                                <li>✗ Dosya yükle</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Permissions Panel Section -->
+            <div id="permissionsPanel" class="section" style="display:none;">
+                <h2>🔐 Proje İzinleri</h2>
+                
+                <div style="margin-bottom: 15px;">
+                    <select id="projectSelectForPermissions" onchange="loadProjectPermissions()">
+                        <option value="">Proje seçin...</option>
+                    </select>
+                </div>
+
+                <div id="permissionsContent" style="display:none;">
+                    <div style="margin-bottom: 15px;">
+                        <h4>İzin Ver</h4>
+                        <select id="userSelectForPermission">
+                            <option value="">Kullanıcı seçin...</option>
+                        </select>
+                        <label style="display: inline-block; margin: 0 10px;">
+                            <input type="checkbox" id="readOnlyToggle" checked>
+                            <span>Salt Okuma (Değişiklik yapılamaz)</span>
+                        </label>
+                        <button class="btn btn-primary" onclick="grantPermission()">İzin Ver</button>
+                    </div>
+
+                    <div>
+                        <h4>Erişimi Olan Kullanıcılar</h4>
+                        <div id="projectUsersList" style="background: #f9f9f9; padding: 10px; border-radius: 4px;">
+                            <!-- Users with access will be listed here -->
                         </div>
                     </div>
                 </div>
@@ -292,6 +415,7 @@
     <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <script src="/static/js/main.js"></script>
+    <script src="/static/js/admin-functions.js"></script>
 </body>
 
 </html>

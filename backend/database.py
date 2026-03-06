@@ -35,8 +35,12 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT UNIQUE NOT NULL,
                     password TEXT NOT NULL,
-                    role TEXT DEFAULT 'viewer',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    role TEXT DEFAULT 'analyzer',
+                    full_name TEXT,
+                    email TEXT,
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
             
@@ -165,20 +169,67 @@ class Database:
                 )
             ''')
             
+            # Project Permissions table - Developer/Analyzer access to projects
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS project_permissions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    permission_level TEXT DEFAULT 'read',
+                    read_only BOOLEAN DEFAULT 1,
+                    granted_by INTEGER,
+                    granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (project_id) REFERENCES projects(id),
+                    FOREIGN KEY (user_id) REFERENCES users(id),
+                    FOREIGN KEY (granted_by) REFERENCES users(id),
+                    UNIQUE(project_id, user_id)
+                )
+            ''')
+            
+            # User Settings table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL UNIQUE,
+                    theme TEXT DEFAULT 'light',
+                    notifications_enabled BOOLEAN DEFAULT 1,
+                    items_per_page INTEGER DEFAULT 20,
+                    default_filter TEXT,
+                    preferences TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            ''')
+            
             # Create demo users if not exist
             cursor.execute("SELECT COUNT(*) FROM users WHERE username = ?", ("admin",))
             if cursor.fetchone()[0] == 0:
                 # Admin user
                 cursor.execute('''
-                    INSERT INTO users (username, password, role)
-                    VALUES (?, ?, ?)
-                ''', ("admin", "admin123", "admin"))
+                    INSERT INTO users (username, password, role, full_name, email, is_active)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', ("admin", "admin123", "admin", "Admin Kullanıcı", "admin@aikodanaliz.local", 1))
                 
-                # Demo viewer user
+                # Demo developer user
                 cursor.execute('''
-                    INSERT INTO users (username, password, role)
-                    VALUES (?, ?, ?)
-                ''', ("user", "user123", "viewer"))
+                    INSERT INTO users (username, password, role, full_name, email, is_active)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', ("developer", "dev123", "developer", "Geliştirici Kullanıcı", "dev@aikodanaliz.local", 1))
+                
+                # Demo analyzer user  
+                cursor.execute('''
+                    INSERT INTO users (username, password, role, full_name, email, is_active)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', ("analyzer", "analyzer123", "analyzer", "Analizci Kullanıcı", "analyzer@aikodanaliz.local", 1))
+                
+                # Create default settings for demo users
+                for username in ["admin", "developer", "analyzer"]:
+                    cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+                    user_id = cursor.fetchone()[0]
+                    cursor.execute('''
+                        INSERT INTO user_settings (user_id, theme, notifications_enabled, items_per_page)
+                        VALUES (?, ?, ?, ?)
+                    ''', (user_id, "light", 1, 20))
             
             conn.commit()
     

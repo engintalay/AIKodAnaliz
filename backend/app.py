@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.config import DATABASE_PATH, UPLOAD_DIR
 from backend.database import db
-from backend.routes import project, analysis, user, ai_settings, diagram
+from backend.routes import project, analysis, user, ai_settings, diagram, report
 from backend.logger import logger
 
 # Setup Flask app with static and template folders
@@ -30,6 +30,12 @@ app = Flask(__name__,
     static_folder=os.path.join(FRONTEND_DIR, ''),
     static_url_path='/static',
     template_folder=FRONTEND_DIR)
+
+# Configure session
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['PERMANENT_SESSION_LIFETIME'] = 7 * 24 * 3600  # 7 days
 
 CORS(app)
 
@@ -61,6 +67,7 @@ app.register_blueprint(analysis.bp)
 app.register_blueprint(user.bp)
 app.register_blueprint(ai_settings.bp)
 app.register_blueprint(diagram.bp)
+app.register_blueprint(report.bp)
 
 @app.route('/')
 def index():
