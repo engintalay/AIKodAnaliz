@@ -1463,7 +1463,7 @@ async function loadFiles() {
 
 async function loadSettings() {
     try {
-        const response = await fetch(`${API_URL}/ai-settings`);
+        const response = await fetch(`${API_URL}/ai-settings/`);
         const settings = await response.json();
 
         // Load settings into form
@@ -1492,6 +1492,38 @@ async function loadSettings() {
             }
         }
         
+        if (settings.timeout !== undefined) {
+            const timeoutInput = document.getElementById('timeout');
+            if (timeoutInput) {
+                timeoutInput.value = settings.timeout;
+            }
+        }
+        
+        if (settings.frequency_penalty !== undefined) {
+            const freqInput = document.getElementById('frequencyPenalty');
+            if (freqInput) {
+                freqInput.value = settings.frequency_penalty;
+                const freqValue = document.getElementById('frequencyPenaltyValue');
+                if (freqValue) freqValue.textContent = settings.frequency_penalty;
+            }
+        }
+        
+        if (settings.presence_penalty !== undefined) {
+            const presInput = document.getElementById('presencePenalty');
+            if (presInput) {
+                presInput.value = settings.presence_penalty;
+                const presValue = document.getElementById('presencePenaltyValue');
+                if (presValue) presValue.textContent = settings.presence_penalty;
+            }
+        }
+        
+        if (settings.retry_count !== undefined) {
+            const retryInput = document.getElementById('retryCount');
+            if (retryInput) {
+                retryInput.value = settings.retry_count;
+            }
+        }
+        
         console.log('Settings loaded from database:', settings);
     } catch (error) {
         console.error('Ayarlar yükleme hatası:', error);
@@ -1502,11 +1534,19 @@ async function saveLMSettings() {
     const tempValue = parseFloat(document.getElementById('temperature').value);
     const topPValue = parseFloat(document.getElementById('topP').value);
     const maxTokensValue = parseInt(document.getElementById('maxTokens').value);
+    const timeoutValue = parseInt(document.getElementById('timeout').value);
+    const frequencyPenaltyValue = parseFloat(document.getElementById('frequencyPenalty').value);
+    const presencePenaltyValue = parseFloat(document.getElementById('presencePenalty').value);
+    const retryCountValue = parseInt(document.getElementById('retryCount').value);
 
     const settings = {
         temperature: { value: tempValue, type: 'float' },
         top_p: { value: topPValue, type: 'float' },
-        max_tokens: { value: maxTokensValue, type: 'integer' }
+        max_tokens: { value: maxTokensValue, type: 'integer' },
+        timeout: { value: timeoutValue, type: 'integer' },
+        frequency_penalty: { value: frequencyPenaltyValue, type: 'float' },
+        presence_penalty: { value: presencePenaltyValue, type: 'float' },
+        retry_count: { value: retryCountValue, type: 'integer' }
     };
 
     try {
@@ -1562,11 +1602,19 @@ async function testLMConnection() {
 // ============================================
 
 document.getElementById('temperature')?.addEventListener('input', (e) => {
-    document.getElementById('tempValue').textContent = e.target.value;
+    document.getElementById('temperatureValue').textContent = e.target.value;
 });
 
 document.getElementById('topP')?.addEventListener('input', (e) => {
     document.getElementById('topPValue').textContent = e.target.value;
+});
+
+document.getElementById('frequencyPenalty')?.addEventListener('input', (e) => {
+    document.getElementById('frequencyPenaltyValue').textContent = e.target.value;
+});
+
+document.getElementById('presencePenalty')?.addEventListener('input', (e) => {
+    document.getElementById('presencePenaltyValue').textContent = e.target.value;
 });
 
 // ============================================

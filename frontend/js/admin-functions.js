@@ -382,44 +382,4 @@ function revokePermission(userId) {
     }
 }
 
-// ============================================
-// SECTION: User Settings Functions
-// ============================================
 
-function showSettings() {
-    showSection('settingsSection');
-    loadUserSettings();
-}
-
-function loadUserSettings() {
-    fetch(`${API_URL}/users/settings`)
-        .then(response => response.json())
-        .then(settings => {
-            document.getElementById('apiUrl').value = settings.api_url || '';
-            document.getElementById('temperature').value = settings.temperature || 0.7;
-            document.getElementById('temperatureValue').textContent = settings.temperature || 0.7;
-            document.getElementById('topP').value = settings.top_p || 0.9;
-            document.getElementById('topPValue').textContent = settings.top_p || 0.9;
-            document.getElementById('maxTokens').value = settings.max_tokens || 1000;
-        })
-        .catch(err => console.error('Ayarlar yüklenirken hata:', err));
-}
-
-function updateUserSettings() {
-    const settings = {
-        theme: 'light',
-        notifications_enabled: true,
-        items_per_page: 20
-    };
-    
-    fetch(`${API_URL}/users/settings`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings)
-    })
-    .then(response => response.json())
-    .then(data => {
-        showSuccess('Başarılı', 'Ayarlar kaydedildi');
-    })
-    .catch(err => showError('Hata', `Hata: ${err}`));
-}

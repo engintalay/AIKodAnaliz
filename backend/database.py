@@ -230,6 +230,22 @@ class Database:
                         INSERT INTO user_settings (user_id, theme, notifications_enabled, items_per_page)
                         VALUES (?, ?, ?, ?)
                     ''', (user_id, "light", 1, 20))
+                
+                # Initialize AI settings with default values
+                default_settings = [
+                    ('temperature', '0.7', 'float'),
+                    ('top_p', '0.9', 'float'),
+                    ('max_tokens', '1000', 'integer'),
+                    ('timeout', '30', 'integer'),
+                    ('frequency_penalty', '0', 'float'),
+                    ('presence_penalty', '0', 'float'),
+                    ('retry_count', '3', 'integer'),
+                ]
+                for setting_name, setting_value, data_type in default_settings:
+                    cursor.execute('''
+                        INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)
+                        VALUES (?, ?, ?)
+                    ''', (setting_name, setting_value, data_type))
             
             conn.commit()
     
