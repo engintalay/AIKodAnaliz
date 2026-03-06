@@ -314,17 +314,23 @@ def analyze_project(project_id):
             }
             
             # ✅ RESOLUTION STRATEGY:
-            # 1. Try Qualified Calls: receiver.method() → ClassName.method()
+            # 1. Try Qualified Calls: ONLY this/self.method() → same class method
             # 2. Try Unqualified in Same Class: method() inside ClassName
-            # 3. Try Global Unqualified: method() anywhere
+            # 3. Try Global Unqualified: method() anywhere (if unique)
             
-            # 1. QUALIFIED CALLS: receiver.method()
+            # 1. QUALIFIED CALLS: ONLY this/self receiver (safe, type-known)
+            # Skip other receivers like selector.execute() - no type info available
             for receiver, method_name in qualified_calls:
-                # Try to find by ClassName.method pattern
-                for potential_class in class_funcs_map.keys():
-                    qualified_key = f"{potential_class}.{method_name}"
-                    if qualified_key in qualified_map:
-                        callee_id = qualified_map[qualified_key]
+                # ONLY match this/self (we know the type = current class)
+                if receiver.lower() not in ('this', 'self'):
+                    # Unknown receiver type - cannot reliably match without type inference
+                    # Example: selector.execute() - is selector a DALResult? ServiceHandler? Unknown!
+                    continue
+                
+                # this.method() or self.method() → look in same class
+                if caller_class and caller_class in class_funcs_map:
+                    if method_name in class_funcs_map[caller_class]:
+                        callee_id = class_funcs_map[caller_class][method_name]
                         
                         if caller_id == callee_id:
                             continue
@@ -338,7 +344,6 @@ def analyze_project(project_id):
                         )
                         inserted_pairs.add(pair)
                         dependencies_found += 1
-                        break  # Found match, stop searching
             
             # 2. UNQUALIFIED CALLS: foo()
             for called_name in unqualified_local:

@@ -101,6 +101,7 @@ async function loadProjects() {
                 <small>Yüklenme: ${new Date(project.upload_date).toLocaleDateString('tr-TR')}</small>
                 <div class="project-card-actions">
                     <button onclick="viewProject(${project.id})" class="btn btn-primary">Aç</button>
+                    <button onclick="reanalyzeProject(${project.id})" class="btn btn-secondary">🔄 Tekrar Analiz Et</button>
                     <button onclick="deleteProject(${project.id})" class="btn btn-secondary">Sil</button>
                 </div>
             `;
@@ -209,6 +210,7 @@ function showSettings() {
 
 let uploadPolling = null;
 let analysisPolling = null;
+let reanalysisPolling = null;
 
 async function pollUploadProgress(taskId, projectId) {
     const progressBar = document.getElementById('uploadProgressBar');
@@ -267,6 +269,109 @@ async function pollUploadProgress(taskId, projectId) {
     // Poll every 500ms
     uploadPolling = setInterval(poll, 500);
     poll(); // Initial call
+}
+
+// Reanalyze an existing project
+async function reanalyzeProject(projectId) {
+    const confirmed = confirm('Projeyi tekrar analiz etmek istiyor musunuz? Mevcut bağımlılık bilgileri yenilenecektir.');
+    if (!confirmed) return;
+
+    // Show progress UI
+    document.getElementById('uploadProgress').style.display = 'block';
+    const progressBar = document.getElementById('uploadProgressBar');
+    const progressText = document.getElementById('uploadProgressText');
+    const progressDetails = document.getElementById('uploadProgressDetails');
+    const progressTitle = document.querySelector('#uploadProgress h3');
+
+    if (progressTitle) {
+        progressTitle.textContent = 'Tekrar Analiz İlerlemesi';
+    }
+
+    const analysisTaskId = (window.crypto && window.crypto.randomUUID)
+        ? window.crypto.randomUUID()
+        : `reanalysis-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
+    if (progressBar) {
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+    }
+    if (progressText) {
+        progressText.textContent = 'Tekrar analiz başlatılıyor...';
+    }
+    if (progressDetails) {
+        progressDetails.innerHTML = '<div class="progress-detail">• Analiz görevi oluşturuluyor...</div>';
+    }
+
+    const poll = async () => {
+        try {
+            const response = await fetch(`${API_URL}/projects/progress/${analysisTaskId}`);
+            if (!response.ok) return;
+
+            const progress = await response.json();
+
+            if (progressBar) {
+                progressBar.style.width = `${progress.progress}%`;
+                progressBar.textContent = `${progress.progress}%`;
+            }
+
+            if (progressText) {
+                progressText.textContent = progress.current_step || 'Analiz sürüyor...';
+            }
+
+            if (progressDetails && progress.details && progress.details.length > 0) {
+                const lastDetails = progress.details.slice(-8);
+                progressDetails.innerHTML = lastDetails.map(detail =>
+                    `<div class="progress-detail">• ${detail.message}</div>`
+                ).join('');
+                progressDetails.scrollTop = progressDetails.scrollHeight;
+            }
+
+            if (progress.status === 'completed') {
+                clearInterval(reanalysisPolling);
+            }
+
+            if (progress.status === 'failed') {
+                clearInterval(reanalysisPolling);
+            }
+        } catch (error) {
+            console.error('Reanalysis progress polling error:', error);
+        }
+    };
+
+    reanalysisPolling = setInterval(poll, 500);
+    poll();
+
+    try {
+        const analysisResponse = await fetch(
+            `${API_URL}/analysis/project/${projectId}?task_id=${encodeURIComponent(analysisTaskId)}`,
+            { method: 'POST' }
+        );
+        const analysisResult = await analysisResponse.json();
+
+        clearInterval(reanalysisPolling);
+
+        if (!analysisResponse.ok) {
+            throw new Error(analysisResult.error || 'Bilinmeyen analiz hatası');
+        }
+
+        showSuccess(
+            'Tekrar Analiz Tamamlandı',
+            `✓ Proje başarıyla tekrar analiz edildi!\n` +
+            `${analysisResult.functions_found} fonksiyon bulundu.\n` +
+            `Bağımlılıklar yenilendi.`
+        );
+
+        document.getElementById('uploadProgress').style.display = 'none';
+        
+        // Reload current project if it's being viewed
+        if (currentProjectId === projectId) {
+            viewProject(projectId);
+        }
+    } catch (analysisError) {
+        clearInterval(reanalysisPolling);
+        showError('Tekrar Analiz Hatası', 'Analiz sırasında hata: ' + analysisError.message);
+        document.getElementById('uploadProgress').style.display = 'none';
+    }
 }
 
 async function startAnalysisWithProgress(projectId) {
@@ -1027,6 +1132,71 @@ function closeFunctionModal() {
         content.classList.remove('fullscreen');
         document.getElementById('fullscreenBtn').textContent = '⛶';
     }
+    // Clear source code search when closing
+    clearSourceCodeSearch();
+}
+
+// Search in source code
+function searchInSourceCode() {
+    const searchTerm = document.getElementById('sourceCodeSearch').value.trim();
+    const sourceCodeElement = document.getElementById('funcModalSource');
+    const resultsDiv = document.getElementById('searchResults');
+    
+    if (!searchTerm) {
+        clearSourceCodeSearch();
+        return;
+    }
+    
+    // Get original source code (from stored data or current text)
+    let sourceCode = sourceCodeElement.dataset.originalSource || sourceCodeElement.textContent;
+    
+    // Store original if not already stored
+    if (!sourceCodeElement.dataset.originalSource) {
+        sourceCodeElement.dataset.originalSource = sourceCode;
+    }
+    
+    // Case-insensitive search with highlights
+    const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    const matches = sourceCode.match(regex);
+    const matchCount = matches ? matches.length : 0;
+    
+    if (matchCount > 0) {
+        // Highlight matches
+        const highlightedCode = sourceCode.replace(regex, '<mark style="background-color: #ffeb3b; color: #000; padding: 2px 0;">$1</mark>');
+        sourceCodeElement.innerHTML = highlightedCode;
+        
+        // Show results
+        resultsDiv.textContent = `${matchCount} eşleşme bulundu`;
+        resultsDiv.style.display = 'block';
+        resultsDiv.style.color = '#28a745';
+    } else {
+        // No matches
+        resultsDiv.textContent = 'Eşleşme bulunamadı';
+        resultsDiv.style.display = 'block';
+        resultsDiv.style.color = '#dc3545';
+    }
+}
+
+// Clear source code search
+function clearSourceCodeSearch() {
+    const searchInput = document.getElementById('sourceCodeSearch');
+    const sourceCodeElement = document.getElementById('funcModalSource');
+    const resultsDiv = document.getElementById('searchResults');
+    
+    // Clear input
+    if (searchInput) {
+        searchInput.value = '';
+    }
+    
+    // Restore original source code
+    if (sourceCodeElement && sourceCodeElement.dataset.originalSource) {
+        sourceCodeElement.textContent = sourceCodeElement.dataset.originalSource;
+    }
+    
+    // Hide results
+    if (resultsDiv) {
+        resultsDiv.style.display = 'none';
+    }
 }
 
 function toggleFullscreenModal() {
@@ -1394,11 +1564,133 @@ function logout() {
 // SECTION: Initialization
 // ============================================
 
+// Fetch Git repository info and populate branch list
+async function fetchGitInfo() {
+    const urlInput = document.getElementById('gitRepoUrl');
+    const branchSelect = document.getElementById('gitBranch');
+    const nameInput = document.getElementById('gitProjectName');
+    const loader = document.getElementById('gitUrlLoader');
+    
+    const url = urlInput.value.trim();
+    
+    if (!url) {
+        return;
+    }
+    
+    // Show loader
+    loader.style.display = 'block';
+    branchSelect.innerHTML = '<option value="">Branch seçin...</option>';
+    branchSelect.disabled = true;
+    
+    try {
+        const response = await fetch(`${API_URL}/projects/git-info`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url })
+        });
+        
+        if (!response.ok) {
+            throw new Error('Repository bilgileri alınamadı');
+        }
+        
+        const data = await response.json();
+        
+        // Populate branch dropdown
+        branchSelect.innerHTML = '';
+        data.branches.forEach(branch => {
+            const option = document.createElement('option');
+            option.value = branch;
+            option.textContent = branch;
+            if (branch === data.default_branch) {
+                option.selected = true;
+            }
+            branchSelect.appendChild(option);
+        });
+        branchSelect.disabled = false;
+        
+        // Auto-fill project name if empty
+        if (!nameInput.value && data.repo_name) {
+            nameInput.value = data.repo_name;
+        }
+        
+        // Show warning if any
+        if (data.warning) {
+            console.warn('Git info warning:', data.warning);
+        }
+        
+    } catch (error) {
+        console.error('Git info fetch error:', error);
+        // Fallback to default branches
+        branchSelect.innerHTML = `
+            <option value="main">main</option>
+            <option value="master">master</option>
+            <option value="develop">develop</option>
+        `;
+        branchSelect.disabled = false;
+    } finally {
+        loader.style.display = 'none';
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     // Setup login form
     const loginForm = document.getElementById('loginForm');
     if (loginForm) {
         loginForm.addEventListener('submit', handleLogin);
+    }
+    
+    // Setup Git URL autocomplete
+    const gitUrlInput = document.getElementById('gitRepoUrl');
+    if (gitUrlInput) {
+        // Debounce function to avoid too many requests
+        let gitUrlTimeout;
+        gitUrlInput.addEventListener('input', () => {
+            clearTimeout(gitUrlTimeout);
+            gitUrlTimeout = setTimeout(() => {
+                const url = gitUrlInput.value.trim();
+                // Check if it looks like a valid Git URL
+                if (url && (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('git@'))) {
+                    fetchGitInfo();
+                }
+            }, 1000); // Wait 1 second after user stops typing
+        });
+        
+        // Also fetch on blur
+        gitUrlInput.addEventListener('blur', () => {
+            const url = gitUrlInput.value.trim();
+            if (url && (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('git@'))) {
+                fetchGitInfo();
+            }
+        });
+    }
+
+    // Global ESC key handler to close modals
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' || e.keyCode === 27) {
+            // Close function modal if visible
+            const functionModal = document.getElementById('functionModal');
+            if (functionModal && functionModal.classList.contains('visible')) {
+                closeFunctionModal();
+                return;
+            }
+            
+            // Close message modal if visible
+            const messageModal = document.getElementById('messageModal');
+            if (messageModal && messageModal.classList.contains('visible')) {
+                closeMessageModal();
+                return;
+            }
+        }
+    });
+
+    // Source code search - Enter key support
+    const searchInput = document.getElementById('sourceCodeSearch');
+    if (searchInput) {
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                searchInSourceCode();
+            }
+        });
     }
 
     // Check session on page load

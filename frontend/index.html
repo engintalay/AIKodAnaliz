@@ -87,8 +87,15 @@
                 <!-- Git Import Form -->
                 <form id="gitImportForm" class="upload-form" style="display: none;">
                     <input type="text" id="gitRepoUrl" placeholder="Git Repository URL (https://github.com/user/repo)" required>
-                    <input type="text" id="gitBranch" placeholder="Branch (opsiyonel, default: main)">
-                    <input type="text" id="gitProjectName" placeholder="Proje Adı (repodan otomatik)" required>
+                    <div id="gitUrlLoader" style="display: none; color: #3498db; font-size: 0.9rem; margin: 5px 0;">
+                        🔄 Repository bilgileri yükleniyor...
+                    </div>
+                    <div style="position: relative;">
+                        <select id="gitBranch" style="width: 100%; padding: 0.75rem; margin-bottom: 1rem; border: 1px solid #bdc3c7; border-radius: 4px; font-size: 1rem;">
+                            <option value="">Branch seçin...</option>
+                        </select>
+                    </div>
+                    <input type="text" id="gitProjectName" placeholder="Proje Adı" required>
                     <input type="text" id="gitProjectDesc" placeholder="Proje Açıklaması">
                     <button type="submit" class="btn btn-primary">Clone ve Analiz Et</button>
                 </form>
@@ -263,10 +270,16 @@
             <div style="margin-top: 15px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                     <label style="font-weight: bold;">Kaynak Kod:</label>
-                    <button class="btn btn-secondary" id="copyCodeBtn" onclick="copyFunctionCode()" style="padding: 4px 10px; font-size: 11px; display: none;">📋 Kopyala</button>
+                    <div style="display: flex; gap: 5px; align-items: center;">
+                        <input type="text" id="sourceCodeSearch" placeholder="Kaynak kodda ara..." style="padding: 4px 10px; font-size: 11px; border: 1px solid #ccc; border-radius: 3px; width: 200px;" />
+                        <button class="btn btn-secondary" onclick="searchInSourceCode()" style="padding: 4px 12px; font-size: 11px;">🔍 Ara</button>
+                        <button class="btn btn-secondary" onclick="clearSourceCodeSearch()" style="padding: 4px 12px; font-size: 11px;">✕</button>
+                        <button class="btn btn-secondary" id="copyCodeBtn" onclick="copyFunctionCode()" style="padding: 4px 10px; font-size: 11px; display: none;">📋 Kopyala</button>
+                    </div>
                 </div>
                 <pre
                     style="background: #282c34; color: #abb2bf; padding: 10px; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 13px; max-height: 600px; overflow-y: auto; resize: vertical;"><code id="funcModalSource"></code></pre>
+                <div id="searchResults" style="font-size: 11px; color: #666; margin-top: 5px; display: none;"></div>
             </div>
 
             <div class="modal-actions" style="margin-top: 20px;">

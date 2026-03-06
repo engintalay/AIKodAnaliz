@@ -47,6 +47,96 @@ def upload_project():
     if not file.filename.endswith('.zip'):
         logger.warning(f"Upload attempt with non-ZIP file: {file.filename}")
         return jsonify({'error': 'Only ZIP files allowed'}), 400
+
+@bp.route('/git-info', methods=['POST'])
+def get_git_info():
+    """Get Git repository information (branches, repo name)"""
+    try:
+        data = request.get_json()
+        repo_url = data.get('url', '').strip()
+        
+        if not repo_url:
+            return jsonify({'error': 'Repository URL is required'}), 400
+        
+        # Extract repo name from URL
+        # https://github.com/user/repo.git -> repo
+        # https://github.com/user/repo -> repo
+        repo_name = repo_url.rstrip('/').split('/')[-1]
+        if repo_name.endswith('.git'):
+            repo_name = repo_name[:-4]
+        
+        # Get remote branches using git ls-remote
+        # Create environment without proxy settings
+        git_env = os.environ.copy()
+        for proxy_var in ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']:
+            git_env.pop(proxy_var, None)
+        git_env['NO_PROXY'] = '*'
+        git_env['no_proxy'] = '*'
+        
+        # Run git ls-remote to get branches
+        ls_remote_command = ['git', 'ls-remote', '--heads', repo_url]
+        
+        try:
+            result = subprocess.run(
+                ls_remote_command, 
+                capture_output=True, 
+                text=True, 
+                timeout=30,
+                env=git_env
+            )
+            
+            if result.returncode != 0:
+                logger.warning(f"Git ls-remote failed: {result.stderr}")
+                # Return default branches if ls-remote fails
+                return jsonify({
+                    'repo_name': repo_name,
+                    'branches': ['main', 'master', 'develop'],
+                    'default_branch': 'main',
+                    'warning': 'Branch listesi alınamadı, varsayılan branch\'ler gösteriliyor'
+                }), 200
+            
+            # Parse branches from ls-remote output
+            # Format: <hash>\trefs/heads/<branch-name>
+            branches = []
+            for line in result.stdout.strip().split('\n'):
+                if line and 'refs/heads/' in line:
+                    branch_name = line.split('refs/heads/')[-1].strip()
+                    if branch_name:
+                        branches.append(branch_name)
+            
+            # Determine default branch (prefer main > master > first available)
+            default_branch = 'main'
+            if 'main' in branches:
+                default_branch = 'main'
+            elif 'master' in branches:
+                default_branch = 'master'
+            elif branches:
+                default_branch = branches[0]
+            
+            # If no branches found, return defaults
+            if not branches:
+                branches = ['main', 'master']
+                default_branch = 'main'
+            
+            return jsonify({
+                'repo_name': repo_name,
+                'branches': branches,
+                'default_branch': default_branch
+            }), 200
+            
+        except subprocess.TimeoutExpired:
+            return jsonify({
+                'repo_name': repo_name,
+                'branches': ['main', 'master', 'develop'],
+                'default_branch': 'main',
+                'warning': 'Repository erişimi zaman aşımına uğradı'
+            }), 200
+        except FileNotFoundError:
+            return jsonify({'error': 'Git is not installed on the system'}), 500
+        
+    except Exception as e:
+        logger.error(f"Error fetching git info: {e}")
+        return jsonify({'error': str(e)}), 500
     
     # Generate task ID for progress tracking
     task_id = str(uuid.uuid4())
