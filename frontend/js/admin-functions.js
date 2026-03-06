@@ -11,6 +11,55 @@ function loadReport() {
         .catch(err => showError('Hata', `Rapor yüklenirken hata: ${err}`));
 }
 
+function toggleFileDetails(button, fileName) {
+    const detailsDiv = document.querySelector(`.file-details-${fileName}`);
+    if (detailsDiv) {
+        const isHidden = detailsDiv.style.display === 'none';
+        detailsDiv.style.display = isHidden ? 'block' : 'none';
+        button.textContent = isHidden ? '📋 Gizle' : '📋 Detaylar';
+    }
+}
+
+function analyzeMissingFunctions(projectId, fileName, fileId) {
+    if (confirm(`"${fileName}" dosyasındaki tüm eksik özetler oluşturulacak. Devam etmek istiyor musunuz?`)) {
+        showSuccess('Bilgi', `"${fileName}" dosyasının analizi başlatıldı...`);
+        // Get all functions in this file that don't have summaries
+        fetch(`${API_URL}/analysis/file/${fileId}?missing_only=true`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showSuccess('Başarılı', `Dosya analizi tamamlandı`);
+                setTimeout(() => loadReport(), 1000);
+            } else {
+                showError('Hata', data.error || 'Analiz yapılamadı');
+            }
+        })
+        .catch(err => showError('Hata', `Analiz sırasında hata: ${err}`));
+    }
+}
+
+function analyzeSingleFunction(functionId) {
+    // Generate AI summary for single function
+    const taskId = `task-${Date.now()}`;
+    fetch(`${API_URL}/analysis/function/${functionId}/ai-summary?task_id=${taskId}`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.summary) {
+            showSuccess('Başarılı', `Fonksiyon özeti oluşturuldu`);
+            setTimeout(() => loadReport(), 500);
+        } else if (data.error) {
+            showError('Hata', data.error);
+        } else {
+            showError('Hata', 'Özet oluşturulamadı');
+        }
+    })
+    .catch(err => showError('Hata', `AI özeti alırken hata: ${err}`));
+}
+
 function renderReport(reportData) {
     const container = document.getElementById('reportContainer');
     
@@ -57,11 +106,64 @@ function renderReport(reportData) {
             
             // Dosya detayları
             if (project.files) {
-                html += '<div style="margin-top: 10px;"><strong>Dosyalar:</strong><ul style="margin: 5px 0 0 20px;">';
+                html += '<div style="margin-top: 15px;"><strong>Dosyalar:</strong>';
                 for (const [fileName, fileData] of Object.entries(project.files)) {
-                    html += `<li>${fileName} - ${fileData.with_summary}/${fileData.total} ✅</li>`;
+                    const coverage = fileData.total > 0 ? Math.round((fileData.with_summary / fileData.total) * 100) : 0;
+                    const isComplete = coverage === 100;
+                    const progressColor = coverage === 100 ? '#27ae60' : coverage >= 80 ? '#f39c12' : '#e74c3c';
+                    
+                    html += `
+                        <div style="background: ${isComplete ? '#f0fff4' : '#fff5f5'}; margin-top: 10px; padding: 10px; border-radius: 4px; border-left: 3px solid ${progressColor};">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div style="flex: 1;">
+                                    <strong>${fileName}</strong>
+                                    <div style="font-size: 14px; color: #7f8c8d; margin-top: 5px;">
+                                        İlerleme: <strong style="color: ${progressColor};">${coverage}%</strong> (${fileData.with_summary}/${fileData.total})
+                                    </div>
+                                    <div style="width: 200px; height: 8px; background: #e0e0e0; border-radius: 4px; margin-top: 5px; overflow: hidden;">
+                                        <div style="width: ${coverage}%; height: 100%; background: ${progressColor};"></div>
+                                    </div>
+                                </div>
+                                <div style="margin-left: 10px; display: flex; gap: 5px;">
+                                    ${coverage < 100 ? `
+                                        <button class="btn btn-sm" onclick="analyzeMissingFunctions(${project.id}, '${fileName}', ${fileData.file_id})" 
+                                                style="padding: 6px 12px; background: #3498db; color: white; border: none; border-radius: 3px; cursor: pointer;">
+                                            🤖 Analiz Et (${fileData.missing_functions ? fileData.missing_functions.length : 0})
+                                        </button>
+                                    ` : `
+                                        <span style="color: #27ae60; font-weight: bold;">✅ Tamamlandı</span>
+                                    `}
+                                    <button class="btn btn-sm" onclick="toggleFileDetails(this, '${fileName}')" 
+                                            style="padding: 6px 12px; background: #95a5a6; color: white; border: none; border-radius: 3px; cursor: pointer;">
+                                        📋 Detaylar
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Dosya detayları (gizli) -->
+                            <div class="file-details-${fileName}" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd;">
+                                <strong>Eksik Özetler:</strong>
+                                ${fileData.missing_functions && fileData.missing_functions.length > 0 ? `
+                                    <ul style="margin: 5px 0 0 20px; font-size: 13px;">
+                                        ${fileData.missing_functions.map(f => `
+                                            <li style="margin: 5px 0;">
+                                                <span style="color: #e74c3c;">❌</span> 
+                                                <strong>${f.qualified_name}</strong> (${f.type})
+                                                <button onclick="analyzeSingleFunction(${f.function_id})" 
+                                                        style="margin-left: 10px; padding: 2px 6px; background: #3498db; color: white; border: none; border-radius: 2px; cursor: pointer; font-size: 11px;">
+                                                    🤖 Analiz
+                                                </button>
+                                            </li>
+                                        `).join('')}
+                                    </ul>
+                                ` : `
+                                    <p style="margin-top: 5px; color: #27ae60; font-size: 13px;">✅ Tüm fonksiyonlar özetlenmiş</p>
+                                `}
+                            </div>
+                        </div>
+                    `;
                 }
-                html += '</ul></div>';
+                html += '</div>';
             }
             
             html += '</div>';

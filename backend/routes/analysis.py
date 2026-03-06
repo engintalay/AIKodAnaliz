@@ -449,7 +449,7 @@ def analyze_project(project_id):
         log_error(f"analyze_project (project: {project_id})", e)
         return jsonify({'error': str(e)}), 500
 
-def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0):
+def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0, temperature=None, top_p=None, max_tokens=None):
     """Recursively generate AI summaries for function and its dependencies
     
     Args:
@@ -460,6 +460,9 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
         task_id: Optional task ID for progress tracking
         total_deps: Total number of dependencies to process
         processed: Number of dependencies already processed
+        temperature: Model temperature for AI
+        top_p: Top-p sampling parameter
+        max_tokens: Maximum tokens in response
     
     Returns:
         tuple: (str: Generated AI summary, int: updated processed count)
@@ -528,7 +531,7 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
                     step=f"Alt fonksiyon özeti üretiliyor: {qualified_name}",
                     detail=f"🔄 {qualified_name} (seviye {depth+1})"
                 )
-            dep_summary, processed = _generate_ai_summary_recursive(dep_id, client, visited, depth + 1, task_id, total_deps, processed)
+            dep_summary, processed = _generate_ai_summary_recursive(dep_id, client, visited, depth + 1, task_id, total_deps, processed, temperature, top_p, max_tokens)
         
         if dep_summary:
             dependency_summaries.append({
@@ -554,7 +557,8 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
         )
     
     # Generate AI summary with dependency context
-    summary = client.analyze_function(func_code, func['signature'], dependency_summaries)
+    summary = client.analyze_function(func_code, func['signature'], dependency_summaries, 
+                                     temperature=temperature, top_p=top_p, max_tokens=max_tokens)
     log_ai_call(function_id, "AI summary received", summary_length=len(summary))
     
     # Save summary
@@ -653,8 +657,33 @@ def get_ai_summary(function_id):
                 detail=f'Toplam {total_deps} fonksiyon özetlenecek'
             )
         
+        # Get AI settings from database
+        ai_settings = {}
+        settings_rows = db.execute_query(
+            'SELECT setting_name, setting_value, data_type FROM ai_settings'
+        )
+        for row in settings_rows:
+            setting = dict(row)
+            name = setting['setting_name']
+            value = setting['setting_value']
+            data_type = setting['data_type']
+            
+            # Convert to proper type
+            if data_type == 'integer':
+                ai_settings[name] = int(value)
+            elif data_type == 'float':
+                ai_settings[name] = float(value)
+            else:
+                ai_settings[name] = value
+        
+        # Extract relevant parameters for AI call
+        temperature = ai_settings.get('temperature')
+        top_p = ai_settings.get('top_p')
+        max_tokens = ai_settings.get('max_tokens')
+        
         # Generate summary recursively (will handle dependencies automatically)
-        summary, _ = _generate_ai_summary_recursive(function_id, client, task_id=task_id, total_deps=total_deps)
+        summary, _ = _generate_ai_summary_recursive(function_id, client, task_id=task_id, total_deps=total_deps,
+                                                   temperature=temperature, top_p=top_p, max_tokens=max_tokens)
         
         if not summary:
             if task_id:
@@ -686,6 +715,96 @@ def get_ai_summary(function_id):
         if task_id:
             progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
         return jsonify({'error': str(e)}), 500
+
+@bp.route('/file/<int:file_id>', methods=['POST'])
+def analyze_file_missing_functions(file_id):
+    """Analyze all missing function summaries in a file"""
+    try:
+        # Get all functions in this file without summaries
+        func_result = db.execute_query(
+            '''SELECT f.id FROM functions f
+               WHERE f.file_id = ? AND (f.ai_summary IS NULL OR f.ai_summary = '' OR f.ai_summary LIKE '⚠️%')
+               ORDER BY f.id''',
+            (file_id,)
+        )
+        
+        if not func_result:
+            return jsonify({
+                'success': True,
+                'message': 'Bu dosyanın tüm fonksiyonlarının özeti var',
+                'functions_analyzed': 0
+            }), 200
+        
+        # Create LMStudio client
+        client = LMStudioClient()
+        connection_status = client.test_connection()
+        
+        if connection_status['status'] != 'connected':
+            return jsonify({
+                'success': False,
+                'error': f"LMStudio bağlantı hatası: {connection_status['message']}"
+            }), 503
+        
+        # Get AI settings from database
+        ai_settings = {}
+        settings_rows = db.execute_query(
+            'SELECT setting_name, setting_value, data_type FROM ai_settings'
+        )
+        for row in settings_rows:
+            setting = dict(row)
+            name = setting['setting_name']
+            value = setting['setting_value']
+            data_type = setting['data_type']
+            
+            if data_type == 'integer':
+                ai_settings[name] = int(value)
+            elif data_type == 'float':
+                ai_settings[name] = float(value)
+            else:
+                ai_settings[name] = value
+        
+        temperature = ai_settings.get('temperature')
+        top_p = ai_settings.get('top_p')
+        max_tokens = ai_settings.get('max_tokens')
+        
+        # Analyze each function
+        analyzed = 0
+        for func_row in func_result:
+            func_id = func_row[0]
+            
+            # Get total functions to set up progress tracking
+            dep_count_rows = db.execute_query(
+                '''SELECT COUNT(DISTINCT fc.callee_function_id) as cnt
+                   FROM function_calls fc
+                   WHERE fc.caller_function_id = ?''',
+                (func_id,)
+            )
+            total_deps = dict(dep_count_rows[0])['cnt'] + 1 if dep_count_rows else 1
+            
+            # Generate summary
+            summary, _ = _generate_ai_summary_recursive(
+                func_id, client, 
+                temperature=temperature, 
+                top_p=top_p, 
+                max_tokens=max_tokens,
+                total_deps=total_deps
+            )
+            
+            if summary and not summary.startswith('Error'):
+                analyzed += 1
+        
+        return jsonify({
+            'success': True,
+            'functions_analyzed': analyzed,
+            'message': f'{analyzed} fonksiyon İncelendi'
+        }), 200
+    
+    except Exception as e:
+        log_error(f"analyze_file_missing_functions (file: {file_id})", e)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @bp.route('/function/<int:function_id>', methods=['GET'])
 def get_function_details(function_id):

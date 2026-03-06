@@ -43,17 +43,26 @@ class LMStudioClient:
                 'message': str(e)
             }
     
-    def analyze_function(self, code: str, signature: str, dependency_summaries: list = None) -> str:
+    def analyze_function(self, code: str, signature: str, dependency_summaries: list = None, 
+                        temperature: float = None, top_p: float = None, max_tokens: int = None) -> str:
         """Get AI summary for a function
         
         Args:
             code: Source code of the function
             signature: Function signature
             dependency_summaries: List of dicts with 'name' and 'summary' for called functions
+            temperature: Model temperature (optional, uses default if not provided)
+            top_p: Top-p sampling parameter (optional)
+            max_tokens: Maximum tokens in response (optional)
         
         Returns:
             str: AI-generated summary in Turkish
         """
+        
+        # Use provided parameters or fall back to instance defaults
+        temp = temperature if temperature is not None else self.temperature
+        tp = top_p if top_p is not None else self.top_p
+        mt = max_tokens if max_tokens is not None else self.max_tokens
         
         # Build context from dependency summaries
         dependency_context = ""
@@ -93,9 +102,9 @@ Summary:"""
                         },
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": self.temperature,
-                    "top_p": self.top_p,
-                    "max_tokens": self.max_tokens,
+                    "temperature": temp,
+                    "top_p": tp,
+                    "max_tokens": mt,
                     "stream": False
                 },
                 timeout=self.request_timeout

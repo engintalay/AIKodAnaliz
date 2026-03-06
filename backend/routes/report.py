@@ -42,7 +42,7 @@ def get_ai_summary_report():
             # Get functions for this project
             func_result = db.execute_query('''
                 SELECT f.id, f.function_name, f.function_type, f.class_name, 
-                       f.package_name, f.ai_summary, s.file_name
+                       f.package_name, f.ai_summary, s.file_name, s.id as file_id
                 FROM functions f
                 LEFT JOIN source_files s ON f.file_id = s.id
                 WHERE f.project_id = ?
@@ -58,6 +58,7 @@ def get_ai_summary_report():
             
             for func in func_result:
                 file_name = func[6] or 'Bilinmeyen'
+                file_id = func[7]
                 has_summary = bool(func[5])
                 
                 if has_summary:
@@ -65,14 +66,24 @@ def get_ai_summary_report():
                 
                 if file_name not in files_dict:
                     files_dict[file_name] = {
+                        'file_id': file_id,
                         'total': 0,
                         'with_summary': 0,
+                        'missing_functions': [],
                         'functions': []
                     }
                 
                 files_dict[file_name]['total'] += 1
                 if has_summary:
                     files_dict[file_name]['with_summary'] += 1
+                else:
+                    # Track missing summaries
+                    files_dict[file_name]['missing_functions'].append({
+                        'function_id': func[0],
+                        'name': func[1],
+                        'qualified_name': f"{func[3]}.{func[1]}" if func[3] else func[1],
+                        'type': func[2] or 'unknown'
+                    })
                 
                 # Build qualified name
                 qualified_name = func[1]  # function_name
@@ -82,6 +93,7 @@ def get_ai_summary_report():
                     qualified_name = f"{func[4]}.{qualified_name}"
                 
                 files_dict[file_name]['functions'].append({
+                    'function_id': func[0],
                     'name': func[1],
                     'qualified_name': qualified_name,
                     'type': func[2] or 'unknown',
