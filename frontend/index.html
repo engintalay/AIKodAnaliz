@@ -8,7 +8,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>AIKodAnaliz - Kod Analiz Aracı</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260310_06">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
 
@@ -540,8 +540,9 @@
                 </div>
             </div>
 
-            <div style="margin-top: 15px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+            <div id="sourceCodeContainer" style="margin-top: 15px;">
+                <div class="controls-header"
+                    style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                     <label style="font-weight: bold;">Kaynak Kod:</label>
                     <div style="display: flex; gap: 5px; align-items: center;">
                         <input type="text" id="sourceCodeSearch" placeholder="Kaynak kodda ara..."
@@ -552,6 +553,8 @@
                             style="padding: 4px 12px; font-size: 11px;">✕</button>
                         <button class="btn btn-secondary" id="copyCodeBtn" onclick="copyFunctionCode()"
                             style="padding: 4px 10px; font-size: 11px; display: none;">📋 Kopyala</button>
+                        <button class="btn btn-primary" id="expandCodeBtn" onclick="toggleCodeFullscreen()"
+                            style="padding: 4px 10px; font-size: 11px;">⛶ Genişlet</button>
                     </div>
                 </div>
                 <pre
@@ -615,7 +618,7 @@
     <!-- Load libraries before main.js -->
     <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-    <script src="/static/js/main.js?v=20260310_04"></script>
+    <script src="/static/js/main.js?v=20260310_06"></script>
     <script src="/static/js/admin-functions.js?v=20260310_01"></script>
 </body>
 

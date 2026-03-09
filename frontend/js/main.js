@@ -1396,6 +1396,31 @@ function setupSearchListener() {
 }
 
 // ============================================
+// GELIS7: Code Fullscreen View
+// ============================================
+
+function toggleCodeFullscreen() {
+    const container = document.getElementById('sourceCodeContainer');
+    const btn = document.getElementById('expandCodeBtn');
+
+    if (!container || !btn) return;
+
+    // Toggle the fullscreen class
+    const isFullscreen = container.classList.toggle('fullscreen-code-container');
+
+    // Update button text and styling based on state
+    if (isFullscreen) {
+        btn.innerHTML = '🗗 Küçült';
+        btn.classList.replace('btn-primary', 'btn-secondary');
+        document.body.style.overflow = 'hidden'; // Prevent background scrolling
+    } else {
+        btn.innerHTML = '⛶ Genişlet';
+        btn.classList.replace('btn-secondary', 'btn-primary');
+        document.body.style.overflow = ''; // Restore background scrolling
+    }
+}
+
+// ============================================
 // SECTION: Marks (Comments)
 // ============================================
 
