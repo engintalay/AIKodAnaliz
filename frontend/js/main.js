@@ -345,17 +345,53 @@ function clearChatHistory() {
 }
 
 function viewFunctionFromChat(functionId) {
-    // Switch to Functions tab and scroll to the function row
+    // Switch to Functions tab
     switchTab('functions');
-    setTimeout(() => {
-        const row = document.querySelector(`[data-function-id="${functionId}"]`);
-        if (row) {
-            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            row.style.outline = '2px solid #3498db';
-            setTimeout(() => row.style.outline = '', 2000);
+
+    // Give the tab + any lazy rendering time to complete
+    const tryScroll = (attempts) => {
+        const item = document.querySelector(`[data-func-id="${functionId}"]`);
+        if (!item) {
+            if (attempts > 0) setTimeout(() => tryScroll(attempts - 1), 150);
+            return;
         }
-    }, 200);
+
+        // Expand parent class-content and package-content (they start collapsed)
+        let el = item.parentElement;
+        while (el) {
+            if (el.classList.contains('class-content')) {
+                el.style.display = 'block';
+                // Update the class header arrow indicator
+                const hdr = el.previousElementSibling;
+                if (hdr && hdr.classList.contains('class-header')) {
+                    const arrow = hdr.querySelector('span');
+                    if (arrow) arrow.textContent = '▼';
+                }
+            }
+            if (el.classList.contains('package-content')) {
+                el.style.display = 'block';
+                // Update the package header arrow indicator
+                const hdr = el.previousElementSibling;
+                if (hdr && hdr.classList.contains('package-header')) {
+                    hdr.innerHTML = hdr.innerHTML.replace('▶', '▼');
+                }
+            }
+            el = el.parentElement;
+        }
+
+        // Scroll and highlight
+        item.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        item.style.outline = '3px solid #3498db';
+        item.style.borderRadius = '4px';
+        item.style.transition = 'outline 0.5s';
+        setTimeout(() => {
+            item.style.outline = '';
+        }, 2200);
+    };
+
+    setTimeout(() => tryScroll(10), 200);
 }
+
 
 async function sendChatMessage() {
     if (chatStreaming) return;

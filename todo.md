@@ -12,8 +12,8 @@
 - [✅] **GELIS5:** Proje açılınca detayları gösterilsin. Açıklama alanı güncellenbilsin. Proje bazında eksik rapor var ise topluca düzenlenebilsin. 
 - [✅] **GELIS6:** Mevcut uygulama logunun dışında sunucu tarafında detaylı bir log dosyası tut her kullanıcı ne yapmış bileyim. Audit log gibi
 - [✅] **GELIS7:** sadece kod alanını genişletme seçenği olsun.
-- [❌] **GELIS4:** RAG index yapısı hazırlama
-- [❌] **GELIS2:** AI Destekli Kod Analiz ve Sohbet Sistemi
+- [✅] **GELIS4:** RAG index yapısı hazırlama
+- [✅] **GELIS2:** AI Destekli Kod Analiz ve Sohbet Sistemi
   - **Genel Bakış:** Tüm projeler, seçili projeler veya seçili fonksiyonlar üzerinde çalışabilen AI ve RAG (Retrieval-Augmented Generation) destekli bir sohbet arayüzü istenmektedir. Sistem, proje kaynak kodlarını ve kod yorumlarını analiz ederek kullanıcıya açıklayıcı bilgiler sunabilmelidir.
   - **İşlevler:**
     - Kullanıcı proje hakkında doğal dil ile sorular sorabilmeli ve sistem ilgili kod parçalarını inceleyerek bağlama uygun cevaplar üretebilmeli.
@@ -23,3 +23,6 @@
     - Fonksiyonlar arasındaki ilişkileri analiz ederek detaylı ve anlaşılır bir açıklama sunabilmeli.
     - Kod içindeki yorumları, fonksiyon isimlerini ve mantıksal akışı değerlendirerek fonksiyonların ne yaptığını detaylı şekilde açıklayabilmeli.
   - **Amaç:** Bu sayede kullanıcı, büyük ve karmaşık projelerde kodu manuel olarak incelemek zorunda kalmadan AI destekli analiz ve açıklamalar aracılığıyla sistemi daha hızlı anlayabilecektir.
+
+Referanslar
+[❌] [✅]
