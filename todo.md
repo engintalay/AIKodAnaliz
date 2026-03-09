@@ -2,7 +2,7 @@
 
 ## 🛠️ Düzeltmeler (DZT)
 - [✅] **DZT-1:** Genel hata düzeltmeleri - 1 
-- [❌] **DZT-2:** Kullanıcı yetkilerinin düzeltilmesi. Geliştirici rolü ve Anazlici rollerindeki kısıtların uygulanması. 
+- [✅] **DZT-2:** Kullanıcı yetkilerinin düzeltilmesi. Geliştirici rolü ve Anazlici rollerindeki kısıtların uygulanması. 
 
 
 ## ✨ Geliştirmeler (GELIS)
