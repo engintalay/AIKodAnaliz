@@ -4,7 +4,7 @@
 - [✅] **DZT-1:** Genel hata düzeltmeleri - 1 
 
 ## ✨ Geliştirmeler (GELIS)
-- [❌] **GELIS1:** Input box'ların düzeltilmesi. Görsel olarak daha uyumlu modern bir tarza çevrilmesi.
+- [✅] **GELIS1:** Input box'ların düzeltilmesi. Görsel olarak daha uyumlu modern bir tarza çevrilmesi.
 
 - [❌] **GELIS2:** AI Destekli Kod Analiz ve Sohbet Sistemi
   - **Genel Bakış:** Tüm projeler, seçili projeler veya seçili fonksiyonlar üzerinde çalışabilen AI ve RAG (Retrieval-Augmented Generation) destekli bir sohbet arayüzü istenmektedir. Sistem, proje kaynak kodlarını ve kod yorumlarını analiz ederek kullanıcıya açıklayıcı bilgiler sunabilmelidir.

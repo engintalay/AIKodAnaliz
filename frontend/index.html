@@ -306,68 +306,6 @@
                 <div id="usersTab" class="tab-content" style="display: block;">
                     <button class="btn btn-primary" onclick="showCreateUserForm()">+ Yeni Kullanıcı</button>
 
-                    <div id="createUserForm"
-                        style="display:none; background: #f9f9f9; padding: 15px; margin: 15px 0; border-radius: 4px;">
-                        <h4>Yeni Kullanıcı Oluştur</h4>
-                        <input type="text" id="adminNewUsername" placeholder="Kullanıcı Adı" required>
-                        <input type="password" id="adminNewPassword" placeholder="Şifre" required>
-                        <select id="adminNewUserRole">
-                            <option value="analyzer">Analizci</option>
-                            <option value="developer">Geliştirici</option>
-                            <option value="admin">Admin</option>
-                        </select>
-                        <input type="text" id="adminNewUserFullName" placeholder="Ad Soyad">
-                        <input type="email" id="adminNewUserEmail" placeholder="E-posta">
-                        <button class="btn btn-primary" onclick="createNewUser()">Oluştur</button>
-                        <button class="btn btn-secondary" onclick="hideCreateUserForm()">İptal</button>
-                    </div>
-
-                    <div id="editUserForm"
-                        style="display:none; background: #f9f9f9; padding: 15px; margin: 15px 0; border-radius: 4px; border-left: 4px solid #f39c12;">
-                        <h4>Kullanıcı Düzenle</h4>
-                        <input type="hidden" id="editUserId">
-                        <div style="margin-bottom: 10px;">
-                            <label style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">Kullanıcı
-                                Adı</label>
-                            <input type="text" id="editUsername" disabled style="background: #eee; color: #555;">
-                        </div>
-                        <div style="margin-bottom: 10px;">
-                            <label style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">Ad
-                                Soyad</label>
-                            <input type="text" id="editUserFullName" placeholder="Ad Soyad">
-                        </div>
-                        <div style="margin-bottom: 10px;">
-                            <label
-                                style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">E-posta</label>
-                            <input type="email" id="editUserEmail" placeholder="E-posta">
-                        </div>
-                        <div style="margin-bottom: 10px;">
-                            <label style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">Rol</label>
-                            <select id="editUserRole">
-                                <option value="analyzer">Analizci</option>
-                                <option value="developer">Geliştirici</option>
-                                <option value="admin">Admin</option>
-                            </select>
-                        </div>
-                        <div style="margin-bottom: 10px;">
-                            <label
-                                style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">Durum</label>
-                            <select id="editUserStatus">
-                                <option value="1">Aktif</option>
-                                <option value="0">Pasif</option>
-                            </select>
-                        </div>
-                        <div style="margin-bottom: 10px;">
-                            <label style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">Yeni Şifre
-                                (Değiştirmek için doldurun)</label>
-                            <input type="password" id="editUserPassword" placeholder="Yeni şifre">
-                        </div>
-                        <div style="margin-top: 15px;">
-                            <button class="btn btn-primary" onclick="updateUser()">Kaydet</button>
-                            <button class="btn btn-secondary" onclick="hideEditUserForm()">İptal</button>
-                        </div>
-                    </div>
-
 
                     <div id="usersList" class="users-list" style="margin-top: 15px;">
                         <!-- Users will be loaded here -->
@@ -454,6 +392,96 @@
     </div>
 
     <!-- Modals -->
+
+    <!-- Create User Modal -->
+    <div id="createUserModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>Yeni Kullanıcı Oluştur</h3>
+                <div class="modal-controls">
+                    <button class="close" onclick="hideCreateUserForm()">&times;</button>
+                </div>
+            </div>
+            <div>
+                <div class="admin-form-group">
+                    <input type="text" id="adminNewUsername" class="admin-form-input" placeholder="Kullanıcı Adı"
+                        required>
+                </div>
+                <div class="admin-form-group">
+                    <input type="password" id="adminNewPassword" class="admin-form-input" placeholder="Şifre" required>
+                </div>
+                <div class="admin-form-group">
+                    <label>Rol Seçimi</label>
+                    <select id="adminNewUserRole" class="admin-form-input">
+                        <option value="analyzer">Analizci</option>
+                        <option value="developer">Geliştirici</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div class="admin-form-group">
+                    <input type="text" id="adminNewUserFullName" class="admin-form-input" placeholder="Ad Soyad">
+                </div>
+                <div class="admin-form-group">
+                    <input type="email" id="adminNewUserEmail" class="admin-form-input" placeholder="E-posta">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="hideCreateUserForm()">İptal</button>
+                <button class="btn btn-primary" onclick="createNewUser()">Oluştur</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit User Modal -->
+    <div id="editUserModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>Kullanıcı Düzenle</h3>
+                <div class="modal-controls">
+                    <button class="close" onclick="hideEditUserForm()">&times;</button>
+                </div>
+            </div>
+            <div>
+                <input type="hidden" id="editUserId">
+                <div class="admin-form-group">
+                    <label>Kullanıcı Adı</label>
+                    <input type="text" id="editUsername" class="admin-form-input" disabled>
+                </div>
+                <div class="admin-form-group">
+                    <label>Ad Soyad</label>
+                    <input type="text" id="editUserFullName" class="admin-form-input" placeholder="Ad Soyad">
+                </div>
+                <div class="admin-form-group">
+                    <label>E-posta</label>
+                    <input type="email" id="editUserEmail" class="admin-form-input" placeholder="E-posta">
+                </div>
+                <div class="admin-form-group">
+                    <label>Rol</label>
+                    <select id="editUserRole" class="admin-form-input">
+                        <option value="analyzer">Analizci</option>
+                        <option value="developer">Geliştirici</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div class="admin-form-group">
+                    <label>Durum</label>
+                    <select id="editUserStatus" class="admin-form-input">
+                        <option value="1">Aktif</option>
+                        <option value="0">Pasif</option>
+                    </select>
+                </div>
+                <div class="admin-form-group">
+                    <label>Yeni Şifre (Değiştirmek için doldurun)</label>
+                    <input type="password" id="editUserPassword" class="admin-form-input" placeholder="Yeni şifre">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="hideEditUserForm()">İptal</button>
+                <button class="btn btn-primary" onclick="updateUser()">Kaydet</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Message Modal for alerts and notifications -->
     <div id="messageModal" class="message-modal">
         <div class="message-modal-content">

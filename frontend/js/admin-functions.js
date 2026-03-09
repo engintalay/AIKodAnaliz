@@ -730,11 +730,12 @@ function renderUsersList(users) {
 }
 
 function showCreateUserForm() {
-    document.getElementById('createUserForm').style.display = 'block';
+    document.getElementById('createUserModal').classList.add('visible');
+    hideEditUserForm(); // Ensure edit is closed
 }
 
 function hideCreateUserForm() {
-    document.getElementById('createUserForm').style.display = 'none';
+    document.getElementById('createUserModal').classList.remove('visible');
     document.getElementById('adminNewUsername').value = '';
     document.getElementById('adminNewPassword').value = '';
     document.getElementById('adminNewUserFullName').value = '';
@@ -793,16 +794,14 @@ function editUser(userId) {
             document.getElementById('editUserStatus').value = data.is_active ? '1' : '0';
             document.getElementById('editUserPassword').value = '';
 
-            document.getElementById('editUserForm').style.display = 'block';
-            document.getElementById('createUserForm').style.display = 'none';
-
-            document.getElementById('editUserForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            document.getElementById('editUserModal').classList.add('visible');
+            hideCreateUserForm(); // Ensure create is closed
         })
         .catch(err => showError('Hata', `Kullanıcı bilgileri alınırken hata: ${err}`));
 }
 
 function hideEditUserForm() {
-    document.getElementById('editUserForm').style.display = 'none';
+    document.getElementById('editUserModal').classList.remove('visible');
 }
 
 function updateUser() {
