@@ -102,6 +102,16 @@ def health():
         'database': 'connected' if os.path.exists(DATABASE_PATH) else 'not connected'
     })
 
+@app.route('/api/heartbeat', methods=['GET', 'POST'])
+def heartbeat():
+    # Frontend veya harici servislerin uygulamanın ayakta olup olmadığını kontrol ettiği endpoint
+    return jsonify({'status': 'alive'})
+
+@app.route('/.well-known/assetlinks.json')
+def assetlinks():
+    # Android App Links veya Google tarayıcılarının doğrulama isteklerini karşılamak için (404 hatasını önler)
+    return jsonify([])
+
 if __name__ == '__main__':
     # Threaded mode keeps UI/API responsive while long AI requests are running.
     app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
