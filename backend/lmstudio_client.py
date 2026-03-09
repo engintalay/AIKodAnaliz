@@ -1,5 +1,6 @@
 import requests
 import json
+import time
 from config.config import (
     LMSTUDIO_API_URL,
     LMSTUDIO_DEFAULT_MODEL,
@@ -31,6 +32,12 @@ class LMStudioClient:
         # Never inherit OS/env proxy settings.
         self.session = requests.Session()
         self.session.trust_env = False
+        self.last_call_stats = {
+            'duration_seconds': 0.0,
+            'prompt_tokens': 0,
+            'completion_tokens': 0,
+            'total_tokens': 0,
+        }
 
     def _load_runtime_settings(self, user_id=None):
         """Load dynamic AI settings from database with safe fallbacks."""
@@ -221,16 +228,32 @@ En fazla 200 kelimeyle şunları açıkla:
 
 Summary:"""
         
+        started_at = time.perf_counter()
+
         try:
             response = self._post_chat_with_model_fallback(prompt, temp, tp, mt)
+            duration_seconds = round(time.perf_counter() - started_at, 3)
             
             if response.status_code == 200:
                 data = response.json()
+                usage = data.get('usage', {}) if isinstance(data, dict) else {}
+                self.last_call_stats = {
+                    'duration_seconds': duration_seconds,
+                    'prompt_tokens': int(usage.get('prompt_tokens', 0) or 0),
+                    'completion_tokens': int(usage.get('completion_tokens', 0) or 0),
+                    'total_tokens': int(usage.get('total_tokens', 0) or 0),
+                }
                 summary = data['choices'][0]['message']['content'].strip()
                 
                 # Return full summary without truncation
                 return summary
             else:
+                self.last_call_stats = {
+                    'duration_seconds': duration_seconds,
+                    'prompt_tokens': 0,
+                    'completion_tokens': 0,
+                    'total_tokens': 0,
+                }
                 try:
                     detail = response.json()
                 except Exception:
@@ -238,13 +261,34 @@ Summary:"""
                 return f"Error: LMStudio returned {response.status_code} - {detail}"
         
         except requests.exceptions.Timeout:
+            duration_seconds = round(time.perf_counter() - started_at, 3)
+            self.last_call_stats = {
+                'duration_seconds': duration_seconds,
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_tokens': 0,
+            }
             return (
                 f"Error: LMStudio request timed out after {self.request_timeout} seconds. "
                 "Model yüklü ve hazır olduğundan emin olun."
             )
         except requests.exceptions.ConnectionError:
+            duration_seconds = round(time.perf_counter() - started_at, 3)
+            self.last_call_stats = {
+                'duration_seconds': duration_seconds,
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_tokens': 0,
+            }
             return f"Error: Cannot connect to LMStudio at {self.api_url}. Make sure it's running."
         except Exception as e:
+            duration_seconds = round(time.perf_counter() - started_at, 3)
+            self.last_call_stats = {
+                'duration_seconds': duration_seconds,
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_tokens': 0,
+            }
             return f"Error: {str(e)}"
     
     def suggest_improvements(self, code: str) -> str:

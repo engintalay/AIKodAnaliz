@@ -4,6 +4,15 @@
 
 const analysisJobs = new Map();
 let latestReportData = null;
+const bulkAnalysisState = {
+    active: 0,
+    maxConcurrent: 2,
+    pending: [],
+    running: false,
+    total: 0,
+    succeeded: 0,
+    failed: 0,
+};
 
 function formatEta(seconds) {
     if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
@@ -12,6 +21,15 @@ function formatEta(seconds) {
     const m = Math.floor(s / 60);
     const r = s % 60;
     return `${m} dk ${r} sn`;
+}
+
+function formatDuration(seconds) {
+    if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
+    const value = Number(seconds);
+    if (value < 60) return `${value.toFixed(1)} sn`;
+    const minutes = Math.floor(value / 60);
+    const remaining = Math.round(value % 60);
+    return `${minutes} dk ${remaining} sn`;
 }
 
 function renderAnalysisMonitor() {
@@ -35,12 +53,18 @@ function renderAnalysisMonitor() {
     let remainingFunctions = 0;
     let etaTotal = 0;
     let etaCount = 0;
+    let aiTotalTokens = 0;
+    let aiTotalDuration = 0;
+    let aiTotalCalls = 0;
 
     jobs.forEach(job => {
         const m = job.metrics || {};
         totalFunctions += m.total_functions || 0;
         completedFunctions += m.completed_functions || 0;
         remainingFunctions += m.remaining_functions || 0;
+        aiTotalTokens += m.ai_total_tokens || 0;
+        aiTotalDuration += m.ai_total_duration_seconds || 0;
+        aiTotalCalls += m.ai_calls || 0;
         if (typeof m.estimated_remaining_seconds === 'number' && job.status === 'started') {
             etaTotal += m.estimated_remaining_seconds;
             etaCount += 1;
@@ -53,7 +77,10 @@ function renderAnalysisMonitor() {
         <strong>Toplam Fonksiyon:</strong> ${totalFunctions} |
         <strong>Biten:</strong> ${completedFunctions} |
         <strong>Kalan:</strong> ${remainingFunctions} |
-        <strong>Tahmini Süre:</strong> ${formatEta(combinedEta)}
+        <strong>Tahmini Süre:</strong> ${formatEta(combinedEta)} |
+        <strong>AI Cagri:</strong> ${aiTotalCalls} |
+        <strong>Toplam Token:</strong> ${aiTotalTokens} |
+        <strong>Toplam AI Suresi:</strong> ${formatDuration(aiTotalDuration)}
     `;
 
     list.innerHTML = jobs.map(job => {
@@ -75,7 +102,15 @@ function renderAnalysisMonitor() {
                     Başlayan: <strong>${m.total_functions || 0}</strong> |
                     Biten: <strong>${m.completed_functions || 0}</strong> |
                     Kalan: <strong>${m.remaining_functions || 0}</strong> |
-                    ETA: <strong>${formatEta(m.estimated_remaining_seconds)}</strong>
+                    ETA: <strong>${formatEta(m.estimated_remaining_seconds)}</strong> |
+                    Token: <strong>${m.ai_total_tokens || 0}</strong> |
+                    AI Süre: <strong>${formatDuration(m.ai_total_duration_seconds || 0)}</strong>
+                </div>
+                <div style="font-size:12px; color:#2c3e50; margin-top:3px;">
+                    Prompt: <strong>${m.ai_prompt_tokens || 0}</strong> |
+                    Completion: <strong>${m.ai_completion_tokens || 0}</strong> |
+                    Çağrı: <strong>${m.ai_calls || 0}</strong> |
+                    Ort. Çağrı Süresi: <strong>${formatDuration(m.ai_avg_duration_seconds || 0)}</strong>
                 </div>
                 <div style="font-size:12px; color:#555; margin-top:4px;">${job.current_step || '-'}</div>
             </div>
@@ -168,6 +203,12 @@ function startTrackedAnalysis(taskId, label, requestPromise) {
             remaining_functions: 0,
             active_thread: null,
             estimated_remaining_seconds: null,
+            ai_calls: 0,
+            ai_prompt_tokens: 0,
+            ai_completion_tokens: 0,
+            ai_total_tokens: 0,
+            ai_total_duration_seconds: 0,
+            ai_avg_duration_seconds: 0,
         },
         createdAt: Date.now(),
         notFoundCount: 0,
@@ -271,21 +312,71 @@ function analyzeAllMissingFiles() {
         return;
     }
 
-    targets.forEach(target => {
-        const taskId = `ai-file-${target.fileId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        startTrackedAnalysis(
-            taskId,
-            `Toplu Dosya Analizi: ${target.projectName} / ${target.fileName}`,
-            fetch(`${API_URL}/analysis/file/${target.fileId}?missing_only=true&task_id=${encodeURIComponent(taskId)}`, {
-                method: 'POST'
-            })
-        );
-    });
+    bulkAnalysisState.pending = targets.slice();
+    bulkAnalysisState.active = 0;
+    bulkAnalysisState.total = targets.length;
+    bulkAnalysisState.succeeded = 0;
+    bulkAnalysisState.failed = 0;
+    bulkAnalysisState.running = true;
+
+    processBulkAnalysisQueue();
 
     showSuccess(
         'Toplu Analiz Başlatıldı',
-        `${targets.length} dosya için analiz işleri kuyruğa alındı. İlerleme üst panelden takip edilebilir.`
+        `${targets.length} dosya kuyruğa alındı. Aynı anda en fazla ${bulkAnalysisState.maxConcurrent} analiz çalıştırılacak.`
     );
+}
+
+function processBulkAnalysisQueue() {
+    if (!bulkAnalysisState.running) {
+        return;
+    }
+
+    while (
+        bulkAnalysisState.active < bulkAnalysisState.maxConcurrent &&
+        bulkAnalysisState.pending.length > 0
+    ) {
+        const target = bulkAnalysisState.pending.shift();
+        const taskId = `ai-file-${target.fileId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const requestPromise = fetch(
+            `${API_URL}/analysis/file/${target.fileId}?missing_only=true&task_id=${encodeURIComponent(taskId)}`,
+            { method: 'POST' }
+        );
+
+        bulkAnalysisState.active += 1;
+
+        startTrackedAnalysis(
+            taskId,
+            `Toplu Dosya Analizi: ${target.projectName} / ${target.fileName}`,
+            requestPromise
+        );
+
+        requestPromise
+            .then((response) => {
+                if (response.ok) {
+                    bulkAnalysisState.succeeded += 1;
+                } else {
+                    bulkAnalysisState.failed += 1;
+                }
+            })
+            .catch(() => {
+                bulkAnalysisState.failed += 1;
+            })
+            .finally(() => {
+                bulkAnalysisState.active = Math.max(0, bulkAnalysisState.active - 1);
+
+                if (bulkAnalysisState.pending.length === 0 && bulkAnalysisState.active === 0) {
+                    bulkAnalysisState.running = false;
+                    showInfo(
+                        'Toplu Analiz Kuyruğu Tamamlandı',
+                        `Toplam: ${bulkAnalysisState.total}, Başarılı: ${bulkAnalysisState.succeeded}, Hatalı: ${bulkAnalysisState.failed}`
+                    );
+                    return;
+                }
+
+                processBulkAnalysisQueue();
+            });
+    }
 }
 
 function clearErrorSummary(functionId) {

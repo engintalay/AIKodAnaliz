@@ -64,6 +64,35 @@ def _load_ai_runtime_settings():
     }
 
 
+def _accumulate_ai_metrics(task_id, call_stats):
+    """Accumulate AI token/time stats into progress tracker metrics."""
+    if not task_id or not call_stats:
+        return
+
+    task_progress = progress_tracker.get_progress(task_id) or {}
+    existing = task_progress.get('metrics', {}) if isinstance(task_progress, dict) else {}
+
+    prev_calls = int(existing.get('ai_calls') or 0)
+    prev_prompt = int(existing.get('ai_prompt_tokens') or 0)
+    prev_completion = int(existing.get('ai_completion_tokens') or 0)
+    prev_total = int(existing.get('ai_total_tokens') or 0)
+    prev_duration = float(existing.get('ai_total_duration_seconds') or 0.0)
+
+    prompt_tokens = int(call_stats.get('prompt_tokens') or 0)
+    completion_tokens = int(call_stats.get('completion_tokens') or 0)
+    total_tokens = int(call_stats.get('total_tokens') or 0)
+    duration_seconds = float(call_stats.get('duration_seconds') or 0.0)
+
+    progress_tracker.set_metrics(
+        task_id,
+        ai_calls=prev_calls + 1,
+        ai_prompt_tokens=prev_prompt + prompt_tokens,
+        ai_completion_tokens=prev_completion + completion_tokens,
+        ai_total_tokens=prev_total + total_tokens,
+        ai_total_duration_seconds=round(prev_duration + duration_seconds, 3),
+    )
+
+
 def extract_imported_symbols(content, language):
     """Return imported/external symbol names so they are not mapped as project-internal calls."""
     symbols = set()
@@ -625,6 +654,7 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
     # Generate AI summary with dependency context
     summary = client.analyze_function(func_code, func['signature'], dependency_summaries, 
                                      temperature=temperature, top_p=top_p, max_tokens=max_tokens)
+    _accumulate_ai_metrics(task_id, getattr(client, 'last_call_stats', None))
     log_ai_call(function_id, "AI summary received", summary_length=len(summary))
     
     if _is_ai_error_response(summary):

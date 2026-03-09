@@ -25,6 +25,12 @@ class ProgressTracker:
                     'remaining_functions': 0,
                     'active_thread': None,
                     'estimated_remaining_seconds': None,
+                    'ai_calls': 0,
+                    'ai_prompt_tokens': 0,
+                    'ai_completion_tokens': 0,
+                    'ai_total_tokens': 0,
+                    'ai_total_duration_seconds': 0.0,
+                    'ai_avg_duration_seconds': 0.0,
                 },
                 'started_at': datetime.now().isoformat(),
                 'updated_at': datetime.now().isoformat()
@@ -80,6 +86,13 @@ class ProgressTracker:
                     metrics['estimated_remaining_seconds'] = None
             else:
                 metrics['estimated_remaining_seconds'] = None
+
+            ai_calls = metrics.get('ai_calls') or 0
+            ai_total_duration = metrics.get('ai_total_duration_seconds') or 0.0
+            if ai_calls > 0:
+                metrics['ai_avg_duration_seconds'] = round(ai_total_duration / ai_calls, 3)
+            else:
+                metrics['ai_avg_duration_seconds'] = 0.0
 
             self._progress[task_id]['updated_at'] = datetime.now().isoformat()
     
