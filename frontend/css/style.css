@@ -1386,3 +1386,39 @@ code {
     padding: 10px 20px;
     flex-shrink: 0;
 }
+
+.chat-refs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 0 2px 4px;
+    align-self: flex-start;
+    max-width: 95%;
+}
+
+.chat-refs-label {
+    font-size: 11px;
+    color: #888;
+    white-space: nowrap;
+}
+
+.chat-ref-chip {
+    display: inline-block;
+    background: #eef4fb;
+    color: #2980b9;
+    border: 1px solid #c5dcf0;
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-family: monospace;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    white-space: nowrap;
+}
+
+.chat-ref-chip:hover {
+    background: #2980b9;
+    color: #fff;
+    border-color: #2980b9;
+}

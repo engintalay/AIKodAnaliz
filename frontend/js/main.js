@@ -288,6 +288,19 @@ function clearChatHistory() {
     msgs.innerHTML = `<div class="chat-bubble chat-bubble-assistant">Konuşma sıfırlandı. Yeni bir soru sorabilirsiniz.</div>`;
 }
 
+function viewFunctionFromChat(functionId) {
+    // Switch to Functions tab and scroll to the function row
+    switchTab('functions');
+    setTimeout(() => {
+        const row = document.querySelector(`[data-function-id="${functionId}"]`);
+        if (row) {
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            row.style.outline = '2px solid #3498db';
+            setTimeout(() => row.style.outline = '', 2000);
+        }
+    }, 200);
+}
+
 async function sendChatMessage() {
     if (chatStreaming) return;
     if (!currentProjectId) return;

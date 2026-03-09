@@ -13,16 +13,32 @@ bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 # ------------------------------------------------------------------
 
 def _search_functions(project_id: int, query: str, limit: int = 10) -> list:
-    """Return up to `limit` functions whose name, summary or file name
-    contains any meaningful word from the query."""
+    """Return up to `limit` functions whose name, class, summary or file name
+    contains any meaningful word from the query.
+    Handles 'ClassName.methodName' dot-notation by splitting on '.'."""
 
-    # Tokenise: keep only words >=3 chars, ignore common stop words
+    import re as _re
+
+    # Tokenise: split on spaces, then split each token on dots, strip punctuation
     stop = {'bir', 'ile', 'için', 'olan', 'ne', 'bu', 'the', 'and', 'for',
-            'how', 'what', 'which', 'is', 'are', 'can', 'does', 'do'}
-    tokens = [w.lower() for w in query.split() if len(w) >= 3 and w.lower() not in stop]
+            'how', 'what', 'which', 'is', 'are', 'can', 'does', 'do',
+            'bu', 'ne', 'yapıyor', 'nedir', 'çalışıyor', 'nasıl', 'hangi'}
+    raw_tokens = []
+    for word in query.split():
+        # Split on dot to handle ClassName.methodName
+        parts = word.split('.')
+        raw_tokens.extend(parts)
+
+    tokens = []
+    for t in raw_tokens:
+        t_clean = _re.sub(r'[^\w]', '', t).lower()
+        if len(t_clean) >= 3 and t_clean not in stop:
+            tokens.append(t_clean)
+    # Deduplicate while preserving order
+    seen = set()
+    tokens = [t for t in tokens if not (t in seen or seen.add(t))]
 
     if not tokens:
-        # Fall back: return functions with ai_summary ordered by name
         rows = db.execute_query(
             '''SELECT f.id, f.function_name, f.class_name, f.package_name,
                       f.ai_summary, f.signature, sf.file_name
@@ -34,15 +50,16 @@ def _search_functions(project_id: int, query: str, limit: int = 10) -> list:
         )
         return [dict(r) for r in rows]
 
-    # Build LIKE conditions for each token across multiple columns
+    # Build LIKE conditions for each token across multiple columns (including class_name)
     like_conditions = []
     params = []
-    for token in tokens[:5]:  # max 5 tokens for performance
+    for token in tokens[:6]:  # max 6 tokens for performance
         like_conditions.append(
-            '(LOWER(f.function_name) LIKE ? OR LOWER(f.ai_summary) LIKE ? OR LOWER(sf.file_name) LIKE ?)'
+            '(LOWER(f.function_name) LIKE ? OR LOWER(COALESCE(f.class_name,"")) LIKE ?'
+            ' OR LOWER(COALESCE(f.ai_summary,"")) LIKE ? OR LOWER(COALESCE(sf.file_name,"")) LIKE ?)'
         )
         t = f'%{token}%'
-        params += [t, t, t]
+        params += [t, t, t, t]
 
     where_sql = ' OR '.join(like_conditions)
     params_full = [project_id] + params + [limit]
