@@ -3,6 +3,7 @@
 ## 🛠️ Düzeltmeler (DZT)
 - [✅] **DZT-1:** Genel hata düzeltmeleri - 1 
 - [✅] **DZT-2:** Kullanıcı yetkilerinin düzeltilmesi. Geliştirici rolü ve Anazlici rollerindeki kısıtların uygulanması. 
+- [❌] **DZT-3:** Ayarlarda kaydetme işleminden önce test yapılmalı. Ekrandaki bilgilerle eğer başarılı olursa kaydet yapılmalı. 
 
 
 ## ✨ Geliştirmeler (GELIS)
