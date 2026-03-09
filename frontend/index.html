@@ -50,8 +50,10 @@
                 <span id="userInfo"></span>
                 <a href="#" onclick="loadProjects(); return false;">Projeler</a>
                 <a href="#" onclick="showReport(); return false;">📊 Rapor</a>
-                <a href="#" id="adminLink" style="display:none;" onclick="showAdminPanel(); return false;">⚙️ Yönetim</a>
-                <a href="#" id="permissionsLink" style="display:none;" onclick="showPermissionsPanel(); return false;">🔐 İzinler</a>
+                <a href="#" id="adminLink" style="display:none;" onclick="showAdminPanel(); return false;">⚙️
+                    Yönetim</a>
+                <a href="#" id="permissionsLink" style="display:none;"
+                    onclick="showPermissionsPanel(); return false;">🔐 İzinler</a>
                 <a href="#" onclick="showUpload(); return false;">Proje Yükle</a>
                 <a href="#" onclick="showSettings(); return false;">Ayarlar</a>
                 <a href="#" onclick="logout(); return false;">Çık</a>
@@ -85,13 +87,16 @@
                     </div>
                     <p>Not: Analiz, proje içindeki kaynak dosya uzantılarına gore otomatik dil tespiti ile yapılır.</p>
                 </div>
-                
+
                 <!-- Upload Method Toggle -->
-                <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; border-bottom: 2px solid #ecf0f1; padding-bottom: 1rem;">
-                    <button class="btn btn-secondary" id="zipUploadTab" onclick="switchUploadMode('zip')" style="background: #3498db; color: white;">📦 ZIP Yükle</button>
-                    <button class="btn btn-secondary" id="gitImportTab" onclick="switchUploadMode('git')">🔗 Git Repository</button>
+                <div
+                    style="display: flex; gap: 1rem; margin-bottom: 1.5rem; border-bottom: 2px solid #ecf0f1; padding-bottom: 1rem;">
+                    <button class="btn btn-secondary" id="zipUploadTab" onclick="switchUploadMode('zip')"
+                        style="background: #3498db; color: white;">📦 ZIP Yükle</button>
+                    <button class="btn btn-secondary" id="gitImportTab" onclick="switchUploadMode('git')">🔗 Git
+                        Repository</button>
                 </div>
-                
+
                 <!-- ZIP/WAR Upload Form -->
                 <form id="uploadForm" class="upload-form" style="display: block;">
                     <input type="text" id="projectName" placeholder="Proje Adı (dosya adından otomatik)" required>
@@ -102,15 +107,17 @@
                     </div>
                     <button type="submit" class="btn btn-primary">Yükle ve Analiz Et</button>
                 </form>
-                
+
                 <!-- Git Import Form -->
                 <form id="gitImportForm" class="upload-form" style="display: none;">
-                    <input type="text" id="gitRepoUrl" placeholder="Git Repository URL (https://github.com/user/repo)" required>
+                    <input type="text" id="gitRepoUrl" placeholder="Git Repository URL (https://github.com/user/repo)"
+                        required>
                     <div id="gitUrlLoader" style="display: none; color: #3498db; font-size: 0.9rem; margin: 5px 0;">
                         🔄 Repository bilgileri yükleniyor...
                     </div>
                     <div style="position: relative;">
-                        <select id="gitBranch" style="width: 100%; padding: 0.75rem; margin-bottom: 1rem; border: 1px solid #bdc3c7; border-radius: 4px; font-size: 1rem;">
+                        <select id="gitBranch"
+                            style="width: 100%; padding: 0.75rem; margin-bottom: 1rem; border: 1px solid #bdc3c7; border-radius: 4px; font-size: 1rem;">
                             <option value="">Branch seçin...</option>
                         </select>
                     </div>
@@ -118,7 +125,7 @@
                     <input type="text" id="gitProjectDesc" placeholder="Proje Açıklaması">
                     <button type="submit" class="btn btn-primary">Clone ve Analiz Et</button>
                 </form>
-                
+
                 <!-- Enhanced Progress Display -->
                 <div id="uploadProgress" class="upload-progress-container" style="display:none;">
                     <h3>İşlem İlerlemesi</h3>
@@ -156,10 +163,12 @@
                             <button class="btn btn-secondary" onclick="zoomIn()">🔍 + Yaklaş</button>
                             <button class="btn btn-secondary" onclick="zoomOut()">🔍 - Uzaklaş</button>
                             <button class="btn btn-secondary" onclick="fitDiagram()">📐 Sığdır</button>
-                                                <div id="diagramLegend" style="background: #f5f5f5; padding: 10px; margin-top: 10px; border-radius: 4px; font-size: 13px; display: none;">
-                                                    <strong>📍 Giriş Noktaları (Entry Points):</strong>
-                                                    <div id="entryPointsList" style="margin-top: 8px; max-height: 100px; overflow-y: auto;"></div>
-                                                </div>
+                            <div id="diagramLegend"
+                                style="background: #f5f5f5; padding: 10px; margin-top: 10px; border-radius: 4px; font-size: 13px; display: none;">
+                                <strong>📍 Giriş Noktaları (Entry Points):</strong>
+                                <div id="entryPointsList" style="margin-top: 8px; max-height: 100px; overflow-y: auto;">
+                                </div>
+                            </div>
                         </div>
                         <div id="diagramContainer" class="diagram-container"></div>
                     </div>
@@ -195,7 +204,8 @@
             <div id="reportSection" class="section">
                 <h2>📊 AI Özet Kapsama Raporu</h2>
                 <button class="btn btn-primary" onclick="loadReport()">📊 Rapor Oluştur</button>
-                <div id="analysisMonitor" style="display:none; margin-top: 16px; background: #f8fbff; border: 1px solid #d6e9ff; border-radius: 6px; padding: 12px;">
+                <div id="analysisMonitor"
+                    style="display:none; margin-top: 16px; background: #f8fbff; border: 1px solid #d6e9ff; border-radius: 6px; padding: 12px;">
                     <h3 style="margin: 0 0 8px 0;">🤖 AI Analiz İşleri</h3>
                     <div id="analysisGlobalStats" style="font-size: 13px; color: #2c3e50; margin-bottom: 8px;"></div>
                     <div id="analysisTaskList"></div>
@@ -285,7 +295,7 @@
             <!-- Admin Panel Section -->
             <div id="adminPanel" class="section">
                 <h2>⚙️ Yönetim Paneli</h2>
-                
+
                 <!-- User Management Tab -->
                 <div class="tabs">
                     <button class="tab-btn active" onclick="switchAdminTab('users')">Kullanıcılar</button>
@@ -295,8 +305,9 @@
                 <!-- Users Management -->
                 <div id="usersTab" class="tab-content" style="display: block;">
                     <button class="btn btn-primary" onclick="showCreateUserForm()">+ Yeni Kullanıcı</button>
-                    
-                    <div id="createUserForm" style="display:none; background: #f9f9f9; padding: 15px; margin: 15px 0; border-radius: 4px;">
+
+                    <div id="createUserForm"
+                        style="display:none; background: #f9f9f9; padding: 15px; margin: 15px 0; border-radius: 4px;">
                         <h4>Yeni Kullanıcı Oluştur</h4>
                         <input type="text" id="adminNewUsername" placeholder="Kullanıcı Adı" required>
                         <input type="password" id="adminNewPassword" placeholder="Şifre" required>
@@ -310,7 +321,54 @@
                         <button class="btn btn-primary" onclick="createNewUser()">Oluştur</button>
                         <button class="btn btn-secondary" onclick="hideCreateUserForm()">İptal</button>
                     </div>
-                    
+
+                    <div id="editUserForm"
+                        style="display:none; background: #f9f9f9; padding: 15px; margin: 15px 0; border-radius: 4px; border-left: 4px solid #f39c12;">
+                        <h4>Kullanıcı Düzenle</h4>
+                        <input type="hidden" id="editUserId">
+                        <div style="margin-bottom: 10px;">
+                            <label style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">Kullanıcı
+                                Adı</label>
+                            <input type="text" id="editUsername" disabled style="background: #eee; color: #555;">
+                        </div>
+                        <div style="margin-bottom: 10px;">
+                            <label style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">Ad
+                                Soyad</label>
+                            <input type="text" id="editUserFullName" placeholder="Ad Soyad">
+                        </div>
+                        <div style="margin-bottom: 10px;">
+                            <label
+                                style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">E-posta</label>
+                            <input type="email" id="editUserEmail" placeholder="E-posta">
+                        </div>
+                        <div style="margin-bottom: 10px;">
+                            <label style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">Rol</label>
+                            <select id="editUserRole">
+                                <option value="analyzer">Analizci</option>
+                                <option value="developer">Geliştirici</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                        </div>
+                        <div style="margin-bottom: 10px;">
+                            <label
+                                style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">Durum</label>
+                            <select id="editUserStatus">
+                                <option value="1">Aktif</option>
+                                <option value="0">Pasif</option>
+                            </select>
+                        </div>
+                        <div style="margin-bottom: 10px;">
+                            <label style="display: block; font-size: 13px; color: #666; margin-bottom: 3px;">Yeni Şifre
+                                (Değiştirmek için doldurun)</label>
+                            <input type="password" id="editUserPassword" placeholder="Yeni şifre">
+                        </div>
+                        <div style="margin-top: 15px;">
+                            <button class="btn btn-primary" onclick="updateUser()">Kaydet</button>
+                            <button class="btn btn-secondary" onclick="hideEditUserForm()">İptal</button>
+                        </div>
+                    </div>
+
+
                     <div id="usersList" class="users-list" style="margin-top: 15px;">
                         <!-- Users will be loaded here -->
                         <p style="text-align: center; color: #999;">Kullanıcılar yükleniyor...</p>
@@ -321,7 +379,7 @@
                 <div id="rolesTab" class="tab-content" style="display:none;">
                     <div class="roles-info">
                         <h4>Rol Tanımları</h4>
-                        
+
                         <div class="role-card">
                             <h5>👑 Admin</h5>
                             <p>Tüm özelliklere tam erişim</p>
@@ -333,7 +391,7 @@
                                 <li>✓ AI özet yönetimi</li>
                             </ul>
                         </div>
-                        
+
                         <div class="role-card">
                             <h5>👨‍💻 Geliştirici</h5>
                             <p>Kendi projelerini yönetebilir, diğer kullanıcılara yetki verebilir</p>
@@ -345,7 +403,7 @@
                                 <li>✗ Kullanıcı yönetimi</li>
                             </ul>
                         </div>
-                        
+
                         <div class="role-card">
                             <h5>🔍 Analizci</h5>
                             <p>Sadece yazılım analiziyle ilgilenir, hiçbir değişiklik yapamaz</p>
@@ -364,7 +422,7 @@
             <!-- Permissions Panel Section -->
             <div id="permissionsPanel" class="section" style="display:none;">
                 <h2>🔐 Proje İzinleri</h2>
-                
+
                 <div style="margin-bottom: 15px;">
                     <select id="projectSelectForPermissions" onchange="loadProjectPermissions()">
                         <option value="">Proje seçin...</option>
@@ -414,17 +472,21 @@
             <div class="modal-header">
                 <h3 id="funcModalTitle" style="margin: 0;"></h3>
                 <div class="modal-controls">
-                    <button class="modal-btn" onclick="toggleFullscreenModal()" title="Tam Ekran (F11)" id="fullscreenBtn">⛶</button>
+                    <button class="modal-btn" onclick="toggleFullscreenModal()" title="Tam Ekran (F11)"
+                        id="fullscreenBtn">⛶</button>
                     <span class="close" onclick="closeFunctionModal()">&times;</span>
                 </div>
             </div>
 
             <!-- Error State Section -->
-            <div id="funcModalError" style="display: none; background: #fee; border: 1px solid #f88; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
+            <div id="funcModalError"
+                style="display: none; background: #fee; border: 1px solid #f88; padding: 15px; border-radius: 4px; margin-bottom: 15px;">
                 <div style="color: #c33; font-weight: bold; margin-bottom: 10px;">⚠️ Hata Oluştu</div>
                 <p id="funcModalErrorMessage" style="margin: 0 0 10px 0; color: #666; font-size: 14px;"></p>
-                <button class="btn btn-primary" onclick="retryFunctionLoad()" style="padding: 6px 12px; font-size: 12px;">🔄 Yeniden Dene</button>
-                <button class="btn btn-secondary" onclick="closeFunctionModal()" style="padding: 6px 12px; font-size: 12px; margin-left: 5px;">✕ Kapat</button>
+                <button class="btn btn-primary" onclick="retryFunctionLoad()"
+                    style="padding: 6px 12px; font-size: 12px;">🔄 Yeniden Dene</button>
+                <button class="btn btn-secondary" onclick="closeFunctionModal()"
+                    style="padding: 6px 12px; font-size: 12px; margin-left: 5px;">✕ Kapat</button>
             </div>
 
             <div id="funcModalContent">
@@ -450,10 +512,14 @@
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                     <label style="font-weight: bold;">Kaynak Kod:</label>
                     <div style="display: flex; gap: 5px; align-items: center;">
-                        <input type="text" id="sourceCodeSearch" placeholder="Kaynak kodda ara..." style="padding: 4px 10px; font-size: 11px; border: 1px solid #ccc; border-radius: 3px; width: 200px;" />
-                        <button class="btn btn-secondary" onclick="searchInSourceCode()" style="padding: 4px 12px; font-size: 11px;">🔍 Ara</button>
-                        <button class="btn btn-secondary" onclick="clearSourceCodeSearch()" style="padding: 4px 12px; font-size: 11px;">✕</button>
-                        <button class="btn btn-secondary" id="copyCodeBtn" onclick="copyFunctionCode()" style="padding: 4px 10px; font-size: 11px; display: none;">📋 Kopyala</button>
+                        <input type="text" id="sourceCodeSearch" placeholder="Kaynak kodda ara..."
+                            style="padding: 4px 10px; font-size: 11px; border: 1px solid #ccc; border-radius: 3px; width: 200px;" />
+                        <button class="btn btn-secondary" onclick="searchInSourceCode()"
+                            style="padding: 4px 12px; font-size: 11px;">🔍 Ara</button>
+                        <button class="btn btn-secondary" onclick="clearSourceCodeSearch()"
+                            style="padding: 4px 12px; font-size: 11px;">✕</button>
+                        <button class="btn btn-secondary" id="copyCodeBtn" onclick="copyFunctionCode()"
+                            style="padding: 4px 10px; font-size: 11px; display: none;">📋 Kopyala</button>
                     </div>
                 </div>
                 <pre
