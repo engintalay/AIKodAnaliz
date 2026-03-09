@@ -249,6 +249,184 @@ async function startBulkAiAnalysis() {
     }
 }
 
+// ============================================
+// SECTION: AI Chat
+// ============================================
+
+let chatHistory = [];        // { role: 'user'|'assistant', content: string }
+let chatStreaming = false;
+
+function initChatTab() {
+    // Scroll to bottom on tab switch
+    const msgs = document.getElementById('chatMessages');
+    if (msgs) msgs.scrollTop = msgs.scrollHeight;
+}
+
+function handleChatKeydown(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendChatMessage();
+    }
+}
+
+function _appendChatBubble(role, text) {
+    const msgs = document.getElementById('chatMessages');
+    if (!msgs) return null;
+
+    const bubble = document.createElement('div');
+    bubble.className = `chat-bubble chat-bubble-${role}`;
+    bubble.textContent = text;
+    msgs.appendChild(bubble);
+    msgs.scrollTop = msgs.scrollHeight;
+    return bubble;
+}
+
+function clearChatHistory() {
+    chatHistory = [];
+    const msgs = document.getElementById('chatMessages');
+    if (!msgs) return;
+    msgs.innerHTML = `<div class="chat-bubble chat-bubble-assistant">Konuşma sıfırlandı. Yeni bir soru sorabilirsiniz.</div>`;
+}
+
+async function sendChatMessage() {
+    if (chatStreaming) return;
+    if (!currentProjectId) return;
+
+    const input = document.getElementById('chatInput');
+    const sendBtn = document.getElementById('chatSendBtn');
+    if (!input) return;
+
+    const text = input.value.trim();
+    if (!text) return;
+
+    input.value = '';
+    chatStreaming = true;
+    sendBtn.disabled = true;
+    sendBtn.textContent = '⏳';
+
+    // Show user bubble
+    _appendChatBubble('user', text);
+
+    // Show typing indicator
+    const msgs = document.getElementById('chatMessages');
+    const typingEl = document.createElement('div');
+    typingEl.className = 'chat-bubble chat-bubble-assistant chat-typing';
+    typingEl.innerHTML = '<span></span><span></span><span></span>';
+    msgs.appendChild(typingEl);
+    msgs.scrollTop = msgs.scrollHeight;
+
+    // Build history for backend (last 8 messages = 4 turns)
+    const historySlice = chatHistory.slice(-8);
+
+    try {
+        const response = await fetch(`${API_URL}/chat/project/${currentProjectId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text, history: historySlice })
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ error: response.statusText }));
+            typingEl.remove();
+            _appendChatBubble('assistant', `⚠️ Hata: ${err.error || 'Sunucu hatası'}`);
+            return;
+        }
+
+        // Remove typing indicator, create reply bubble
+        typingEl.remove();
+        const replyBubble = document.createElement('div');
+        replyBubble.className = 'chat-bubble chat-bubble-assistant chat-cursor';
+        replyBubble.textContent = '';
+        msgs.appendChild(replyBubble);
+        msgs.scrollTop = msgs.scrollHeight;
+
+        // Read SSE stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let replyText = '';
+        let streamDone = false;
+        let currentEvent = 'message';
+        let refs = [];
+
+        try {
+            while (!streamDone) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // Last partial line stays in buffer
+
+                for (const line of lines) {
+                    if (line.startsWith('event:')) {
+                        currentEvent = line.slice(6).trim();
+                        continue;
+                    }
+                    if (!line.startsWith('data:')) continue;
+
+                    // NO trim — preserve leading spaces (they are part of LLM word tokens)
+                    const chunk = line.slice(5);
+
+                    if (currentEvent === 'refs') {
+                        try { refs = JSON.parse(chunk); } catch (e) { }
+                        currentEvent = 'message';
+                        continue;
+                    }
+
+                    if (chunk === '[DONE]') {
+                        streamDone = true;
+                        break;
+                    }
+                    // Unescape newlines (backend sends \n as literal \\n)
+                    const token = chunk.replace(/\\n/g, '\n');
+                    replyText += token;
+                    replyBubble.textContent = replyText;
+                    msgs.scrollTop = msgs.scrollHeight;
+                }
+            }
+        } catch (streamErr) {
+            if (!replyText) throw streamErr;
+        } finally {
+            replyBubble.classList.remove('chat-cursor');
+            // Render Markdown after stream completes
+            if (replyText) {
+                try {
+                    if (typeof marked !== 'undefined') {
+                        replyBubble.innerHTML = marked.parse(replyText);
+                    }
+                } catch (mdErr) { /* keep textContent */ }
+            }
+
+            // Render reference function chips
+            if (refs.length > 0) {
+                const refsEl = document.createElement('div');
+                refsEl.className = 'chat-refs';
+                refsEl.innerHTML = '<span class="chat-refs-label">📎 Kaynaklar:</span> ' +
+                    refs.map(r => {
+                        const shortName = r.name.split('.').pop();
+                        return `<span class="chat-ref-chip" onclick="viewFunctionFromChat(${r.id})" title="${r.name}\n${r.file}">${shortName}</span>`;
+                    }).join('');
+                msgs.appendChild(refsEl);
+                msgs.scrollTop = msgs.scrollHeight;
+            }
+        }
+
+        // Store in history
+        chatHistory.push({ role: 'user', content: text });
+        chatHistory.push({ role: 'assistant', content: replyText });
+
+    } catch (err) {
+        typingEl.remove();
+        _appendChatBubble('assistant', `⚠️ Bağlantı hatası: ${err.message}`);
+    } finally {
+        chatStreaming = false;
+        sendBtn.disabled = false;
+        sendBtn.textContent = '➤ Gönder';
+        input.focus();
+    }
+}
+
 async function deleteProject(projectId) {
     if (!confirm('Bu projeyi silmek istediğinizden emin misiniz?')) return;
 

@@ -8,7 +8,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>AIKodAnaliz - Kod Analiz Aracı</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260310_08">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260310_09">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
 
@@ -153,6 +153,7 @@
                     <!-- Tabs -->
                     <div class="tabs">
                         <button class="tab-btn active" onclick="switchTab('overview')">Özet</button>
+                        <button class="tab-btn" onclick="switchTab('chat'); initChatTab()">💬 Sohbet</button>
                         <button class="tab-btn" onclick="switchTab('diagram')">Diyagram</button>
                         <button class="tab-btn" onclick="switchTab('functions')">Fonksiyonlar</button>
                         <button class="tab-btn" onclick="switchTab('marks')">İşaretler</button>
@@ -180,6 +181,34 @@
                                 style="background-color: #f39c12; color: white; border: none;">
                                 🤖 Tüm Eksik Fonksiyonlara Yapay Zeka Özeti Çıkar
                             </button>
+                        </div>
+                    </div>
+
+                    <!-- Chat Tab -->
+                    <div class="tab-content" id="chatTab" style="display:none;">
+                        <div class="chat-container">
+                            <div class="chat-toolbar">
+                                <span style="font-weight:600; color:#333;">🤖 AI Kod Asistanı</span>
+                                <button class="btn btn-secondary btn-sm" onclick="clearChatHistory()"
+                                    style="padding:4px 12px; font-size:12px;">🗑️ Konuşmayı Sıfırla</button>
+                            </div>
+                            <div class="chat-messages" id="chatMessages">
+                                <div class="chat-bubble chat-bubble-assistant">
+                                    Merhaba! Bu proje hakkında sorular sorabilirsiniz. Örneğin:<br>
+                                    • "Login işlemini hangi fonksiyon yapıyor?"<br>
+                                    • "Kullanıcı kaydı nasıl çalışıyor?"<br>
+                                    • "Bu projede hata yönetimi nasıl yapılmış?"
+                                </div>
+                            </div>
+                            <div class="chat-input-area">
+                                <textarea id="chatInput" class="chat-input" rows="2"
+                                    placeholder="Proje hakkında soru sorun... (Enter ile gönder, Shift+Enter yeni satır)"
+                                    onkeydown="handleChatKeydown(event)"></textarea>
+                                <button id="chatSendBtn" class="btn btn-primary chat-send-btn"
+                                    onclick="sendChatMessage()">
+                                    ➤ Gönder
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -683,7 +712,8 @@
     <!-- Load libraries before main.js -->
     <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-    <script src="/static/js/main.js?v=20260310_09"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="/static/js/main.js?v=20260310_12"></script>
     <script src="/static/js/admin-functions.js?v=20260310_02"></script>
 </body>
 

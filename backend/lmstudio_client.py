@@ -319,3 +319,160 @@ Suggestions:"""
         
         except Exception as e:
             return f"Error: {str(e)}"
+
+    def chat(self, messages: list, system_prompt: str = None, max_tokens: int = None) -> str:
+        """Send a multi-turn chat and return the full response (non-streaming).
+        
+        Args:
+            messages: list of {"role": "user"|"assistant", "content": "..."} dicts
+            system_prompt: optional system-level instruction
+            max_tokens: optional token limit override
+        
+        Returns:
+            str: The assistant's reply
+        """
+        mt = max_tokens if max_tokens is not None else self.max_tokens
+
+        full_messages = []
+        if system_prompt:
+            full_messages.append({"role": "system", "content": system_prompt})
+        else:
+            full_messages.append({"role": "system", "content": "Yanıt dili zorunlu olarak Türkçe olmalı."})
+        full_messages.extend(messages)
+
+        payload = {
+            "model": self.model,
+            "messages": full_messages,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "max_tokens": mt,
+            "stream": False,
+        }
+
+        try:
+            response = self.session.post(
+                f"{self.api_url}/chat/completions",
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=self.request_timeout,
+            )
+            if self._is_invalid_model_response(response):
+                models = self.list_models()
+                if models:
+                    self.model = models[0]
+                    payload["model"] = self.model
+                    response = self.session.post(
+                        f"{self.api_url}/chat/completions",
+                        headers={"Content-Type": "application/json"},
+                        json=payload,
+                        timeout=self.request_timeout,
+                    )
+            if response.status_code == 200:
+                data = response.json()
+                return data["choices"][0]["message"]["content"].strip()
+            else:
+                return f"Error: LMStudio returned {response.status_code}"
+        except requests.exceptions.Timeout:
+            return "Error: LMStudio isteği zaman aşımına uğradı."
+        except requests.exceptions.ConnectionError:
+            return f"Error: LMStudio bağlantısı kurulamadı ({self.api_url})."
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def chat_stream(self, messages: list, system_prompt: str = None, max_tokens: int = None):
+        """Send a multi-turn chat with SSE streaming; yields token strings one by one.
+        
+        Args:
+            messages: list of {"role": "user"|"assistant", "content": "..."} dicts
+            system_prompt: optional system-level instruction
+            max_tokens: optional token limit override
+        
+        Yields:
+            str: incremental token content chunks
+        """
+        import json as _json
+
+        mt = max_tokens if max_tokens is not None else self.max_tokens
+
+        full_messages = []
+        if system_prompt:
+            full_messages.append({"role": "system", "content": system_prompt})
+        else:
+            full_messages.append({"role": "system", "content": "Yanıt dili zorunlu olarak Türkçe olmalı."})
+        full_messages.extend(messages)
+
+        payload = {
+            "model": self.model,
+            "messages": full_messages,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "max_tokens": mt,
+            "stream": True,
+        }
+
+        # Model auto-detect on first attempt
+        try:
+            with self.session.post(
+                f"{self.api_url}/chat/completions",
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=self.request_timeout,
+                stream=True,
+            ) as response:
+                if self._is_invalid_model_response(response):
+                    models = self.list_models()
+                    if models:
+                        self.model = models[0]
+                        payload["model"] = self.model
+                    # Re-open with corrected model via non-streaming fallback
+                    yield from self._chat_stream_inner(payload)
+                    return
+                
+                if response.status_code != 200:
+                    yield f"\n\n⚠️ LMStudio hatası ({response.status_code}). Sunucuyu kontrol edin."
+                    return
+
+                yield from self._parse_sse_stream(response)
+
+        except requests.exceptions.Timeout:
+            yield "\n\n⚠️ LMStudio isteği zaman aşımına uğradı. Model yüklü mü kontrol edin."
+        except requests.exceptions.ConnectionError:
+            yield f"\n\n⚠️ LMStudio'ya bağlanılamadı ({self.api_url}). Sunucu çalışıyor mu?"
+        except Exception as e:
+            yield f"\n\n⚠️ Hata: {str(e)}"
+
+    def _chat_stream_inner(self, payload):
+        """Re-attempt a stream with the updated payload (after model auto-fix)."""
+        try:
+            with self.session.post(
+                f"{self.api_url}/chat/completions",
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=self.request_timeout,
+                stream=True,
+            ) as response:
+                yield from self._parse_sse_stream(response)
+        except Exception as e:
+            yield f"\n\n⚠️ Yeniden deneme hatası: {str(e)}"
+
+    def _parse_sse_stream(self, response):
+        """Parse an SSE stream response and yield content tokens."""
+        import json as _json
+        for line in response.iter_lines():
+            if not line:
+                continue
+            if isinstance(line, bytes):
+                line = line.decode("utf-8")
+            if not line.startswith("data:"):
+                continue
+            data_str = line[5:].strip()
+            if data_str == "[DONE]":
+                return
+            try:
+                data = _json.loads(data_str)
+                delta = data.get("choices", [{}])[0].get("delta", {})
+                content = delta.get("content")
+                if content:
+                    yield content
+            except _json.JSONDecodeError:
+                continue
