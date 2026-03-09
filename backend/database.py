@@ -306,3 +306,26 @@ class Database:
 
 # Initialize database
 db = Database()
+# Initialize database
+db = Database()
+
+
+def reset_database():
+    """Reset database to initial state - drop all tables and recreate"""
+    import os
+    
+    # Close any existing connections
+    if os.path.exists(Database().db_path):
+        os.remove(Database().db_path)
+    
+    # Remove WAL files
+    db_path = Database().db_path
+    wal_path = db_path + "-wal"
+    shm_path = db_path + "-shm"
+    
+    for path in [wal_path, shm_path]:
+        if os.path.exists(path):
+            os.remove(path)
+    
+    # Reinitialize database
+    Database()
