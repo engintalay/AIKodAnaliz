@@ -218,6 +218,34 @@ class Database:
                 )
             ''')
 
+            # FTS5 full-text search index for functions (GELIS4)
+            cursor.execute('''
+                CREATE VIRTUAL TABLE IF NOT EXISTS fts_functions
+                USING fts5(
+                    function_id UNINDEXED,
+                    function_name,
+                    class_name,
+                    package_name,
+                    ai_summary,
+                    file_name,
+                    tokenize = "unicode61"
+                )
+            ''')
+
+            # Embedding vectors table for semantic search (GELIS4)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS function_embeddings (
+                    function_id  INTEGER PRIMARY KEY,
+                    project_id   INTEGER NOT NULL,
+                    embedding    TEXT NOT NULL,
+                    model_name   TEXT,
+                    indexed_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (function_id) REFERENCES functions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (project_id)  REFERENCES projects(id)  ON DELETE CASCADE
+                )
+            ''')
+
+
             # Backward-compatible migration for existing databases
             cursor.execute("PRAGMA table_info(user_settings)")
             existing_columns = {row[1] for row in cursor.fetchall()}

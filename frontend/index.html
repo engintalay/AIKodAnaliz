@@ -8,7 +8,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>AIKodAnaliz - Kod Analiz Aracı</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260310_10">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260310_11">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
 
@@ -182,7 +182,30 @@
                                 🤖 Tüm Eksik Fonksiyonlara Yapay Zeka Özeti Çıkar
                             </button>
                         </div>
+
+                        <div
+                            style="background: white; padding: 20px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                            <h3 style="margin-top: 0; color: #333;">🔍 Sohbet Arama İndeksi (RAG)</h3>
+                            <p style="color: #666; margin-bottom: 15px;">
+                                Sohbet asistanının daha doğru sonuç bulması için FTS5 tam metin ve anlamsal (embedding)
+                                indeksi oluşturun.
+                                Embedding işlemi arka planda çalışır; tamamlanması birkaç dakika sürebilir.
+                            </p>
+                            <div id="ragStatusBox"
+                                style="background:#f5f8fd; border:1px solid #d0e3fa; border-radius:6px; padding:12px; margin-bottom:14px; font-size:13px; color:#333; display:none;">
+                                <span id="ragStatusText">Durum yükleniyor...</span>
+                            </div>
+                            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                                <button class="btn btn-primary" onclick="buildRagIndex()" style="background:#2980b9;">
+                                    ⚡ FTS + Embedding İndeksini Oluştur
+                                </button>
+                                <button class="btn btn-secondary" onclick="loadRagStatus()">
+                                    🔄 Durumu Yenile
+                                </button>
+                            </div>
+                        </div>
                     </div>
+
 
                     <!-- Chat Tab -->
                     <div class="tab-content" id="chatTab" style="display:none;">
@@ -713,7 +736,7 @@
     <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/js/main.js?v=20260310_13"></script>
+    <script src="/static/js/main.js?v=20260310_14"></script>
     <script src="/static/js/admin-functions.js?v=20260310_02"></script>
 </body>
 

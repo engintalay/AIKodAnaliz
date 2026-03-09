@@ -5,6 +5,7 @@ from backend.database import db
 from backend.lmstudio_client import LMStudioClient
 from backend.permission_manager import get_user_from_session, check_project_access
 from backend.logger import logger, log_audit
+from backend.rag_index import RagIndex
 
 bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 
@@ -12,73 +13,10 @@ bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 # Context retrieval helpers
 # ------------------------------------------------------------------
 
-def _search_functions(project_id: int, query: str, limit: int = 10) -> list:
-    """Return up to `limit` functions whose name, class, summary or file name
-    contains any meaningful word from the query.
-    Handles 'ClassName.methodName' dot-notation by splitting on '.'."""
-
-    import re as _re
-
-    # Tokenise: split on spaces, then split each token on dots, strip punctuation
-    stop = {'bir', 'ile', 'için', 'olan', 'ne', 'bu', 'the', 'and', 'for',
-            'how', 'what', 'which', 'is', 'are', 'can', 'does', 'do',
-            'bu', 'ne', 'yapıyor', 'nedir', 'çalışıyor', 'nasıl', 'hangi'}
-    raw_tokens = []
-    for word in query.split():
-        # Split on dot to handle ClassName.methodName
-        parts = word.split('.')
-        raw_tokens.extend(parts)
-
-    tokens = []
-    for t in raw_tokens:
-        t_clean = _re.sub(r'[^\w]', '', t).lower()
-        if len(t_clean) >= 3 and t_clean not in stop:
-            tokens.append(t_clean)
-    # Deduplicate while preserving order
-    seen = set()
-    tokens = [t for t in tokens if not (t in seen or seen.add(t))]
-
-    if not tokens:
-        rows = db.execute_query(
-            '''SELECT f.id, f.function_name, f.class_name, f.package_name,
-                      f.ai_summary, f.signature, sf.file_name
-               FROM functions f
-               LEFT JOIN source_files sf ON f.file_id = sf.id
-               WHERE f.project_id = ? AND f.ai_summary IS NOT NULL AND f.ai_summary != ""
-               ORDER BY f.function_name LIMIT ?''',
-            (project_id, limit)
-        )
-        return [dict(r) for r in rows]
-
-    # Build LIKE conditions for each token across multiple columns (including class_name)
-    like_conditions = []
-    params = []
-    for token in tokens[:6]:  # max 6 tokens for performance
-        like_conditions.append(
-            '(LOWER(f.function_name) LIKE ? OR LOWER(COALESCE(f.class_name,"")) LIKE ?'
-            ' OR LOWER(COALESCE(f.ai_summary,"")) LIKE ? OR LOWER(COALESCE(sf.file_name,"")) LIKE ?)'
-        )
-        t = f'%{token}%'
-        params += [t, t, t, t]
-
-    where_sql = ' OR '.join(like_conditions)
-    params_full = [project_id] + params + [limit]
-
-    rows = db.execute_query(
-        f'''SELECT f.id, f.function_name, f.class_name, f.package_name,
-                   f.ai_summary, f.signature, sf.file_name
-            FROM functions f
-            LEFT JOIN source_files sf ON f.file_id = sf.id
-            WHERE f.project_id = ? AND ({where_sql})
-            ORDER BY f.function_name LIMIT ?''',
-        params_full
-    )
-    return [dict(r) for r in rows]
-
-
 def _build_context(project_id: int, project_name: str, query: str) -> tuple[str, str, list]:
-    """Return (system_prompt, context_block, refs) for the LLM."""
-    funcs = _search_functions(project_id, query)
+    """Return (system_prompt, context_block, refs) for the LLM.
+    Uses RagIndex for hybrid embedding + FTS5 + LIKE search."""
+    funcs = RagIndex.search(project_id, query)
 
     context_lines = []
     refs = []  # For the frontend to render as links

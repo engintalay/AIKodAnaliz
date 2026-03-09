@@ -206,6 +206,62 @@ async function updateProjectDescription() {
     }
 }
 
+// ================================================================
+// SECTION: RAG Index (GELIS4)
+// ================================================================
+
+async function loadRagStatus() {
+    if (!currentProjectId) return;
+    const box = document.getElementById('ragStatusBox');
+    const txt = document.getElementById('ragStatusText');
+    if (!box || !txt) return;
+    box.style.display = 'block';
+    txt.textContent = 'Durum kontrol ediliyor...';
+    try {
+        const res = await fetch(`${API_URL}/rag/project/${currentProjectId}/status`);
+        if (!res.ok) { txt.textContent = 'Durum alınamadı.'; return; }
+        const d = await res.json();
+        const total = d.total_functions || 0;
+        const emb = d.indexed || 0;
+        const fts = d.fts_indexed || 0;
+        const pct = total > 0 ? Math.round((emb / total) * 100) : 0;
+        const statusLabel = d.status === 'running' ? ' 🔄 Oluşturuluyor...' : d.status === 'done' ? ' ✅ Tamamlandı' : '';
+        txt.innerHTML = `
+            <b>FTS5:</b> ${fts} / ${total} fonksiyon indekslendi &nbsp;|&nbsp;
+            <b>Embedding:</b> ${emb} / ${total} (%${pct})${statusLabel}
+            ${d.elapsed ? `<br><small>Son işlem: ${d.elapsed}s</small>` : ''}
+        `;
+        // Auto-refresh while running
+        if (d.status === 'running') {
+            setTimeout(loadRagStatus, 3000);
+        }
+    } catch (e) {
+        txt.textContent = `Hata: ${e.message}`;
+    }
+}
+
+async function buildRagIndex() {
+    if (!currentProjectId) return;
+    if (!confirm('FTS5 tam metin indeksi hemen, embedding indeksi arka planda oluşturulacak. Devam edilsin mi?')) return;
+    const box = document.getElementById('ragStatusBox');
+    const txt = document.getElementById('ragStatusText');
+    box.style.display = 'block';
+    txt.textContent = '⏳ İndeks oluşturma başlatılıyor...';
+    try {
+        const res = await fetch(`${API_URL}/rag/project/${currentProjectId}/build`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fts: true, embeddings: true })
+        });
+        const d = await res.json();
+        txt.innerHTML = `✅ FTS5 indeks tamam (${d.fts_indexed || 0} fonksiyon). Embedding arka planda çalışıyor... <span id="ragPollNote">Otomatik güncelleniyor</span>`;
+        // Start polling status
+        setTimeout(loadRagStatus, 2000);
+    } catch (e) {
+        txt.textContent = `❌ Hata: ${e.message}`;
+    }
+}
+
 async function startBulkAiAnalysis() {
     if (!currentProjectId) return;
 
