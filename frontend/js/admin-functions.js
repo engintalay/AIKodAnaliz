@@ -562,21 +562,26 @@ function showCreateUserForm() {
 
 function hideCreateUserForm() {
     document.getElementById('createUserForm').style.display = 'none';
-    document.getElementById('newUsername').value = '';
-    document.getElementById('newPassword').value = '';
-    document.getElementById('newUserFullName').value = '';
-    document.getElementById('newUserEmail').value = '';
+    document.getElementById('adminNewUsername').value = '';
+    document.getElementById('adminNewPassword').value = '';
+    document.getElementById('adminNewUserFullName').value = '';
+    document.getElementById('adminNewUserEmail').value = '';
 }
 
 function createNewUser() {
-    const username = document.getElementById('newUsername').value.trim();
-    const password = document.getElementById('newPassword').value;
-    const role = document.getElementById('newUserRole').value;
-    const fullName = document.getElementById('newUserFullName').value.trim();
-    const email = document.getElementById('newUserEmail').value.trim();
+    const username = document.getElementById('adminNewUsername').value.trim();
+    const password = document.getElementById('adminNewPassword').value.trim();
+    const role = document.getElementById('adminNewUserRole').value;
+    const fullName = document.getElementById('adminNewUserFullName').value.trim();
+    const email = document.getElementById('adminNewUserEmail').value.trim();
     
     if (!username || !password) {
         showError('Hata', 'Kullanıcı adı ve şifre gerekli');
+        return;
+    }
+    
+    if (password.length < 4) {
+        showError('Hata', 'Şifre en az 4 karakter olmalıdır');
         return;
     }
     

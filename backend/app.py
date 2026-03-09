@@ -79,11 +79,21 @@ def test_dashboard():
 
 @app.route('/static/css/<path:filename>')
 def send_css(filename):
-    return send_from_directory(os.path.join(FRONTEND_DIR, 'css'), filename)
+    from flask import make_response
+    response = make_response(send_from_directory(os.path.join(FRONTEND_DIR, 'css'), filename))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/static/js/<path:filename>')
 def send_js(filename):
-    return send_from_directory(os.path.join(FRONTEND_DIR, 'js'), filename)
+    from flask import make_response
+    response = make_response(send_from_directory(os.path.join(FRONTEND_DIR, 'js'), filename))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/api/health')
 def health():

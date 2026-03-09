@@ -285,15 +285,15 @@
                     
                     <div id="createUserForm" style="display:none; background: #f9f9f9; padding: 15px; margin: 15px 0; border-radius: 4px;">
                         <h4>Yeni Kullanıcı Oluştur</h4>
-                        <input type="text" id="newUsername" placeholder="Kullanıcı Adı" required>
-                        <input type="password" id="newPassword" placeholder="Şifre" required>
-                        <select id="newUserRole">
+                        <input type="text" id="adminNewUsername" placeholder="Kullanıcı Adı" required>
+                        <input type="password" id="adminNewPassword" placeholder="Şifre" required>
+                        <select id="adminNewUserRole">
                             <option value="analyzer">Analizci</option>
                             <option value="developer">Geliştirici</option>
                             <option value="admin">Admin</option>
                         </select>
-                        <input type="text" id="newUserFullName" placeholder="Ad Soyad">
-                        <input type="email" id="newUserEmail" placeholder="E-posta">
+                        <input type="text" id="adminNewUserFullName" placeholder="Ad Soyad">
+                        <input type="email" id="adminNewUserEmail" placeholder="E-posta">
                         <button class="btn btn-primary" onclick="createNewUser()">Oluştur</button>
                         <button class="btn btn-secondary" onclick="hideCreateUserForm()">İptal</button>
                     </div>
@@ -457,8 +457,8 @@
     <!-- Load libraries before main.js -->
     <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-    <script src="/static/js/main.js"></script>
-    <script src="/static/js/admin-functions.js"></script>
+    <script src="/static/js/main.js?v=20260309_t"></script>
+    <script src="/static/js/admin-functions.js?v=20260309_t"></script>
 </body>
 
 </html>
