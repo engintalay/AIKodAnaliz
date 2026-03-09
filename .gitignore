@@ -46,6 +46,13 @@ uploads/*
 *.log
 logs/
 
+# Coverage
+.coverage
+.coverage.*
+coverage_html/
+htmlcov/
+.pytest_cache/
+
 # Environment variables
 .env
 .env.local

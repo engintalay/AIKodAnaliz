@@ -281,6 +281,77 @@ Progress Tracking:
 - 🚧 API dokümantasyonu otomatik oluşturma
 - 🚧 Multi-model LM desteği
 
+## 🧪 Test ve Kalite Güvencesi
+
+### Unit Test Paketi
+
+Proje kapsamlı bir unit test altyapısına sahiptir. Toplam **25 test** ile backend kodunun **%29'u** kapsanmaktadır.
+
+#### Test Çalıştırma
+
+```bash
+# Tüm testleri çalıştır
+./venv/bin/python -m unittest discover -s tests/unit -p 'test_*.py'
+
+# Verbose mod
+./venv/bin/python -m unittest discover -s tests/unit -p 'test_*.py' -v
+
+# Belirli bir test dosyası
+./venv/bin/python -m unittest tests.unit.test_code_analyzer
+```
+
+#### Test Coverage Raporu
+
+```bash
+# Coverage ile testleri çalıştır
+./venv/bin/coverage run -m unittest discover -s tests/unit -p 'test_*.py'
+
+# Terminal'de rapor göster
+./venv/bin/coverage report -m
+
+# HTML rapor oluştur
+./venv/bin/coverage html
+open coverage_html/index.html  # Tarayıcıda aç
+```
+
+#### Test Modülleri
+
+| Test Dosyası | Test Sayısı | Kapsanan Alan |
+|-------------|-------------|---------------|
+| `test_code_analyzer.py` | 6 | Python, Java, PHP, HTML, generic parsing |
+| `test_sql_analyzer.py` | 5 | SQL procedure, function, view, trigger |
+| `test_progress_tracker.py` | 2 | Task tracking, lifecycle |
+| `test_project_helpers.py` | 3 | Language detection, binary files |
+| `test_app_and_routes.py` | 6 | Flask endpoints, upload validation |
+| `test_permission_manager.py` | 3 | Role-based access control |
+
+#### Coverage Özeti
+
+**Yüksek Kapsam (>80%)**
+- ✅ `code_analyzer.py` - 89%
+- ✅ `progress_tracker.py` - 89%
+- ✅ `logger.py` - 84%
+- ✅ `app.py` - 83%
+
+**Orta Kapsam (40-80%)**
+- ⚠️ `database.py` - 67%
+- ⚠️ `routes/project.py` - 41%
+
+**Düşük Kapsam (<40%)** - Öncelikli İyileştirme Gerekiyor
+- ❌ `permission_manager.py` - 35%
+- ❌ `routes/analysis.py` - 8% (En kritik modül)
+- ❌ `routes/user.py` - 15%
+- ❌ `lmstudio_client.py` - 10%
+
+📊 **Detaylı coverage raporu:** [COVERAGE_REPORT.md](COVERAGE_REPORT.md)
+
+### Sürekli Entegrasyon (CI)
+
+🚧 GitHub Actions workflow henüz eklenmedi. Planlanıyor:
+- Her commit'te otomatik test çalıştırma
+- Coverage raporu PR'lara otomatik yorum
+- Lint ve type checking (mypy, flake8)
+
 ## Sorunlar & Destek
 
 Sorunlarla karşılaştığınızda;

@@ -2,6 +2,12 @@ import ast
 import re
 from typing import List, Dict, Tuple
 
+try:
+    import sqlparse
+    SQLPARSE_AVAILABLE = True
+except ImportError:
+    SQLPARSE_AVAILABLE = False
+
 class CodeAnalyzer:
     """Multi-language code analyzer"""
     
@@ -22,6 +28,8 @@ class CodeAnalyzer:
             return self._analyze_java_like(file_path, content)
         elif self.language in ["php"]:
             return self._analyze_php(file_path, content)
+        elif self.language == "sql":
+            return self._analyze_sql(file_path, content)
         elif self.language in ["css", "html"]:
             return self._analyze_markup(content)
         else:
@@ -324,3 +332,119 @@ class CodeAnalyzer:
 
         # Fallback if block is not balanced
         return content.count('\n') + 1
+
+    def _analyze_sql(self, file_path: str, content: str) -> Dict:
+        """Analyze SQL code using sqlparse"""
+        if not SQLPARSE_AVAILABLE:
+            return {
+                'functions': [],
+                'entry_points': [],
+                'dependencies': [],
+                'error': 'sqlparse not installed'
+            }
+        
+        functions = []
+        entry_points = []
+        dependencies = []
+        
+        # Parse SQL statements
+        statements = sqlparse.parse(content)
+        
+        for stmt in statements:
+            stmt_type = stmt.get_type()
+            tokens = list(stmt.flatten())
+            
+            # Extract CREATE PROCEDURE/FUNCTION
+            if stmt_type == 'CREATE':
+                # Check if it's a procedure or function
+                stmt_str = str(stmt).upper()
+                
+                if 'PROCEDURE' in stmt_str or 'FUNCTION' in stmt_str:
+                    # Extract name
+                    name_match = re.search(r'(?:PROCEDURE|FUNCTION)\s+([\w.]+)', stmt_str, re.IGNORECASE)
+                    if name_match:
+                        obj_name = name_match.group(1)
+                        obj_type = 'procedure' if 'PROCEDURE' in stmt_str else 'function'
+                        
+                        # Extract parameters
+                        params_match = re.search(r'\(([^)]+)\)', str(stmt), re.IGNORECASE)
+                        params = []
+                        if params_match:
+                            params_str = params_match.group(1)
+                            # Simple parameter extraction
+                            params = [p.strip().split()[0] for p in params_str.split(',') if p.strip()]
+                        
+                        line_num = content[:content.find(str(stmt))].count('\n') + 1 if str(stmt) in content else 1
+                        
+                        func_info = {
+                            'name': obj_name,
+                            'type': obj_type,
+                            'start_line': line_num,
+                            'end_line': line_num + str(stmt).count('\n'),
+                            'parameters': params,
+                            'return_type': None,
+                            'signature': ' '.join(str(stmt).split()[:5]) + '...',
+                            'is_entry': False,
+                            'class_name': None,
+                            'package_name': file_path
+                        }
+                        functions.append(func_info)
+                
+                # Extract CREATE VIEW
+                elif 'VIEW' in stmt_str:
+                    name_match = re.search(r'VIEW\s+([\w.]+)', stmt_str, re.IGNORECASE)
+                    if name_match:
+                        view_name = name_match.group(1)
+                        line_num = content[:content.find(str(stmt))].count('\n') + 1 if str(stmt) in content else 1
+                        
+                        func_info = {
+                            'name': view_name,
+                            'type': 'view',
+                            'start_line': line_num,
+                            'end_line': line_num + str(stmt).count('\n'),
+                            'parameters': [],
+                            'return_type': None,
+                            'signature': 'CREATE VIEW ' + view_name,
+                            'is_entry': False,
+                            'class_name': None,
+                            'package_name': file_path
+                        }
+                        functions.append(func_info)
+                
+                # Extract CREATE TRIGGER
+                elif 'TRIGGER' in stmt_str:
+                    name_match = re.search(r'TRIGGER\s+([\w.]+)', stmt_str, re.IGNORECASE)
+                    if name_match:
+                        trigger_name = name_match.group(1)
+                        line_num = content[:content.find(str(stmt))].count('\n') + 1 if str(stmt) in content else 1
+                        
+                        func_info = {
+                            'name': trigger_name,
+                            'type': 'trigger',
+                            'start_line': line_num,
+                            'end_line': line_num + str(stmt).count('\n'),
+                            'parameters': [],
+                            'return_type': None,
+                            'signature': 'CREATE TRIGGER ' + trigger_name,
+                            'is_entry': True,
+                            'class_name': None,
+                            'package_name': file_path
+                        }
+                        functions.append(func_info)
+                        entry_points.append(func_info)
+            
+            # Extract table references as dependencies
+            if stmt_type in ['SELECT', 'INSERT', 'UPDATE', 'DELETE']:
+                # Basic table extraction from FROM/INTO clauses
+                table_pattern = r'(?:FROM|JOIN|INTO|UPDATE)\s+([\w.]+)'
+                for match in re.finditer(table_pattern, str(stmt), re.IGNORECASE):
+                    table_name = match.group(1)
+                    if table_name.upper() not in ['SELECT', 'WHERE', 'SET', 'VALUES']:
+                        if table_name not in dependencies:
+                            dependencies.append(table_name)
+        
+        return {
+            'functions': functions,
+            'entry_points': entry_points,
+            'dependencies': dependencies
+        }

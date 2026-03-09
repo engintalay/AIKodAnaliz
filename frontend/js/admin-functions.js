@@ -3,6 +3,7 @@
 // ============================================
 
 const analysisJobs = new Map();
+let latestReportData = null;
 
 function formatEta(seconds) {
     if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
@@ -216,9 +217,75 @@ function loadReport() {
         fetch(`${API_URL}/analysis/errors`).then(r => r.json())
     ])
         .then(([reportData, errorData]) => {
+            latestReportData = reportData;
             renderReport(reportData, errorData);
         })
         .catch(err => showError('Hata', `Rapor yüklenirken hata: ${err}`));
+}
+
+function collectMissingFileTargets(reportData) {
+    if (!reportData || !Array.isArray(reportData.projects)) {
+        return [];
+    }
+
+    const targets = [];
+    reportData.projects.forEach(project => {
+        const files = project.files || {};
+        Object.entries(files).forEach(([fileName, fileData]) => {
+            const missingCount = Array.isArray(fileData.missing_functions)
+                ? fileData.missing_functions.length
+                : 0;
+
+            if (missingCount > 0 && fileData.file_id) {
+                targets.push({
+                    projectId: project.id,
+                    projectName: project.name,
+                    fileId: fileData.file_id,
+                    fileName,
+                    missingCount,
+                });
+            }
+        });
+    });
+
+    return targets;
+}
+
+function analyzeAllMissingFiles() {
+    const reportData = latestReportData;
+
+    if (!reportData) {
+        showWarning('Rapor Gerekli', 'Lütfen önce raporu oluşturun.');
+        return;
+    }
+
+    const targets = collectMissingFileTargets(reportData);
+    if (targets.length === 0) {
+        showInfo('Bilgi', 'Analiz bekleyen dosya bulunmuyor.');
+        return;
+    }
+
+    const missingFunctionsTotal = targets.reduce((sum, t) => sum + t.missingCount, 0);
+    const message = `${targets.length} dosyada toplam ${missingFunctionsTotal} eksik özet analiz edilecek. Devam edilsin mi?`;
+    if (!confirm(message)) {
+        return;
+    }
+
+    targets.forEach(target => {
+        const taskId = `ai-file-${target.fileId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        startTrackedAnalysis(
+            taskId,
+            `Toplu Dosya Analizi: ${target.projectName} / ${target.fileName}`,
+            fetch(`${API_URL}/analysis/file/${target.fileId}?missing_only=true&task_id=${encodeURIComponent(taskId)}`, {
+                method: 'POST'
+            })
+        );
+    });
+
+    showSuccess(
+        'Toplu Analiz Başlatıldı',
+        `${targets.length} dosya için analiz işleri kuyruğa alındı. İlerleme üst panelden takip edilebilir.`
+    );
 }
 
 function clearErrorSummary(functionId) {
@@ -325,11 +392,26 @@ function analyzeSingleFunction(functionId) {
 
 function renderReport(reportData, errorData) {
     const container = document.getElementById('reportContainer');
+    const missingTargets = collectMissingFileTargets(reportData);
+    const missingFilesCount = missingTargets.length;
+    const missingFunctionsTotal = missingTargets.reduce((sum, t) => sum + t.missingCount, 0);
     
     const stats = reportData.statistics;
     let html = `
         <div style="background: white; padding: 20px; border-radius: 4px; margin-bottom: 20px;">
-            <h3>📊 Genel İstatistikler</h3>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+                <h3 style="margin:0;">📊 Genel İstatistikler</h3>
+                <button
+                    class="btn btn-sm"
+                    onclick="analyzeAllMissingFiles()"
+                    ${missingFilesCount === 0 ? 'disabled' : ''}
+                    style="background:${missingFilesCount === 0 ? '#bdc3c7' : '#16a085'}; color:white; border:none; border-radius:4px; padding:8px 12px; cursor:${missingFilesCount === 0 ? 'not-allowed' : 'pointer'};">
+                    🤖 Analiz Edilmeyen Tum Dosyalari Analiz Et (${missingFilesCount})
+                </button>
+            </div>
+            <div style="font-size:13px; color:#7f8c8d; margin-bottom:10px;">
+                Bekleyen dosya: <strong>${missingFilesCount}</strong> | Bekleyen fonksiyon: <strong>${missingFunctionsTotal}</strong>
+            </div>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
                 <div style="background: #f0f8ff; padding: 15px; border-radius: 4px;">
                     <div style="font-size: 24px; font-weight: bold; color: #3498db;">${stats.total}</div>

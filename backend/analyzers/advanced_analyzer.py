@@ -9,6 +9,13 @@ import re
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 
+# SQL support via sqlparse
+try:
+    import sqlparse
+    SQLPARSE_AVAILABLE = True
+except ImportError:
+    SQLPARSE_AVAILABLE = False
+
 # Tree-Sitter is MANDATORY
 try:
     from tree_sitter import Language, Parser
@@ -123,15 +130,132 @@ class AdvancedCodeAnalyzer:
         self.entry_points = []
         self.dependencies = []
         
+        # Handle SQL separately using sqlparse
+        if self.language == 'sql':
+            if not SQLPARSE_AVAILABLE:
+                raise ValueError("SQL analysis requires sqlparse. Install: pip install sqlparse")
+            return self._analyze_sql(file_path, content)
+        
         lang_name = self.language_map.get(self.language, self.language)
         if lang_name not in self.ts_languages:
             raise ValueError(
                 f"Language '{language}' not supported. "
-                f"Supported: {', '.join(sorted(set(self.language_map.values())))}"
+                f"Supported: {', '.join(sorted(set(self.language_map.values())))}, sql"
             )
         
-        # Always use Tree-Sitter
+        # Always use Tree-Sitter for supported languages
         return self._analyze_with_tree_sitter(file_path, content, lang_name)
+    
+    def _analyze_sql(self, file_path: str, content: str) -> Dict:
+        """Analyze SQL using sqlparse"""
+        functions = []
+        entry_points = []
+        dependencies = []
+        
+        try:
+            statements = sqlparse.parse(content)
+            
+            for stmt in statements:
+                stmt_type = stmt.get_type()
+                stmt_str = str(stmt).upper()
+                
+                # CREATE PROCEDURE/FUNCTION
+                if stmt_type == 'CREATE':
+                    if 'PROCEDURE' in stmt_str or 'FUNCTION' in stmt_str:
+                        name_match = re.search(r'(?:PROCEDURE|FUNCTION)\s+([\w.]+)', stmt_str, re.IGNORECASE)
+                        if name_match:
+                            obj_name = name_match.group(1)
+                            obj_type = 'procedure' if 'PROCEDURE' in stmt_str else 'function'
+                            
+                            params_match = re.search(r'\(([^)]+)\)', str(stmt), re.IGNORECASE)
+                            params = []
+                            if params_match:
+                                params_str = params_match.group(1)
+                                params = [p.strip().split()[0] for p in params_str.split(',') if p.strip()]
+                            
+                            line_num = content[:content.find(str(stmt))].count('\n') + 1 if str(stmt) in content else 1
+                            
+                            func_info = {
+                                'name': obj_name,
+                                'type': obj_type,
+                                'start_line': line_num,
+                                'end_line': line_num + str(stmt).count('\n'),
+                                'parameters': params,
+                                'return_type': None,
+                                'signature': ' '.join(str(stmt).split()[:5]) + '...',
+                                'is_entry': False,
+                                'class_name': None,
+                                'package_name': file_path
+                            }
+                            functions.append(func_info)
+                    
+                    # CREATE VIEW
+                    elif 'VIEW' in stmt_str:
+                        name_match = re.search(r'VIEW\s+([\w.]+)', stmt_str, re.IGNORECASE)
+                        if name_match:
+                            view_name = name_match.group(1)
+                            line_num = content[:content.find(str(stmt))].count('\n') + 1 if str(stmt) in content else 1
+                            
+                            func_info = {
+                                'name': view_name,
+                                'type': 'view',
+                                'start_line': line_num,
+                                'end_line': line_num + str(stmt).count('\n'),
+                                'parameters': [],
+                                'return_type': None,
+                                'signature': 'CREATE VIEW ' + view_name,
+                                'is_entry': False,
+                                'class_name': None,
+                                'package_name': file_path
+                            }
+                            functions.append(func_info)
+                    
+                    # CREATE TRIGGER
+                    elif 'TRIGGER' in stmt_str:
+                        name_match = re.search(r'TRIGGER\s+([\w.]+)', stmt_str, re.IGNORECASE)
+                        if name_match:
+                            trigger_name = name_match.group(1)
+                            line_num = content[:content.find(str(stmt))].count('\n') + 1 if str(stmt) in content else 1
+                            
+                            func_info = {
+                                'name': trigger_name,
+                                'type': 'trigger',
+                                'start_line': line_num,
+                                'end_line': line_num + str(stmt).count('\n'),
+                                'parameters': [],
+                                'return_type': None,
+                                'signature': 'CREATE TRIGGER ' + trigger_name,
+                                'is_entry': True,
+                                'class_name': None,
+                                'package_name': file_path
+                            }
+                            functions.append(func_info)
+                            entry_points.append(func_info)
+            
+            # Extract table dependencies from SELECT/INSERT/UPDATE/DELETE
+            for stmt in statements:
+                stmt_type = stmt.get_type()
+                if stmt_type in ['SELECT', 'INSERT', 'UPDATE', 'DELETE']:
+                    table_pattern = r'(?:FROM|JOIN|INTO|UPDATE)\s+([\w.]+)'
+                    for match in re.finditer(table_pattern, str(stmt), re.IGNORECASE):
+                        table_name = match.group(1)
+                        if table_name.upper() not in ['SELECT', 'WHERE', 'SET', 'VALUES']:
+                            if table_name not in dependencies:
+                                dependencies.append(table_name)
+        
+        except Exception as e:
+            return {
+                'functions': [],
+                'entry_points': [],
+                'dependencies': [],
+                'error': str(e)
+            }
+        
+        return {
+            'functions': functions,
+            'entry_points': entry_points,
+            'dependencies': dependencies
+        }
     
     def _analyze_with_tree_sitter(self, file_path: str, content: str, language: str) -> Dict:
         """Analyze code using Tree-Sitter for precise AST parsing"""

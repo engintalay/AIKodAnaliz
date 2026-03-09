@@ -147,6 +147,126 @@ def upload_project():
     
     is_war = file_lower.endswith('.war')
 
+    # Generate task ID for progress tracking
+    task_id = str(uuid.uuid4())
+    logger.info(f"Starting upload: {project_name} | Task: {task_id}")
+
+    try:
+        progress_tracker.start_task(task_id, total_steps=100)
+        progress_tracker.update(task_id, progress=5, step='Proje kaydı oluşturuluyor...', detail='Veritabanına proje kaydediliyor')
+
+        # Create project record
+        project_id = db.execute_insert(
+            'INSERT INTO projects (name, description, admin_id) VALUES (?, ?, ?)',
+            (project_name, project_desc, 1)  # TODO: Get actual user ID
+        )
+
+        log_upload(project_id, "Project record created", task_id=task_id, name=project_name)
+
+        progress_tracker.update(task_id, progress=10, step='ZIP dosyası kaydediliyor...', detail=f'Dosya boyutu: {len(file.read())} bytes')
+        file.seek(0)  # Reset file pointer after read
+
+        # Save and extract zip/war payload
+        zip_path = os.path.join(UPLOAD_DIR, f'project_{project_id}.zip')
+        file.save(zip_path)
+        log_upload(project_id, "ZIP file saved", path=zip_path)
+
+        progress_tracker.update(task_id, progress=20, step='ZIP dosyası açılıyor...', detail=f'Dosya: {zip_path}')
+
+        extract_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}')
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            file_list = zip_ref.namelist()
+            total_files = len(file_list)
+            log_upload(project_id, "ZIP/WAR extracted", total_files=total_files)
+            progress_tracker.update(task_id, progress=25, step=f'ZIP/WAR içeriği çıkarılıyor... ({total_files} dosya bulundu)', detail=f'Toplam {total_files} dosya çıkarılacak')
+            zip_ref.extractall(extract_dir)
+
+        # If WAR file, extract nested JARs
+        if is_war:
+            progress_tracker.update(task_id, progress=26, step='WAR içindeki JAR dosyaları çıkarılıyor...', detail='Nested JAR dosyaları taranıyor')
+            logger.info(f"[Project {project_id}] Extracting nested JARs from WAR file")
+            _extract_nested_jars(extract_dir, logger)
+
+        progress_tracker.update(task_id, progress=30, step='Dosyalar tarıyor ve işleniyor...', detail='Kaynak dosyalar veritabanına aktarılıyor')
+
+        # Process extracted files
+        processed_files = 0
+        skipped_files = 0
+        all_files = []
+
+        # Collect all files first
+        for root, dirs, files in os.walk(extract_dir):
+            for file_name in files:
+                file_path = os.path.join(root, file_name)
+                all_files.append((file_path, file_name))
+
+        total_to_process = len(all_files)
+        logger.debug(f"[Project {project_id}] Found {total_to_process} files to process")
+
+        for idx, (file_path, file_name) in enumerate(all_files):
+            rel_path = os.path.relpath(file_path, extract_dir)
+
+            # Update progress for each file
+            current_progress = 30 + int((idx / total_to_process) * 60) if total_to_process > 0 else 30
+            progress_tracker.update(
+                task_id,
+                progress=current_progress,
+                step=f'Dosya işleniyor: {file_name} ({idx + 1}/{total_to_process})',
+                detail=f'İşleniyor: {rel_path}'
+            )
+
+            if not _should_index_file(file_name, file_path, is_war=is_war):
+                skipped_files += 1
+                logger.debug(f"[Project {project_id}] Skipped non-text/binary: {rel_path}")
+                continue
+
+            # Determine language (normalized aliases)
+            language = _detect_language(file_name)
+
+            # Read file content
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+
+                # Store in database
+                file_id = db.execute_insert(
+                    '''INSERT INTO source_files
+                    (project_id, file_path, file_name, language, content)
+                    VALUES (?, ?, ?, ?, ?)''',
+                    (project_id, rel_path, file_name, language, content)
+                )
+                processed_files += 1
+                logger.debug(f"[Project {project_id}] Processed: {rel_path} (ID: {file_id})")
+            except Exception as e:
+                skipped_files += 1
+                logger.warning(f"[Project {project_id}] Skipped {rel_path}: {str(e)}")
+                progress_tracker.update(task_id, detail=f'Atlandı (okunamadı): {rel_path}')
+                continue
+
+        log_upload(project_id, "File processing complete", processed=processed_files, skipped=skipped_files)
+        progress_tracker.update(task_id, progress=95, step='Temizlik yapılıyor...', detail='Geçici dosyalar siliniyor')
+
+        # Clean up zip file
+        os.remove(zip_path)
+        logger.debug(f"[Project {project_id}] Temporary ZIP removed")
+
+        progress_tracker.complete(task_id, success=True, message=f'Tamamlandı! {processed_files} dosya işlendi, {skipped_files} atlandı')
+        logger.info(f"Upload completed: Project {project_id} | Files: {processed_files} processed, {skipped_files} skipped")
+
+        return jsonify({
+            'project_id': project_id,
+            'task_id': task_id,
+            'name': project_name,
+            'files_processed': processed_files,
+            'files_skipped': skipped_files,
+            'message': 'Project uploaded successfully'
+        }), 201
+
+    except Exception as e:
+        log_error(f"upload_project (task: {task_id})", e, project_name=project_name)
+        progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
+        return jsonify({'error': str(e), 'task_id': task_id}), 500
+
 @bp.route('/git-info', methods=['POST'])
 def get_git_info():
     """Get Git repository information (branches, repo name)"""
@@ -236,126 +356,6 @@ def get_git_info():
     except Exception as e:
         logger.error(f"Error fetching git info: {e}")
         return jsonify({'error': str(e)}), 500
-    
-    # Generate task ID for progress tracking
-    task_id = str(uuid.uuid4())
-    logger.info(f"Starting upload: {project_name} | Task: {task_id}")
-    
-    try:
-        progress_tracker.start_task(task_id, total_steps=100)
-        progress_tracker.update(task_id, progress=5, step='Proje kaydı oluşturuluyor...', detail='Veritabanına proje kaydediliyor')
-        
-        # Create project record
-        project_id = db.execute_insert(
-            'INSERT INTO projects (name, description, admin_id) VALUES (?, ?, ?)',
-            (project_name, project_desc, 1)  # TODO: Get actual user ID
-        )
-        
-        log_upload(project_id, "Project record created", task_id=task_id, name=project_name)
-        
-        progress_tracker.update(task_id, progress=10, step='ZIP dosyası kaydediliyor...', detail=f'Dosya boyutu: {len(file.read())} bytes')
-        file.seek(0)  # Reset file pointer after read
-        
-        # Save and extract zip
-        zip_path = os.path.join(UPLOAD_DIR, f'project_{project_id}.zip')
-        file.save(zip_path)
-        log_upload(project_id, "ZIP file saved", path=zip_path)
-        
-        progress_tracker.update(task_id, progress=20, step='ZIP dosyası açılıyor...', detail=f'Dosya: {zip_path}')
-        
-        extract_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}')
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            file_list = zip_ref.namelist()
-            total_files = len(file_list)
-            log_upload(project_id, "ZIP/WAR extracted", total_files=total_files)
-            progress_tracker.update(task_id, progress=25, step=f'ZIP/WAR içeriği çıkarılıyor... ({total_files} dosya bulundu)', detail=f'Toplam {total_files} dosya çıkarılacak')
-            zip_ref.extractall(extract_dir)
-        
-        # If WAR file, extract nested JARs
-        if is_war:
-            progress_tracker.update(task_id, progress=26, step='WAR içindeki JAR dosyaları çıkarılıyor...', detail='Nested JAR dosyaları taranıyor')
-            logger.info(f"[Project {project_id}] Extracting nested JARs from WAR file")
-            _extract_nested_jars(extract_dir, logger)
-        
-        progress_tracker.update(task_id, progress=30, step='Dosyalar tarıyor ve işleniyor...', detail='Kaynak dosyalar veritabanına aktarılıyor')
-        
-        # Process extracted files
-        processed_files = 0
-        skipped_files = 0
-        all_files = []
-        
-        # Collect all files first
-        for root, dirs, files in os.walk(extract_dir):
-            for file_name in files:
-                file_path = os.path.join(root, file_name)
-                all_files.append((file_path, file_name))
-        
-        total_to_process = len(all_files)
-        logger.debug(f"[Project {project_id}] Found {total_to_process} files to process")
-        
-        for idx, (file_path, file_name) in enumerate(all_files):
-            rel_path = os.path.relpath(file_path, extract_dir)
-            
-            # Update progress for each file
-            current_progress = 30 + int((idx / total_to_process) * 60)  # 30-90% range
-            progress_tracker.update(
-                task_id, 
-                progress=current_progress, 
-                step=f'Dosya işleniyor: {file_name} ({idx + 1}/{total_to_process})',
-                detail=f'İşleniyor: {rel_path}'
-            )
-            
-            if not _should_index_file(file_name, file_path, is_war=is_war):
-                skipped_files += 1
-                logger.debug(f"[Project {project_id}] Skipped non-text/binary: {rel_path}")
-                continue
-
-            # Determine language (normalized aliases)
-            language = _detect_language(file_name)
-            
-            # Read file content
-            try:
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-                    
-                # Store in database
-                file_id = db.execute_insert(
-                    '''INSERT INTO source_files 
-                    (project_id, file_path, file_name, language, content)
-                    VALUES (?, ?, ?, ?, ?)''',
-                    (project_id, rel_path, file_name, language, content)
-                )
-                processed_files += 1
-                logger.debug(f"[Project {project_id}] Processed: {rel_path} (ID: {file_id})")
-            except Exception as e:
-                skipped_files += 1
-                logger.warning(f"[Project {project_id}] Skipped {rel_path}: {str(e)}")
-                progress_tracker.update(task_id, detail=f'Atlandı (okunamadı): {rel_path}')
-                continue
-        
-        log_upload(project_id, "File processing complete", processed=processed_files, skipped=skipped_files)
-        progress_tracker.update(task_id, progress=95, step='Temizlik yapılıyor...', detail='Geçici dosyalar siliniyor')
-        
-        # Clean up zip file
-        os.remove(zip_path)
-        logger.debug(f"[Project {project_id}] Temporary ZIP removed")
-        
-        progress_tracker.complete(task_id, success=True, message=f'Tamamlandı! {processed_files} dosya işlendi, {skipped_files} atlandı')
-        logger.info(f"Upload completed: Project {project_id} | Files: {processed_files} processed, {skipped_files} skipped")
-        
-        return jsonify({
-            'project_id': project_id,
-            'task_id': task_id,
-            'name': project_name,
-            'files_processed': processed_files,
-            'files_skipped': skipped_files,
-            'message': 'Project uploaded successfully'
-        }), 201
-    
-    except Exception as e:
-        log_error(f"upload_project (task: {task_id})", e, project_name=project_name)
-        progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
-        return jsonify({'error': str(e), 'task_id': task_id}), 500
 
 @bp.route('/import-git', methods=['POST'])
 def import_git_project():
