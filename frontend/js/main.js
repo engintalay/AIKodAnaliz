@@ -1976,3 +1976,183 @@ document.addEventListener('DOMContentLoaded', () => {
         loadProjects();
     }
 });
+
+// ----------------------------------------------------
+// GELIS3: Call Graph Modal Functions
+// ----------------------------------------------------
+let cyCallGraph = null;
+
+async function showCallGraph(functionId) {
+    if (!functionId) return;
+
+    const modal = document.getElementById('callGraphModal');
+    const loading = document.getElementById('cgLoadingIndicator');
+
+    // Close the details modal to prevent overlay stacking issues
+    const detailsModal = document.getElementById('functionModal');
+    if (detailsModal) detailsModal.classList.remove('visible');
+
+    modal.classList.add('visible');
+    loading.style.display = 'block';
+
+    if (cyCallGraph) {
+        cyCallGraph.destroy();
+        cyCallGraph = null;
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/diagram/function/${functionId}/callgraph`);
+        if (!response.ok) throw new Error('Ağ bağlantı hatası veya fonksiyon bulunamadı');
+        const data = await response.json();
+
+        // Check if cytoscape is already loaded, similar to loadDiagramData()
+        if (typeof cytoscape === 'undefined') {
+            await new Promise(resolve => {
+                const interval = setInterval(() => {
+                    if (typeof cytoscape !== 'undefined') {
+                        clearInterval(interval);
+                        resolve();
+                    }
+                }, 100);
+            });
+        }
+
+        const container = document.getElementById('callGraphContainer');
+
+        cyCallGraph = cytoscape({
+            container: container,
+            elements: [
+                ...data.nodes.map(node => ({
+                    data: {
+                        id: node.id.toString(),
+                        label: node.label,
+                        title: node.title,
+                        is_target: node.is_target_node
+                    },
+                    classes: node.is_target_node ? 'target-node' : 'dependent-node'
+                })),
+                ...data.edges.map(edge => ({
+                    data: {
+                        source: edge.from.toString(),
+                        target: edge.to.toString()
+                    }
+                }))
+            ],
+            style: [
+                {
+                    selector: 'node',
+                    style: {
+                        'content': 'data(label)',
+                        'text-valign': 'center',
+                        'text-halign': 'center',
+                        'color': '#fff',
+                        'padding': '10px',
+                        'font-size': '12px',
+                        'width': '140px',
+                        'height': '60px',
+                        'text-wrap': 'wrap',
+                        'text-max-width': '130px',
+                        'border-width': '2px',
+                        'border-color': '#2c3e50'
+                    }
+                },
+                {
+                    selector: 'node.target-node',
+                    style: {
+                        'background-color': '#f39c12',
+                        'border-width': '4px',
+                        'border-color': '#d35400'
+                    }
+                },
+                {
+                    selector: 'node.dependent-node',
+                    style: {
+                        'background-color': '#3498db'
+                    }
+                },
+                {
+                    selector: 'edge',
+                    style: {
+                        'line-color': '#95a5a6',
+                        'target-arrow-color': '#95a5a6',
+                        'target-arrow-shape': 'triangle',
+                        'curve-style': 'bezier',
+                        'width': 2,
+                        'arrow-scale': 1.2
+                    }
+                }
+            ],
+            layout: {
+                name: 'cose',
+                directed: true,
+                padding: 50,
+                componentSpacing: 100,
+                nodeRepulsion: function (node) { return 2000000; }, // Massive repulsion to prevent overlaps
+                nodeOverlap: 50, // Extra padding around nodes
+                idealEdgeLength: function (edge) { return 150; }, // Longer edges
+                edgeElasticity: function (edge) { return 100; },
+                nestingFactor: 5,
+                gravity: 80, // Lower gravity so they can spread out
+                numIter: 2500, // More iterations for the engine to settle
+                initialTemp: 200,
+                coolingFactor: 0.95,
+                minTemp: 1.0,
+                animate: true
+            }
+        });
+
+        // Event handler for clicking a node in the call graph opens its details
+        cyCallGraph.on('tap', 'node', function (evt) {
+            const node = evt.target;
+            closeCallGraphModal();
+            showFunctionDetails(node.data('id'));
+        });
+
+    } catch (err) {
+        console.error('Call Graph yükleme hatası:', err);
+        showError('Hata', 'Call Graph yüklenirken bir sorun oluştu: ' + err.message);
+        closeCallGraphModal();
+    } finally {
+        loading.style.display = 'none';
+        if (cyCallGraph) {
+            setTimeout(() => cyCallGraph.fit(), 300);
+        }
+    }
+}
+
+function closeCallGraphModal() {
+    const modal = document.getElementById('callGraphModal');
+    if (modal) {
+        modal.classList.remove('visible');
+    }
+    if (cyCallGraph) {
+        cyCallGraph.destroy();
+        cyCallGraph = null;
+    }
+}
+
+function resetCallGraphZoom() {
+    if (cyCallGraph) {
+        cyCallGraph.fit();
+        cyCallGraph.center();
+    }
+}
+
+function toggleCallGraphFullscreen() {
+    const modalContent = document.querySelector('#callGraphModal .modal-content');
+    const graphContainer = document.getElementById('callGraphContainer');
+
+    if (!document.fullscreenElement) {
+        modalContent.requestFullscreen().catch(err => {
+            console.error(`Tam ekran hatası: ${err.message}`);
+        });
+        graphContainer.style.height = 'calc(100vh - 100px)';
+    } else {
+        document.exitFullscreen();
+        graphContainer.style.height = 'auto';
+    }
+
+    setTimeout(() => {
+        if (cyCallGraph) cyCallGraph.resize().fit();
+    }, 200);
+}

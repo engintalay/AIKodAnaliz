@@ -4,6 +4,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>AIKodAnaliz - Kod Analiz Aracı</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -556,8 +559,55 @@
                 <div id="searchResults" style="font-size: 11px; color: #666; margin-top: 5px; display: none;"></div>
             </div>
 
-            <div class="modal-actions" style="margin-top: 20px;">
+            <div class="modal-actions" style="margin-top: 20px; display: flex; justify-content: space-between;">
                 <button id="btnAddMark" class="btn btn-secondary" onclick="addMark()">📍 İşaret Koy</button>
+                <button id="btnShowCallGraph" class="btn btn-primary"
+                    onclick="showCallGraph(currentModalFunctionId)">🕸️ Call Graph Göster</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Call Graph Modal -->
+    <div id="callGraphModal" class="modal">
+        <div class="modal-content"
+            style="width: 95vw; height: 95vh; max-width: none; display: flex; flex-direction: column;">
+            <div class="modal-header">
+                <h3 id="callGraphModalTitle" style="margin: 0;">Fonksiyon Çağrı Ağacı</h3>
+                <div class="modal-controls">
+                    <button class="modal-btn" onclick="toggleCallGraphFullscreen()" title="Tam Ekran (F11)"
+                        id="cgFullscreenBtn">⛶</button>
+                    <span class="close" onclick="closeCallGraphModal()">&times;</span>
+                </div>
+            </div>
+
+            <!-- Container Wrapper -->
+            <div
+                style="flex: 1; position: relative; min-height: 500px; border: 1px solid #ddd; border-radius: 4px; background: #fff;">
+                <!-- Graph Container -->
+                <div id="callGraphContainer" style="width: 100%; height: 100%;"></div>
+
+                <!-- Loading Indicator -->
+                <div id="cgLoadingIndicator"
+                    style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255,255,255,0.9); padding: 10px 20px; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); z-index: 10;">
+                    Yükleniyor...
+                </div>
+            </div>
+
+            <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+                <div style="font-size: 12px; color: #666;">
+                    <span
+                        style="display: inline-block; width: 12px; height: 12px; background: #f39c12; margin-right: 5px; vertical-align: middle;"></span>
+                    Merkez Fonksiyon &nbsp;&nbsp;
+                    <span
+                        style="display: inline-block; width: 12px; height: 12px; background: #3498db; margin-right: 5px; vertical-align: middle;"></span>
+                    Bağımlı Düğüm
+                </div>
+                <div>
+                    <button class="btn btn-secondary" onclick="resetCallGraphZoom()"
+                        style="padding: 5px 10px; font-size: 12px;">Sıfırla</button>
+                    <button class="btn btn-primary" onclick="closeCallGraphModal()"
+                        style="padding: 5px 10px; font-size: 12px;">Kapat</button>
+                </div>
             </div>
         </div>
     </div>
@@ -565,8 +615,8 @@
     <!-- Load libraries before main.js -->
     <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-    <script src="/static/js/main.js?v=20260309_t"></script>
-    <script src="/static/js/admin-functions.js?v=20260309_t"></script>
+    <script src="/static/js/main.js?v=20260310_04"></script>
+    <script src="/static/js/admin-functions.js?v=20260310_01"></script>
 </body>
 
 </html>
