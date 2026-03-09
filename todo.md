@@ -2,6 +2,8 @@
 
 ## 🛠️ Düzeltmeler (DZT)
 - [✅] **DZT-1:** Genel hata düzeltmeleri - 1 
+- [✅] **DZT-2:** Kullanıcı yetkilerinin düzeltilmesi. Geliştirici rolü ve Anazlici rollerindeki kısıtların uygulanması. 
+
 
 ## ✨ Geliştirmeler (GELIS)
 - [✅] **GELIS1:** Input box'ların düzeltilmesi. Görsel olarak daha uyumlu modern bir tarza çevrilmesi.
