@@ -280,7 +280,7 @@ def get_project_users(project_id):
     """Get all users with access to a project"""
     # Get owner
     owner_result = db.execute_query(
-        'SELECT u.id, u.username, u.role, p.read_only FROM projects p JOIN users u ON p.admin_id = u.id WHERE p.id = ?',
+        'SELECT u.id, u.username, u.role FROM projects p JOIN users u ON p.admin_id = u.id WHERE p.id = ?',
         [project_id]
     )
     

@@ -161,6 +161,22 @@ def resolve_mark(mark_id):
 
 # ========== ADMIN USER MANAGEMENT ==========
 
+@bp.route('/list', methods=['GET'])
+def get_users_for_assignment():
+    """Get all active users for assignment (Developer/Admin)"""
+    try:
+        user = get_user_from_session()
+        if not user or user['role'] == 'analyzer':
+            return jsonify({'error': 'Unauthorized'}), 403
+            
+        rows = db.execute_query(
+            '''SELECT id, username, role, full_name, email 
+               FROM users WHERE is_active = 1 ORDER BY username'''
+        )
+        return jsonify([dict(row) for row in rows]), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @bp.route('/admin/all', methods=['GET'])
 @check_permission('manage_users')
 def get_all_users():

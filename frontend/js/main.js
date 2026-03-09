@@ -11,7 +11,7 @@ let cy = null;
 function showMessage(title, message, type = 'info') {
     const modal = document.getElementById('messageModal');
     const iconElement = document.getElementById('messageIcon');
-    
+
     // Set icon based on type
     const icons = {
         'error': '❌',
@@ -19,13 +19,13 @@ function showMessage(title, message, type = 'info') {
         'info': 'ℹ️',
         'warning': '⚠️'
     };
-    
+
     iconElement.textContent = icons[type] || '❌';
-    
+
     // Set content
     document.getElementById('messageTitle').textContent = title;
     document.getElementById('messageText').textContent = message;
-    
+
     // Remove old type classes and add new one
     modal.className = 'message-modal visible ' + type;
 }
@@ -96,14 +96,25 @@ async function loadProjects() {
         projects.forEach(project => {
             const card = document.createElement('div');
             card.className = 'project-card';
+
+            let actionButtons = `<button onclick="viewProject(${project.id})" class="btn btn-primary">Aç</button>`;
+
+            // Restrict Delete & Reanalyze to admin and project owners
+            const canManage = currentUser && (currentUser.role === 'admin' || project.admin_id === currentUser.id);
+
+            if (canManage) {
+                actionButtons += `
+                    <button onclick="reanalyzeProject(${project.id})" class="btn btn-secondary">🔄 Tekrar Analiz Et</button>
+                    <button onclick="deleteProject(${project.id})" class="btn btn-secondary">Sil</button>
+                `;
+            }
+
             card.innerHTML = `
                 <h3>${project.name}</h3>
                 <p>${project.description || 'Açıklama yok'}</p>
                 <small>Yüklenme: ${new Date(project.upload_date).toLocaleDateString('tr-TR')}</small>
                 <div class="project-card-actions">
-                    <button onclick="viewProject(${project.id})" class="btn btn-primary">Aç</button>
-                    <button onclick="reanalyzeProject(${project.id})" class="btn btn-secondary">🔄 Tekrar Analiz Et</button>
-                    <button onclick="deleteProject(${project.id})" class="btn btn-secondary">Sil</button>
+                    ${actionButtons}
                 </div>
             `;
             projectsList.appendChild(card);
@@ -119,11 +130,11 @@ async function viewProject(projectId) {
 
     try {
         const response = await fetch(`${API_URL}/projects/${projectId}`);
-        
+
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        
+
         const project = await response.json();
 
         document.getElementById('projectTitle').textContent = project.name;
@@ -159,12 +170,12 @@ async function deleteProject(projectId) {
 
     try {
         const response = await fetch(`${API_URL}/projects/${projectId}`, { method: 'DELETE' });
-        
+
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.error || 'Silme işlemi başarısız');
         }
-        
+
         showSuccess('Başarılı', 'Proje silindi');
         loadProjects(); // Refresh project list
     } catch (error) {
@@ -223,43 +234,43 @@ async function pollUploadProgress(taskId, projectId) {
     const progressBar = document.getElementById('uploadProgressBar');
     const progressText = document.getElementById('uploadProgressText');
     const progressDetails = document.getElementById('uploadProgressDetails');
-    
+
     const poll = async () => {
         try {
             const response = await fetch(`${API_URL}/projects/progress/${taskId}`);
-            
+
             if (!response.ok) {
                 clearInterval(uploadPolling);
                 return;
             }
-            
+
             const progress = await response.json();
-            
+
             // Update progress bar
             if (progressBar) {
                 progressBar.style.width = `${progress.progress}%`;
                 progressBar.textContent = `${progress.progress}%`;
             }
-            
+
             // Update status text
             if (progressText) {
                 progressText.textContent = progress.current_step || 'İşleniyor...';
             }
-            
+
             // Update details list
             if (progressDetails && progress.details && progress.details.length > 0) {
                 const lastDetails = progress.details.slice(-5); // Show last 5 details
-                progressDetails.innerHTML = lastDetails.map(detail => 
+                progressDetails.innerHTML = lastDetails.map(detail =>
                     `<div class="progress-detail">• ${detail.message}</div>`
                 ).join('');
                 // Auto-scroll to bottom
                 progressDetails.scrollTop = progressDetails.scrollHeight;
             }
-            
+
             // Check if completed
             if (progress.status === 'completed') {
                 clearInterval(uploadPolling);
-                
+
                 // Start analysis with its own progress task
                 progressText.textContent = 'Kod analizi başlatılıyor...';
                 startAnalysisWithProgress(projectId);
@@ -272,7 +283,7 @@ async function pollUploadProgress(taskId, projectId) {
             console.error('Progress polling error:', error);
         }
     };
-    
+
     // Poll every 1500ms to reduce backend load
     uploadPolling = setInterval(poll, 1500);
     poll(); // Initial call
@@ -369,7 +380,7 @@ async function reanalyzeProject(projectId) {
         );
 
         document.getElementById('uploadProgress').style.display = 'none';
-        
+
         // Reload current project if it's being viewed
         if (currentProjectId === projectId) {
             viewProject(projectId);
@@ -496,13 +507,13 @@ document.getElementById('uploadForm')?.addEventListener('submit', async (e) => {
         // Show progress UI
         const progressSection = document.getElementById('uploadProgress');
         progressSection.style.display = 'block';
-        
+
         const progressBar = document.getElementById('uploadProgressBar');
         const progressText = document.getElementById('uploadProgressText');
         const progressDetails = document.getElementById('uploadProgressDetails');
         const progressTitle = document.querySelector('#uploadProgress h3');
         if (progressTitle) progressTitle.textContent = 'Yükleme İlerlemesi';
-        
+
         if (progressBar) {
             progressBar.style.width = '0%';
             progressBar.textContent = '0%';
@@ -549,13 +560,13 @@ document.getElementById('gitImportForm')?.addEventListener('submit', async (e) =
         // Show progress UI
         const progressSection = document.getElementById('uploadProgress');
         progressSection.style.display = 'block';
-        
+
         const progressBar = document.getElementById('uploadProgressBar');
         const progressText = document.getElementById('uploadProgressText');
         const progressDetails = document.getElementById('uploadProgressDetails');
         const progressTitle = document.querySelector('#uploadProgress h3');
         if (progressTitle) progressTitle.textContent = 'Git Clone ve Analiz İlerlemesi';
-        
+
         if (progressBar) {
             progressBar.style.width = '0%';
             progressBar.textContent = '0%';
@@ -703,26 +714,26 @@ async function loadDiagramData() {
         cy.on('tap', 'node', function (evt) {
             const node = evt.target;
             showFunctionDetails(node.data('id'));
-        
-                // Display entry points legend
-                if (data.entry_points && data.entry_points.length > 0) {
-                    const legendDiv = document.getElementById('diagramLegend');
-                    const entryPointsList = document.getElementById('entryPointsList');
-            
-                    // Get entry point names from nodes
-                    const entryPointNames = data.nodes
-                        .filter(node => data.entry_points.includes(node.id))
-                        .map(node => node.label);
-            
-                    if (entryPointNames.length > 0) {
-                        entryPointsList.innerHTML = entryPointNames
-                            .map(name => `<div style="padding: 4px 8px; background: white; margin: 2px 0; border-left: 3px solid #27ae60; border-radius: 2px;">🟢 ${name}</div>`)
-                            .join('');
-                        legendDiv.style.display = 'block';
-                    }
-                } else {
-                    document.getElementById('diagramLegend').style.display = 'none';
+
+            // Display entry points legend
+            if (data.entry_points && data.entry_points.length > 0) {
+                const legendDiv = document.getElementById('diagramLegend');
+                const entryPointsList = document.getElementById('entryPointsList');
+
+                // Get entry point names from nodes
+                const entryPointNames = data.nodes
+                    .filter(node => data.entry_points.includes(node.id))
+                    .map(node => node.label);
+
+                if (entryPointNames.length > 0) {
+                    entryPointsList.innerHTML = entryPointNames
+                        .map(name => `<div style="padding: 4px 8px; background: white; margin: 2px 0; border-left: 3px solid #27ae60; border-radius: 2px;">🟢 ${name}</div>`)
+                        .join('');
+                    legendDiv.style.display = 'block';
                 }
+            } else {
+                document.getElementById('diagramLegend').style.display = 'none';
+            }
         });
 
     } catch (error) {
@@ -761,23 +772,23 @@ async function exportDiagram() {
 async function loadFunctions() {
     try {
         console.log('loadFunctions started. currentProjectId:', currentProjectId, 'API_URL:', API_URL);
-        
+
         if (!currentProjectId) {
             console.error('loadFunctions: currentProjectId is null!');
             showError('Hata', 'Proje seçilmedi. Lütfen bir proje açınız.');
             return;
         }
-        
+
         const url = `${API_URL}/analysis/project/${currentProjectId}/functions`;
         console.log('Fetching from URL:', url);
-        
+
         const response = await fetch(url);
         console.log('Response status:', response.status, 'ok:', response.ok);
-        
+
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        
+
         const functions = await response.json();
         console.log('Functions loaded, count:', functions.length);
 
@@ -840,7 +851,7 @@ async function loadFunctions() {
                     const isHidden = clsContent.style.display === 'none';
                     clsContent.style.display = isHidden ? 'block' : 'none';
                     clsHeader.innerHTML = `<span style="margin-right: 5px;">${isHidden ? '▼' : '▶'}</span> 🏷️ ${clsName}`;
-                    
+
                     // Lazy-load dependencies when class opens
                     if (isHidden) {
                         setTimeout(() => populateDependencies(clsContent), 0);
@@ -857,12 +868,12 @@ async function loadFunctions() {
                     const item = document.createElement('div');
                     item.className = 'function-item searchable-item';
                     item.dataset.search = `${func.function_name} ${func.ai_summary || ''}`.toLowerCase();
-                    
+
                     // Store dependencies as data attributes (lazy-load on accordion open)
                     item.dataset.funcId = func.id;
                     item.dataset.called = JSON.stringify(called);
                     item.dataset.calledBy = JSON.stringify(calledBy);
-                    
+
                     // Minimal HTML - dependencies lazy-loaded when class opens
                     item.innerHTML = `
                         <h5>${func.function_name} <small>(${func.function_type})</small></h5>
@@ -897,19 +908,19 @@ let currentModalFunctionId = null;
 async function showFunctionDetails(functionId) {
     // Hide error state when loading new function
     document.getElementById('funcModalError').style.display = 'none';
-    
+
     try {
         currentModalFunctionId = functionId;
         const response = await fetch(`${API_URL}/analysis/function/${functionId}`, {
             signal: AbortSignal.timeout(15000) // 15 second timeout
         });
-        
+
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        
+
         let func = await response.json();
-        
+
         // Validate response data
         if (!func || typeof func !== 'object') {
             throw new Error('Geçersiz sunucu yanıtı (invalid JSON)');
@@ -955,11 +966,23 @@ async function showFunctionDetails(functionId) {
         `;
 
         // Update Text Areas
-        document.getElementById('funcModalSummary').value = func.ai_summary || '';
+        const summaryTextarea = document.getElementById('funcModalSummary');
+        summaryTextarea.value = func.ai_summary || '';
         document.getElementById('funcModalSource').textContent = func.source_code || 'Kaynak kod yok.';
 
+        // Apply role constraints: Analyzer cannot edit or generate AI summaries
+        const canEdit = currentUser && currentUser.role !== 'analyzer';
+        summaryTextarea.readOnly = !canEdit;
+        const saveBtn = document.getElementById('btnSaveSummary');
+        const aiBtn = document.getElementById('btnGenerateAI');
+        const addMarkBtn = document.getElementById('btnAddMark');
+
+        if (saveBtn) saveBtn.style.display = canEdit ? 'inline-block' : 'none';
+        if (aiBtn) aiBtn.style.display = canEdit ? 'inline-block' : 'none';
+        if (addMarkBtn) addMarkBtn.style.display = canEdit ? 'inline-block' : 'none';
+
         modal.classList.add('visible');
-        
+
         // Show copy button if there's source code
         const copyBtn = document.getElementById('copyCodeBtn');
         if (copyBtn && func.source_code && func.source_code.trim() !== 'Kaynak kod yok.') {
@@ -988,9 +1011,9 @@ async function showFunctionDetails(functionId) {
         // User-friendly error handling
         const errorDiv = document.getElementById('funcModalError');
         const errorMsg = document.getElementById('funcModalErrorMessage');
-        
+
         let userMessage = 'Bilinmeyen bir hata oluştu.';
-        
+
         // Detect error type
         if (error.name === 'AbortError') {
             userMessage = 'İstek zaman aşımına uğradı. Fonksiyon çok uzun yanıt vermiş olabilir.';
@@ -1005,18 +1028,18 @@ async function showFunctionDetails(functionId) {
         } else {
             userMessage = 'Hata: ' + error.message;
         }
-        
+
         errorMsg.textContent = userMessage;
         errorDiv.style.display = 'block';
-        
+
         // Show modal with error state
         const modal = document.getElementById('functionModal');
         modal.classList.add('visible');
-        
+
         // Hide copy button on error
         const copyBtn = document.getElementById('copyCodeBtn');
         if (copyBtn) copyBtn.style.display = 'none';
-        
+
         console.error('Fonksiyon detayları yükleme hatası:', error);
     }
 }
@@ -1035,9 +1058,9 @@ function copyFunctionCode() {
         showError('Hata', 'Kopyalanacak kod bulunamadı');
         return;
     }
-    
+
     const code = codeElement.textContent;
-    
+
     // Try modern Clipboard API first
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(code).then(() => {
@@ -1062,7 +1085,7 @@ function fallbackCopyToClipboard(text) {
     textarea.value = text;
     document.body.appendChild(textarea);
     textarea.select();
-    
+
     try {
         document.execCommand('copy');
         const btn = document.getElementById('copyCodeBtn');
@@ -1106,18 +1129,18 @@ async function generateAISummary() {
 
     const summaryArea = document.getElementById('funcModalSummary');
     const oldText = summaryArea.value;
-    
+
     // Show progress UI
     const progressDiv = document.getElementById('uploadProgress');
     const progressBar = document.getElementById('uploadProgressBar');
     const progressText = document.getElementById('uploadProgressText');
     const progressDetails = document.getElementById('uploadProgressDetails');
     const progressTitle = document.querySelector('#uploadProgress h3');
-    
+
     if (progressTitle) {
         progressTitle.textContent = 'AI Özeti Üretiliyor';
     }
-    
+
     progressDiv.style.display = 'block';
     if (progressBar) {
         progressBar.style.width = '0%';
@@ -1129,7 +1152,7 @@ async function generateAISummary() {
     if (progressDetails) {
         progressDetails.innerHTML = '<div class="progress-detail">• LMStudio bağlantısı kontrol ediliyor...</div>';
     }
-    
+
     summaryArea.value = "AI Yükleniyor... Lütfen bekleyin...";
     summaryArea.disabled = true;
 
@@ -1137,7 +1160,7 @@ async function generateAISummary() {
     const aiTaskId = (window.crypto && window.crypto.randomUUID)
         ? window.crypto.randomUUID()
         : `ai-summary-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-    
+
     // Start polling progress
     const poll = async () => {
         try {
@@ -1170,7 +1193,7 @@ async function generateAISummary() {
             console.error('AI progress polling error:', error);
         }
     };
-    
+
     let aiPolling = setInterval(poll, 1500);  // Poll every 1500ms
     poll();  // Initial poll
 
@@ -1179,21 +1202,21 @@ async function generateAISummary() {
             method: 'POST'
         });
         const aiResult = await aiResponse.json();
-        
+
         clearInterval(aiPolling);
 
         if (aiResponse.ok) {
             summaryArea.value = aiResult.summary;
-            
+
             if (progressText) {
                 progressText.textContent = '✓ AI özeti başarıyla oluşturuldu!';
             }
-            
+
             // Hide progress after 2 seconds
             setTimeout(() => {
                 progressDiv.style.display = 'none';
             }, 2000);
-            
+
             loadFunctions(); // optionally refresh list in background
         } else {
             summaryArea.value = oldText;
@@ -1228,30 +1251,30 @@ function searchInSourceCode() {
     const searchTerm = document.getElementById('sourceCodeSearch').value.trim();
     const sourceCodeElement = document.getElementById('funcModalSource');
     const resultsDiv = document.getElementById('searchResults');
-    
+
     if (!searchTerm) {
         clearSourceCodeSearch();
         return;
     }
-    
+
     // Get original source code (from stored data or current text)
     let sourceCode = sourceCodeElement.dataset.originalSource || sourceCodeElement.textContent;
-    
+
     // Store original if not already stored
     if (!sourceCodeElement.dataset.originalSource) {
         sourceCodeElement.dataset.originalSource = sourceCode;
     }
-    
+
     // Case-insensitive search with highlights
     const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
     const matches = sourceCode.match(regex);
     const matchCount = matches ? matches.length : 0;
-    
+
     if (matchCount > 0) {
         // Highlight matches
         const highlightedCode = sourceCode.replace(regex, '<mark style="background-color: #ffeb3b; color: #000; padding: 2px 0;">$1</mark>');
         sourceCodeElement.innerHTML = highlightedCode;
-        
+
         // Show results
         resultsDiv.textContent = `${matchCount} eşleşme bulundu`;
         resultsDiv.style.display = 'block';
@@ -1269,17 +1292,17 @@ function clearSourceCodeSearch() {
     const searchInput = document.getElementById('sourceCodeSearch');
     const sourceCodeElement = document.getElementById('funcModalSource');
     const resultsDiv = document.getElementById('searchResults');
-    
+
     // Clear input
     if (searchInput) {
         searchInput.value = '';
     }
-    
+
     // Restore original source code
     if (sourceCodeElement && sourceCodeElement.dataset.originalSource) {
         sourceCodeElement.textContent = sourceCodeElement.dataset.originalSource;
     }
-    
+
     // Hide results
     if (resultsDiv) {
         resultsDiv.style.display = 'none';
@@ -1290,7 +1313,7 @@ function toggleFullscreenModal() {
     const modal = document.getElementById('functionModal');
     const content = modal.querySelector('.modal-content');
     const btn = document.getElementById('fullscreenBtn');
-    
+
     content.classList.toggle('fullscreen');
     btn.textContent = content.classList.contains('fullscreen') ? '✕' : '⛶';
     btn.title = content.classList.contains('fullscreen') ? 'Normal Görünüm (F11)' : 'Tam Ekran (F11)';
@@ -1301,23 +1324,23 @@ function populateDependencies(classContent) {
     classContent.querySelectorAll('.function-deps[data-deps-loaded="false"]').forEach(depsDiv => {
         const item = depsDiv.closest('.function-item');
         if (!item) return;
-        
+
         const called = JSON.parse(item.dataset.called || '[]');
         const calledBy = JSON.parse(item.dataset.calledBy || '[]');
-        
+
         const calledHtml = called.length > 0
             ? called.map(c => `<span class="dep-chip" data-func-id="${c.id}" style="cursor: pointer;">${c.function_name}</span>`).join(' ')
             : '<span class="dep-empty">Yok</span>';
-        
+
         const calledByHtml = calledBy.length > 0
             ? calledBy.map(c => `<span class="dep-chip dep-chip-caller" data-func-id="${c.id}" style="cursor: pointer;">${c.function_name}</span>`).join(' ')
             : '<span class="dep-empty">Yok</span>';
-        
+
         // Update HTML with dependency chips
         const divs = depsDiv.querySelectorAll('div');
         if (divs[0]) divs[0].innerHTML = `<strong>Çağırdığı Fonksiyonlar:</strong> ${calledHtml}`;
         if (divs[1]) divs[1].innerHTML = `<strong>Bunu Çağıran Fonksiyonlar:</strong> ${calledByHtml}`;
-        
+
         // Attach click handlers to newly created chips
         depsDiv.querySelectorAll('.dep-chip[data-func-id]').forEach(chip => {
             chip.onclick = (e) => {
@@ -1331,7 +1354,7 @@ function populateDependencies(classContent) {
             chip.onmouseover = () => chip.style.opacity = '0.7';
             chip.onmouseout = () => chip.style.opacity = '1';
         });
-        
+
         depsDiv.setAttribute('data-deps-loaded', 'true');
     });
 }
@@ -1494,7 +1517,7 @@ async function loadSettings() {
                 if (tempValue) tempValue.textContent = settings.temperature;
             }
         }
-        
+
         if (settings.top_p !== undefined) {
             const topPInput = document.getElementById('topP');
             if (topPInput) {
@@ -1503,21 +1526,21 @@ async function loadSettings() {
                 if (topPValue) topPValue.textContent = settings.top_p;
             }
         }
-        
+
         if (settings.max_tokens !== undefined) {
             const maxTokensInput = document.getElementById('maxTokens');
             if (maxTokensInput) {
                 maxTokensInput.value = settings.max_tokens;
             }
         }
-        
+
         if (settings.timeout !== undefined) {
             const timeoutInput = document.getElementById('timeout');
             if (timeoutInput) {
                 timeoutInput.value = settings.timeout;
             }
         }
-        
+
         if (settings.frequency_penalty !== undefined) {
             const freqInput = document.getElementById('frequencyPenalty');
             if (freqInput) {
@@ -1526,7 +1549,7 @@ async function loadSettings() {
                 if (freqValue) freqValue.textContent = settings.frequency_penalty;
             }
         }
-        
+
         if (settings.presence_penalty !== undefined) {
             const presInput = document.getElementById('presencePenalty');
             if (presInput) {
@@ -1535,14 +1558,14 @@ async function loadSettings() {
                 if (presValue) presValue.textContent = settings.presence_penalty;
             }
         }
-        
+
         if (settings.retry_count !== undefined) {
             const retryInput = document.getElementById('retryCount');
             if (retryInput) {
                 retryInput.value = settings.retry_count;
             }
         }
-        
+
         console.log('Settings loaded from database:', settings);
     } catch (error) {
         console.error('Ayarlar yükleme hatası:', error);
@@ -1583,7 +1606,7 @@ async function saveLMSettings() {
             const errData = await userSettingsResponse.json().catch(() => ({}));
             throw new Error(errData.error || 'Failed to save user AI server URL');
         }
-        
+
         for (const [key, setting] of Object.entries(settings)) {
             const response = await fetch(`${API_URL}/ai-settings/${key}`, {
                 method: 'PUT',
@@ -1593,14 +1616,14 @@ async function saveLMSettings() {
                     type: setting.type
                 })
             });
-            
+
             if (!response.ok) {
                 throw new Error(`Failed to save ${key}: ${response.statusText}`);
             }
-            
+
             console.log(`Setting ${key} saved successfully`);
         }
-        
+
         showSuccess('Başarılı', 'Ayarlar kaydedildi ve sisteme uygulandı');
     } catch (error) {
         console.error('Ayarlar Kaydetme Hatası:', error);
@@ -1726,22 +1749,26 @@ function checkSession() {
         if (navbar) navbar.style.display = 'flex';
         if (mainContent) mainContent.style.display = 'block';
         document.getElementById('userInfo').textContent = `👤 ${currentUser.username} (${currentUser.role})`;
-        
+
         // Show admin/developer links based on role
         const adminLink = document.getElementById('adminLink');
         const permissionsLink = document.getElementById('permissionsLink');
-        
+        const uploadLink = document.getElementById('uploadLink');
+
         if (currentUser.role === 'admin') {
             if (adminLink) adminLink.style.display = 'inline-block';
             if (permissionsLink) permissionsLink.style.display = 'inline-block';
+            if (uploadLink) uploadLink.style.display = 'inline-block';
         } else if (currentUser.role === 'developer') {
             if (adminLink) adminLink.style.display = 'none';
             if (permissionsLink) permissionsLink.style.display = 'inline-block';
+            if (uploadLink) uploadLink.style.display = 'inline-block';
         } else {
             if (adminLink) adminLink.style.display = 'none';
             if (permissionsLink) permissionsLink.style.display = 'none';
+            if (uploadLink) uploadLink.style.display = 'none';
         }
-        
+
         return true;
     } else {
         // Show login, hide main UI
@@ -1821,31 +1848,31 @@ async function fetchGitInfo() {
     const branchSelect = document.getElementById('gitBranch');
     const nameInput = document.getElementById('gitProjectName');
     const loader = document.getElementById('gitUrlLoader');
-    
+
     const url = urlInput.value.trim();
-    
+
     if (!url) {
         return;
     }
-    
+
     // Show loader
     loader.style.display = 'block';
     branchSelect.innerHTML = '<option value="">Branch seçin...</option>';
     branchSelect.disabled = true;
-    
+
     try {
         const response = await fetch(`${API_URL}/projects/git-info`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url })
         });
-        
+
         if (!response.ok) {
             throw new Error('Repository bilgileri alınamadı');
         }
-        
+
         const data = await response.json();
-        
+
         // Populate branch dropdown
         branchSelect.innerHTML = '';
         data.branches.forEach(branch => {
@@ -1858,17 +1885,17 @@ async function fetchGitInfo() {
             branchSelect.appendChild(option);
         });
         branchSelect.disabled = false;
-        
+
         // Auto-fill project name if empty
         if (!nameInput.value && data.repo_name) {
             nameInput.value = data.repo_name;
         }
-        
+
         // Show warning if any
         if (data.warning) {
             console.warn('Git info warning:', data.warning);
         }
-        
+
     } catch (error) {
         console.error('Git info fetch error:', error);
         // Fallback to default branches
@@ -1889,7 +1916,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (loginForm) {
         loginForm.addEventListener('submit', handleLogin);
     }
-    
+
     // Setup Git URL autocomplete
     const gitUrlInput = document.getElementById('gitRepoUrl');
     if (gitUrlInput) {
@@ -1905,7 +1932,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }, 1000); // Wait 1 second after user stops typing
         });
-        
+
         // Also fetch on blur
         gitUrlInput.addEventListener('blur', () => {
             const url = gitUrlInput.value.trim();
@@ -1924,7 +1951,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 closeFunctionModal();
                 return;
             }
-            
+
             // Close message modal if visible
             const messageModal = document.getElementById('messageModal');
             if (messageModal && messageModal.classList.contains('visible')) {

@@ -9,6 +9,7 @@ from config.config import UPLOAD_DIR
 import uuid
 import subprocess
 import shutil
+from backend.permission_manager import check_permission, check_project_access, get_user_from_session, get_user_projects
 
 bp = Blueprint('project', __name__, url_prefix='/api/projects')
 
@@ -42,15 +43,19 @@ SKIP_BINARY_EXTENSIONS = {
 
 @bp.route('/', methods=['GET'])
 def list_projects():
-    """List all projects"""
+    """List all projects user has access to"""
     try:
-        rows = db.execute_query('SELECT id, name, description, upload_date, last_updated FROM projects')
-        projects = [dict(row) for row in rows]
-        return jsonify(projects), 200
+        user = get_user_from_session()
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+            
+        projects = get_user_projects(user['id'])
+        return jsonify([dict(row) for row in projects]), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/<int:project_id>', methods=['GET'])
+@check_project_access('read')
 def get_project(project_id):
     """Get project details"""
     try:
@@ -130,6 +135,7 @@ def _should_index_file(file_name, file_path, is_war=False):
     return True
 
 @bp.route('/upload', methods=['POST'])
+@check_permission('create_project')
 def upload_project():
     """Upload and analyze project"""
     if 'file' not in request.files:
@@ -156,9 +162,10 @@ def upload_project():
         progress_tracker.update(task_id, progress=5, step='Proje kaydı oluşturuluyor...', detail='Veritabanına proje kaydediliyor')
 
         # Create project record
+        user = get_user_from_session()
         project_id = db.execute_insert(
             'INSERT INTO projects (name, description, admin_id) VALUES (?, ?, ?)',
-            (project_name, project_desc, 1)  # TODO: Get actual user ID
+            (project_name, project_desc, user['id'])
         )
 
         log_upload(project_id, "Project record created", task_id=task_id, name=project_name)
@@ -358,6 +365,7 @@ def get_git_info():
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/import-git', methods=['POST'])
+@check_permission('create_project')
 def import_git_project():
     """Clone and analyze project from Git repository"""
     data = request.get_json()
@@ -378,9 +386,10 @@ def import_git_project():
         progress_tracker.update(task_id, progress=5, step='Proje kaydı oluşturuluyor...', detail='Veritabanına proje kaydediliyor')
         
         # Create project record
+        user = get_user_from_session()
         project_id = db.execute_insert(
             'INSERT INTO projects (name, description, admin_id) VALUES (?, ?, ?)',
-            (project_name, project_desc, 1)
+            (project_name, project_desc, user['id'])
         )
         
         log_upload(project_id, "Project record created (Git)", task_id=task_id, name=project_name, url=repo_url)
@@ -510,6 +519,7 @@ def import_git_project():
         return jsonify({'error': str(e), 'task_id': task_id}), 500
 
 @bp.route('/<int:project_id>/files', methods=['GET'])
+@check_project_access('read')
 def get_project_files(project_id):
     """Get all source files in project"""
     try:
@@ -523,6 +533,7 @@ def get_project_files(project_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/<int:project_id>', methods=['DELETE'])
+@check_project_access('write')
 def delete_project(project_id):
     """Delete project and all related data"""
     try:

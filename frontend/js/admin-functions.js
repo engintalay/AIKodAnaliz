@@ -488,10 +488,13 @@ function renderReport(reportData, errorData) {
     const missingFunctionsTotal = missingTargets.reduce((sum, t) => sum + t.missingCount, 0);
 
     const stats = reportData.statistics;
+    const canAnalyze = currentUser && (currentUser.role === 'admin' || currentUser.role === 'developer');
+
     let html = `
         <div style="background: white; padding: 20px; border-radius: 4px; margin-bottom: 20px;">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
                 <h3 style="margin:0;">📊 Genel İstatistikler</h3>
+                ${canAnalyze ? `
                 <button
                     class="btn btn-sm"
                     onclick="analyzeAllMissingFiles()"
@@ -499,6 +502,7 @@ function renderReport(reportData, errorData) {
                     style="background:${missingFilesCount === 0 ? '#bdc3c7' : '#16a085'}; color:white; border:none; border-radius:4px; padding:8px 12px; cursor:${missingFilesCount === 0 ? 'not-allowed' : 'pointer'};">
                     🤖 Analiz Edilmeyen Tum Dosyalari Analiz Et (${missingFilesCount})
                 </button>
+                ` : ''}
             </div>
             <div style="font-size:13px; color:#7f8c8d; margin-bottom:10px;">
                 Bekleyen dosya: <strong>${missingFilesCount}</strong> | Bekleyen fonksiyon: <strong>${missingFunctionsTotal}</strong>
@@ -529,10 +533,12 @@ function renderReport(reportData, errorData) {
         <div style="background: #fff8f8; padding: 16px; border-radius: 6px; margin-bottom: 18px; border: 1px solid #ffd9d9;">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
                 <h3 style="margin:0; color:#c0392b;">🚨 Error: Özetleri</h3>
+                ${canAnalyze ? `
                 <div style="display:flex; gap:8px;">
                     <button class="btn btn-sm" onclick="reanalyzeAllErrorSummaries()" style="background:#3498db; color:white; border:none; border-radius:4px; padding:6px 10px; cursor:pointer;">🤖 Tümünü Tekrar Analiz Et</button>
                     <button class="btn btn-sm" onclick="clearAllErrorSummaries()" style="background:#e67e22; color:white; border:none; border-radius:4px; padding:6px 10px; cursor:pointer;">🧹 Tüm Error Özetlerini Temizle</button>
                 </div>
+                ` : ''}
             </div>
             <div style="font-size:13px; color:#7f8c8d; margin-bottom:8px;">Toplam Error özeti: <strong>${errorItems.length}</strong></div>
             ${errorItems.length === 0 ? `
@@ -546,10 +552,12 @@ function renderReport(reportData, errorData) {
                                     <strong>${item.qualified_name}</strong>
                                     <div style="font-size:12px; color:#7f8c8d;">${item.project_name || '-'} • ${item.file_path || '-'}</div>
                                 </div>
+                                ${canAnalyze ? `
                                 <div style="display:flex; gap:6px;">
                                     <button onclick="reanalyzeErrorSummary(${item.function_id})" style="background:#3498db; color:white; border:none; border-radius:3px; padding:4px 8px; cursor:pointer;">🤖 Tekrar AI Analiz</button>
                                     <button onclick="clearErrorSummary(${item.function_id})" style="background:#e67e22; color:white; border:none; border-radius:3px; padding:4px 8px; cursor:pointer;">🧹 Temizle</button>
                                 </div>
+                                ` : ''}
                             </div>
                             <div style="font-size:12px; color:#c0392b; margin-top:6px; white-space:pre-wrap;">${(item.ai_summary || '').slice(0, 260)}</div>
                         </div>
@@ -596,12 +604,12 @@ function renderReport(reportData, errorData) {
                                     </div>
                                 </div>
                                 <div style="margin-left: 10px; display: flex; gap: 5px;">
-                                    ${coverage < 100 ? `
+                                    ${coverage < 100 ? (canAnalyze ? `
                                         <button class="btn btn-sm" onclick="analyzeMissingFunctions(${project.id}, '${fileName}', ${fileData.file_id})" 
                                                 style="padding: 6px 12px; background: #3498db; color: white; border: none; border-radius: 3px; cursor: pointer;">
                                             🤖 Analiz Et (${fileData.missing_functions ? fileData.missing_functions.length : 0})
                                         </button>
-                                    ` : `
+                                    ` : `<span style="color: #7f8c8d; font-weight: bold;">Eksik Özetler Var</span>`) : `
                                         <span style="color: #27ae60; font-weight: bold;">✅ Tamamlandı</span>
                                     `}
                                     <button class="btn btn-sm" onclick="toggleFileDetails(this, ${fileData.file_id})" 
@@ -620,10 +628,12 @@ function renderReport(reportData, errorData) {
                                             <li style="margin: 5px 0;">
                                                 <span style="color: #e74c3c;">❌</span> 
                                                 <strong>${f.qualified_name}</strong> (${f.type})
+                                                ${canAnalyze ? `
                                                 <button onclick="analyzeSingleFunction(${f.function_id})" 
                                                         style="margin-left: 10px; padding: 2px 6px; background: #3498db; color: white; border: none; border-radius: 2px; cursor: pointer; font-size: 11px;">
                                                     🤖 Analiz
                                                 </button>
+                                                ` : ''}
                                             </li>
                                         `).join('')}
                                     </ul>
@@ -904,47 +914,65 @@ function loadProjectPermissions() {
         return;
     }
 
-    // Load project users
+    // First load project users (assigned users)
     fetch(`${API_URL}/users/projects/${projectId}/permissions`)
-        .then(response => response.json())
-        .then(users => {
-            renderProjectUsers(users);
+        .then(response => response.json().then(data => ({ status: response.status, ok: response.ok, body: data })))
+        .then(result => {
+            if (!result.ok) {
+                renderProjectUsers({ error: result.body.error || 'Bu projenin izinlerini görme yetkiniz yok.' });
+                document.getElementById('userSelectForPermission').innerHTML = '<option value="">Yetki yok...</option>';
+                return;
+            }
+
+            const assignedUsers = Array.isArray(result.body) ? result.body : [];
+            renderProjectUsers(assignedUsers);
+
+            // Now load available users for dropdown safely
+            loadAvailableUsersForProjectRole(assignedUsers);
         })
         .catch(err => showError('Hata', `Kullanıcılar yüklenirken hata: ${err}`));
 
-    // Load available users
-    fetch(`${API_URL}/users/admin/all`)
-        .then(response => response.json())
+    document.getElementById('permissionsContent').style.display = 'block';
+}
+
+function loadAvailableUsersForProjectRole(assignedUsers) {
+    fetch(`${API_URL}/users/list`)
+        .then(response => {
+            if (!response.ok) return null;
+            return response.json();
+        })
         .then(allUsers => {
-            const currentUsers = new Set();
             const userSelect = document.getElementById('userSelectForPermission');
+            if (!allUsers) {
+                userSelect.innerHTML = '<option value="">Kullanıcılar alınamadı...</option>';
+                return;
+            }
 
-            // Get currently assigned users
-            fetch(`${API_URL}/users/projects/${projectId}/permissions`)
-                .then(r => r.json())
-                .then(assigned => {
-                    assigned.forEach(u => currentUsers.add(u.id));
+            const currentUsers = new Set();
+            assignedUsers.forEach(u => currentUsers.add(u.id));
 
-                    userSelect.innerHTML = '<option value="">Kullanıcı seçin...</option>';
-                    allUsers.forEach(user => {
-                        if (!currentUsers.has(user.id)) {
-                            const option = document.createElement('option');
-                            option.value = user.id;
-                            option.textContent = `${user.username} (${user.role})`;
-                            userSelect.appendChild(option);
-                        }
-                    });
-                });
+            userSelect.innerHTML = '<option value="">Kullanıcı seçin...</option>';
+            allUsers.forEach(user => {
+                if (!currentUsers.has(user.id)) {
+                    const option = document.createElement('option');
+                    option.value = user.id;
+                    option.textContent = `${user.username} (${user.role})`;
+                    userSelect.appendChild(option);
+                }
+            });
         })
         .catch(err => console.error('Hata:', err));
-
-    document.getElementById('permissionsContent').style.display = 'block';
 }
 
 function renderProjectUsers(users) {
     const container = document.getElementById('projectUsersList');
 
-    if (users.length === 0) {
+    if (users && users.error) {
+        container.innerHTML = `<p style="text-align: center; color: #e74c3c;">${users.error}</p>`;
+        return;
+    }
+
+    if (!Array.isArray(users) || users.length === 0) {
         container.innerHTML = '<p style="text-align: center; color: #999;">Bu projeye erişim hakkı olan kimse yok</p>';
         return;
     }
