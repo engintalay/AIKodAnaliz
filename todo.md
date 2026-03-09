@@ -23,4 +23,4 @@
 - [❌] **GELIS4:** RAG index yapısı hazırlama
 - [❌] **GELIS5:** Proje açılınca detayları gösterilsin. Açıklama alanı güncellenbilsin. Proje bazında eksik rapor var ise topluca düzenlenebilsin. 
 - [❌] **GELIS6:** Mevcut uygulama logunun dışında sunucu tarafında detaylı bir log dosyası tut her kullanıcı ne yapmış bileyim. Audit log gibi
-- [❌] **GELIS7:** sadece kod alanını genişletme seçenği olsun.
+- [✅] **GELIS7:** sadece kod alanını genişletme seçenği olsun.
