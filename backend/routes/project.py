@@ -4,7 +4,7 @@ import zipfile
 from datetime import datetime
 from backend.database import db
 from backend.progress_tracker import progress_tracker
-from backend.logger import logger, log_upload, log_error
+from backend.logger import logger, log_upload, log_error, log_audit
 from config.config import UPLOAD_DIR
 import uuid
 import subprocess
@@ -62,8 +62,40 @@ def get_project(project_id):
         row = db.execute_query('SELECT * FROM projects WHERE id = ?', (project_id,))
         if not row:
             return jsonify({'error': 'Project not found'}), 404
+        user = get_user_from_session()
+        log_audit(user, 'project_view', 'project', project_id, request=request)
         return jsonify(dict(row[0])), 200
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@bp.route('/<int:project_id>', methods=['PUT'])
+@check_project_access('write')
+def update_project(project_id):
+    """Update project details (like description)"""
+    try:
+        data = request.json
+        if not data or 'description' not in data:
+            return jsonify({'error': 'Description is required'}), 400
+            
+        description = data['description']
+        
+        db.execute_update(
+            'UPDATE projects SET description = ? WHERE id = ?',
+            (description, project_id)
+        )
+        
+        # Fetch updated record
+        row = db.execute_query('SELECT * FROM projects WHERE id = ?', (project_id,))
+        if not row:
+            return jsonify({'error': 'Project not found after update'}), 404
+            
+        logger.info(f"Updated project description for project_id={project_id}")
+        user = get_user_from_session()
+        log_audit(user, 'project_update', 'project', project_id, details=f'description updated', request=request)
+        return jsonify(dict(row[0])), 200
+        
+    except Exception as e:
+        logger.error(f"Error updating project: {e}")
         return jsonify({'error': str(e)}), 500
 
 def _extract_nested_jars(extract_dir, logger):
@@ -569,6 +601,8 @@ def delete_project(project_id):
             shutil.rmtree(git_dir, ignore_errors=True)
         
         logger.info(f"Project {project_id} deleted successfully")
+        user = get_user_from_session()
+        log_audit(user, 'project_delete', 'project', project_id, request=request)
         return jsonify({'message': 'Project deleted'}), 200
     except Exception as e:
         logger.error(f"Error deleting project {project_id}: {e}")

@@ -3,7 +3,7 @@ from backend.database import db
 from backend.analyzers.advanced_analyzer import AdvancedCodeAnalyzer
 from backend.lmstudio_client import LMStudioClient
 from backend.progress_tracker import progress_tracker
-from backend.logger import logger, log_analysis, log_ai_call, log_error
+from backend.logger import logger, log_analysis, log_ai_call, log_error, log_audit
 from backend.permission_manager import get_user_from_session
 import json
 import uuid
@@ -834,6 +834,7 @@ def get_ai_summary(function_id):
                 message=f'AI özeti başarıyla oluşturuldu: {func_name}'
             )
         
+        log_audit(user, 'ai_summary_generated', 'function', function_id, details=func_name, request=request)
         return jsonify({
             'function_id': function_id,
             'function_name': func_name,
@@ -844,6 +845,131 @@ def get_ai_summary(function_id):
         log_error(f"get_ai_summary (function: {function_id})", e)
         if task_id:
             progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
+        return jsonify({'error': str(e)}), 500
+
+def _bulk_generate_worker(project_id, task_id, client, temperature, top_p, max_tokens):
+    """Background worker for generating AI summaries for all missing functions."""
+    try:
+        # Find all functions in the project that lack a valid AI summary
+        query = '''
+            SELECT id, function_name, class_name
+            FROM functions 
+            WHERE project_id = ? 
+            AND (ai_summary IS NULL OR ai_summary = '' OR ai_summary LIKE '⚠️%' OR ai_summary LIKE 'Error:%')
+        '''
+        rows = db.execute_query(query, (project_id,))
+        missing_funcs = [dict(row) for row in rows]
+        
+        total_missing = len(missing_funcs)
+        if total_missing == 0:
+            progress_tracker.complete(task_id, success=True, message='Tüm fonksiyonların AI özeti zaten mevcut.')
+            return
+
+        progress_tracker.set_metrics(
+            task_id,
+            total_functions=total_missing,
+            completed_functions=0,
+            active_thread=threading.current_thread().name,
+        )
+
+        logger.info(f"Starting bulk AI generation for project {project_id} - {total_missing} functions need summaries.")
+        processed_count = 0
+        
+        for func in missing_funcs:
+            func_id = func['id']
+            func_name = func['function_name']
+            class_name = func.get('class_name')
+            qualified_name = f"{class_name}.{func_name}" if class_name else func_name
+
+            progress = int((processed_count / total_missing) * 100)
+            progress_tracker.update(
+                task_id,
+                progress=progress,
+                step=f"Bulk Analiz: {processed_count}/{total_missing}",
+                detail=f"🤖 Sıradaki: {qualified_name}"
+            )
+            
+            summary, _ = _generate_ai_summary_recursive(
+                function_id=func_id, 
+                client=client, 
+                task_id=task_id, 
+                total_deps=total_missing,
+                processed=processed_count,
+                temperature=temperature, 
+                top_p=top_p, 
+                max_tokens=max_tokens,
+                track_progress=False # We handle our own progress tracking in the loop for the top-level
+            )
+            
+            # _generate_ai_summary_recursive actually saves the valid summaries for us.
+            processed_count += 1
+            
+            progress = int((processed_count / total_missing) * 100)
+            progress_tracker.update(
+                task_id,
+                progress=progress,
+                step=f"Bulk Analiz: {processed_count}/{total_missing}",
+                detail=f"✓ Tamamlandı: {qualified_name}"
+            )
+
+        progress_tracker.complete(
+            task_id, 
+            success=True, 
+            message=f'Toplu özetleme tamamlandı. {processed_count} fonksiyon analiz edildi.'
+        )
+        logger.info(f"Bulk AI generation completed for project {project_id}")
+
+    except Exception as e:
+        logger.error(f"Error in _bulk_generate_worker for project {project_id}: {e}")
+        progress_tracker.complete(task_id, success=False, message=f'Toplu işlem hatası: {str(e)}')
+
+
+@bp.route('/project/<int:project_id>/bulk-ai-summary', methods=['POST'])
+def bulk_generate_ai_summaries(project_id):
+    """Start a background task to generate AI summaries for all missing functions in a project."""
+    task_id = request.args.get('task_id')
+    
+    if not task_id:
+        return jsonify({'error': 'task_id is required'}), 400
+
+    try:
+        progress_tracker.start_task(task_id, total_steps=100)
+        progress_tracker.update(
+            task_id,
+            progress=5,
+            step='Bağlantı kontrol ediliyor...',
+            detail='LMStudio bağlantısı test ediliyor'
+        )
+        
+        user = get_user_from_session()
+        client = LMStudioClient(user_id=user['id'] if user else None)
+        connection_status = client.test_connection()
+        
+        if connection_status['status'] != 'connected':
+            progress_tracker.complete(
+                task_id,
+                success=False,
+                message=f"LMStudio bağlantı hatası: {connection_status['message']}"
+            )
+            return jsonify({'error': 'LMStudio is not connected'}), 503
+
+        settings = _load_ai_runtime_settings()
+        
+        # Start the background thread
+        thread = threading.Thread(
+            target=_bulk_generate_worker,
+            args=(project_id, task_id, client, settings['temperature'], settings['top_p'], settings['max_tokens']),
+            daemon=True,
+            name=f"BulkAI_{project_id}_{uuid.uuid4().hex[:6]}"
+        )
+        thread.start()
+        
+        log_audit(user, 'bulk_ai_summary_started', 'project', project_id, request=request)
+        return jsonify({'message': 'Bulk AI generation started in background', 'task_id': task_id}), 202
+
+    except Exception as e:
+        log_error(f"bulk_generate_ai_summaries (project: {project_id})", e)
+        progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/file/<int:file_id>', methods=['POST'])

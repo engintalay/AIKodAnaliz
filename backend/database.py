@@ -202,6 +202,22 @@ class Database:
                 )
             ''')
 
+            # Audit logs table - tracks all user actions
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    username TEXT,
+                    action TEXT NOT NULL,
+                    resource_type TEXT,
+                    resource_id INTEGER,
+                    details TEXT,
+                    ip_address TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            ''')
+
             # Backward-compatible migration for existing databases
             cursor.execute("PRAGMA table_info(user_settings)")
             existing_columns = {row[1] for row in cursor.fetchall()}

@@ -67,11 +67,16 @@ function goBack() {
 }
 
 function switchTab(tabName) {
-    document.querySelectorAll('.tab-content').forEach(tab => tab.style.display = 'none');
-    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('#projectDetailSection .tab-content').forEach(tab => tab.style.display = 'none');
+    document.querySelectorAll('#projectDetailSection .tab-btn').forEach(btn => btn.classList.remove('active'));
 
-    document.getElementById(tabName + 'Tab').style.display = 'block';
-    event.target.classList.add('active');
+    const tabEl = document.getElementById(tabName + 'Tab');
+    if (tabEl) tabEl.style.display = 'block';
+
+    // Mark the matching button active (works both on click and programmatic calls)
+    const activeBtn = document.querySelector(`#projectDetailSection .tab-btn[onclick*="'${tabName}'"]`);
+    if (activeBtn) activeBtn.classList.add('active');
+    else if (typeof event !== 'undefined' && event && event.target) event.target.classList.add('active');
 }
 
 // ============================================
@@ -138,7 +143,9 @@ async function viewProject(projectId) {
         const project = await response.json();
 
         document.getElementById('projectTitle').textContent = project.name;
+        document.getElementById('projectDescriptionInput').value = project.description || '';
         showSection('projectDetailSection');
+        switchTab('overview');
 
         // Load diagram
         console.log('Loading diagram...');
@@ -162,6 +169,83 @@ async function viewProject(projectId) {
     } catch (error) {
         console.error('viewProject error:', error);
         showError('Proje Yükleme Hatası', 'Hata: ' + error.message);
+    }
+}
+
+async function updateProjectDescription() {
+    if (!currentProjectId) return;
+
+    const newDescription = document.getElementById('projectDescriptionInput').value;
+    const btn = document.querySelector('#overviewTab .btn-primary');
+    const originalText = btn.innerHTML;
+
+    try {
+        btn.innerHTML = '⏳ Kaydediliyor...';
+        btn.disabled = true;
+
+        const response = await fetch(`${API_URL}/projects/${currentProjectId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ description: newDescription })
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'Kaydetme hatası');
+        }
+
+        showSuccess('Başarılı', 'Proje açıklaması güncellendi.');
+        loadProjects(); // Ensure project list reflects the new description later
+    } catch (error) {
+        showError('Hata', error.message);
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
+async function startBulkAiAnalysis() {
+    if (!currentProjectId) return;
+
+    if (!confirm('Tüm eksik AI analizleri için arka planda istek başlatılacaktır. Emin misiniz?')) {
+        return;
+    }
+
+    const progressDiv = document.getElementById('uploadProgress');
+    const progressBar = document.getElementById('uploadProgressBar');
+    const progressText = document.getElementById('uploadProgressText');
+    const progressTitle = document.querySelector('#uploadProgress h3');
+
+    if (progressTitle) progressTitle.textContent = 'Toplu AI Analizi Yapılıyor';
+    progressDiv.style.display = 'block';
+
+    if (progressBar) {
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+    }
+    if (progressText) {
+        progressText.textContent = 'İşlem başlatılıyor...';
+    }
+
+    try {
+        const taskId = 'bulk_ai_' + Date.now();
+        const response = await fetch(`${API_URL}/analysis/project/${currentProjectId}/bulk-ai-summary?task_id=${taskId}`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.error || 'İşlem başlatılamadı');
+        }
+
+        // Start polling progress
+        currentTaskId = taskId;
+        pollProgress(taskId);
+    } catch (error) {
+        showError('Hata', error.message);
+        progressDiv.style.display = 'none';
     }
 }
 

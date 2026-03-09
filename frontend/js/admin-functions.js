@@ -669,17 +669,20 @@ function showAdminPanel() {
 
 function switchAdminTab(tabName) {
     // Hide all tabs
-    document.getElementById('usersTab').style.display = 'none';
-    document.getElementById('rolesTab').style.display = 'none';
+    ['usersTab', 'rolesTab', 'auditTab'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+    });
 
     // Show selected tab
-    document.getElementById(tabName + 'Tab').style.display = 'block';
+    const target = document.getElementById(tabName + 'Tab');
+    if (target) target.style.display = 'block';
 
     // Update button styles
-    document.querySelectorAll('.tabs .tab-btn').forEach(btn => {
+    document.querySelectorAll('#adminPanel .tabs .tab-btn').forEach(btn => {
         btn.classList.remove('active');
     });
-    event.target.classList.add('active');
+    if (event && event.target) event.target.classList.add('active');
 }
 
 function loadAllUsers() {
@@ -1054,4 +1057,87 @@ function revokePermission(userId) {
     }
 }
 
+async function loadAuditLogs() {
+    const listEl = document.getElementById('auditLogsList');
+    if (!listEl) return;
 
+    listEl.innerHTML = '<p style="color:#999;">Yükleniyor...</p>';
+
+    const user = document.getElementById('auditFilterUser')?.value?.trim() || '';
+    const action = document.getElementById('auditFilterAction')?.value?.trim() || '';
+    const from = document.getElementById('auditFilterFrom')?.value || '';
+    const to = document.getElementById('auditFilterTo')?.value || '';
+
+    const params = new URLSearchParams({ limit: 200 });
+    if (user) params.append('username', user);
+    if (action) params.append('action', action);
+    if (from) params.append('from', from);
+    if (to) params.append('to', to);
+
+    try {
+        const response = await fetch(`${API_URL}/admin/audit-logs?${params}`);
+        if (!response.ok) {
+            const err = await response.json();
+            listEl.innerHTML = `<p style="color:red;">Hata: ${err.error || 'Bilinmeyen hata'}</p>`;
+            return;
+        }
+        const data = await response.json();
+        const logs = data.logs || [];
+
+        if (logs.length === 0) {
+            listEl.innerHTML = '<p style="color:#999;">Bu filtreye ait log kaydı bulunamadı.</p>';
+            return;
+        }
+
+        const ACTION_LABELS = {
+            'login': '🔑 Giriş',
+            'logout': '🔓 Çıkış',
+            'project_view': '👁️ Proje Görüntüleme',
+            'project_upload': '⬆️ Proje Yükleme',
+            'project_delete': '🗑️ Proje Silme',
+            'project_update': '✏️ Proje Güncelleme',
+            'project_reanalyze': '🔄 Tekrar Analiz',
+            'ai_summary_generated': '🤖 AI Özeti',
+            'bulk_ai_summary_started': '🤖🔄 Toplu AI Analizi',
+        };
+
+        let html = `
+            <p style="color:#666; font-size:13px; margin-bottom:10px;">Gösterilen: ${logs.length} / Toplam: ${data.total}</p>
+            <div style="overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead>
+                    <tr style="background:#f5f5f5; text-align:left;">
+                        <th style="padding:8px 12px; border-bottom:2px solid #ddd;">Tarih</th>
+                        <th style="padding:8px 12px; border-bottom:2px solid #ddd;">Kullanıcı</th>
+                        <th style="padding:8px 12px; border-bottom:2px solid #ddd;">Aksiyon</th>
+                        <th style="padding:8px 12px; border-bottom:2px solid #ddd;">Kaynak</th>
+                        <th style="padding:8px 12px; border-bottom:2px solid #ddd;">IP Adresi</th>
+                        <th style="padding:8px 12px; border-bottom:2px solid #ddd;">Detay</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        logs.forEach((log, idx) => {
+            const label = ACTION_LABELS[log.action] || log.action;
+            const resource = log.resource_type ? `${log.resource_type} #${log.resource_id || ''}` : '-';
+            const rowBg = idx % 2 === 0 ? '#fff' : '#fafafa';
+            html += `
+                <tr style="background:${rowBg};">
+                    <td style="padding:7px 12px; border-bottom:1px solid #eee; color:#555;">${log.created_at ? log.created_at.replace('T', ' ').substring(0, 19) : '-'}</td>
+                    <td style="padding:7px 12px; border-bottom:1px solid #eee;"><strong>${log.username || '-'}</strong></td>
+                    <td style="padding:7px 12px; border-bottom:1px solid #eee;">${label}</td>
+                    <td style="padding:7px 12px; border-bottom:1px solid #eee; color:#666;">${resource}</td>
+                    <td style="padding:7px 12px; border-bottom:1px solid #eee; color:#888; font-size:12px;">${log.ip_address || '-'}</td>
+                    <td style="padding:7px 12px; border-bottom:1px solid #eee; color:#888; font-size:12px;">${log.details || ''}</td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table></div>';
+        listEl.innerHTML = html;
+
+    } catch (err) {
+        listEl.innerHTML = `<p style="color:red;">Hata: ${err}</p>`;
+    }
+}

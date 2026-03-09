@@ -4,6 +4,7 @@ from backend.permission_manager import (
     check_permission, get_user_from_session, grant_project_permission,
     revoke_project_permission, get_user_projects, get_project_users
 )
+from backend.logger import log_audit
 import json
 
 bp = Blueprint('user', __name__, url_prefix='/api/users')
@@ -36,6 +37,8 @@ def login():
         session['user_id'] = user['id']
         session['username'] = user['username']
         session['role'] = user['role']
+        
+        log_audit(user, 'login', request=request)
         
         return jsonify({
             'user': {
@@ -88,6 +91,8 @@ def register():
 @bp.route('/logout', methods=['POST'])
 def logout():
     """User logout"""
+    user = get_user_from_session()
+    log_audit(user, 'logout', request=request)
     session.clear()
     return jsonify({'message': 'Logout successful'}), 200
 

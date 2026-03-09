@@ -8,7 +8,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>AIKodAnaliz - Kod Analiz Aracı</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260310_06">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260310_08">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
 
@@ -152,14 +152,39 @@
                 <div class="detail-content">
                     <!-- Tabs -->
                     <div class="tabs">
-                        <button class="tab-btn active" onclick="switchTab('diagram')">Diyagram</button>
+                        <button class="tab-btn active" onclick="switchTab('overview')">Özet</button>
+                        <button class="tab-btn" onclick="switchTab('diagram')">Diyagram</button>
                         <button class="tab-btn" onclick="switchTab('functions')">Fonksiyonlar</button>
                         <button class="tab-btn" onclick="switchTab('marks')">İşaretler</button>
                         <button class="tab-btn" onclick="switchTab('files')">Dosyalar</button>
                     </div>
 
+                    <!-- Overview (Özet) Tab -->
+                    <div class="tab-content" id="overviewTab">
+                        <div
+                            style="background: white; padding: 20px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px;">
+                            <h3 style="margin-top: 0; color: #333;">Proje Açıklaması</h3>
+                            <textarea id="projectDescriptionInput"
+                                style="width: 100%; height: 100px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: inherit; resize: vertical; margin-bottom: 10px;"
+                                placeholder="Proje hakkında genel açıklama giriniz..."></textarea>
+                            <button class="btn btn-primary" onclick="updateProjectDescription()">💾 Kaydet</button>
+                        </div>
+
+                        <div
+                            style="background: white; padding: 20px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                            <h3 style="margin-top: 0; color: #333;">Yapay Zeka (AI) Özetleri</h3>
+                            <p style="color: #666; margin-bottom: 15px;">Projedeki fonksiyonlar için yapay zeka
+                                analizlerini (AI summary) toplu olarak üretebilirsiniz. Bu işlem biraz zaman alabilir.
+                            </p>
+                            <button id="btnBulkAiMissing" class="btn btn-secondary" onclick="startBulkAiAnalysis()"
+                                style="background-color: #f39c12; color: white; border: none;">
+                                🤖 Tüm Eksik Fonksiyonlara Yapay Zeka Özeti Çıkar
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- Diagram Tab -->
-                    <div class="tab-content" id="diagramTab">
+                    <div class="tab-content" id="diagramTab" style="display:none;">
                         <div class="diagram-controls">
                             <input type="text" id="searchFunctions" placeholder="Fonksiyon ara..." class="search-input">
                             <button class="btn btn-secondary" onclick="exportDiagram()">📥 PNG Olarak İndir</button>
@@ -303,6 +328,7 @@
                 <div class="tabs">
                     <button class="tab-btn active" onclick="switchAdminTab('users')">Kullanıcılar</button>
                     <button class="tab-btn" onclick="switchAdminTab('roles')">Roller</button>
+                    <button class="tab-btn" onclick="switchAdminTab('audit'); loadAuditLogs()">📜 Audit Logları</button>
                 </div>
 
                 <!-- Users Management -->
@@ -358,6 +384,45 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Audit Logs Tab -->
+                <div id="auditTab" class="tab-content" style="display:none;">
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:15px; align-items:flex-end;">
+                        <div>
+                            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Kullanıcı
+                                Adı</label>
+                            <input type="text" id="auditFilterUser" placeholder="tüm kullanıcılar"
+                                style="padding:6px 10px; border:1px solid #ddd; border-radius:4px;"
+                                oninput="loadAuditLogs()">
+                        </div>
+                        <div>
+                            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Aksiyon</label>
+                            <input type="text" id="auditFilterAction" placeholder="tüm aksiyonlar"
+                                style="padding:6px 10px; border:1px solid #ddd; border-radius:4px;"
+                                oninput="loadAuditLogs()">
+                        </div>
+                        <div>
+                            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Başlangıç
+                                Tarihi</label>
+                            <input type="date" id="auditFilterFrom"
+                                style="padding:6px 10px; border:1px solid #ddd; border-radius:4px;"
+                                onchange="loadAuditLogs()">
+                        </div>
+                        <div>
+                            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Bitiş
+                                Tarihi</label>
+                            <input type="date" id="auditFilterTo"
+                                style="padding:6px 10px; border:1px solid #ddd; border-radius:4px;"
+                                onchange="loadAuditLogs()">
+                        </div>
+                        <button class="btn btn-secondary" onclick="loadAuditLogs()" style="height:36px;">🔄
+                            Yenile</button>
+                    </div>
+                    <div id="auditLogsList">
+                        <p style="color:#999;">Log kayıtları yükleniyor...</p>
+                    </div>
+                </div>
+
             </div>
 
             <!-- Permissions Panel Section -->
@@ -618,8 +683,8 @@
     <!-- Load libraries before main.js -->
     <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-    <script src="/static/js/main.js?v=20260310_06"></script>
-    <script src="/static/js/admin-functions.js?v=20260310_01"></script>
+    <script src="/static/js/main.js?v=20260310_09"></script>
+    <script src="/static/js/admin-functions.js?v=20260310_02"></script>
 </body>
 
 </html>
