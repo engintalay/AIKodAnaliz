@@ -339,6 +339,7 @@ def add_files_to_project(project_id):
             processed_files = 0
             skipped_files = 0
             added_documents = 0
+            added_single_file_id = None
             
             # Determine file type and process accordingly
             if file_lower.endswith(('.zip', '.war', '.jar')):
@@ -496,6 +497,7 @@ def add_files_to_project(project_id):
                     )
                     logger.info(f"[Project {project_id}] Added source file: {safe_name} (ID: {file_id})")
                 processed_files = 1
+                added_single_file_id = file_id
             else:
                 return jsonify({'error': f'Unsupported file type: {file.filename}'}), 400
             
@@ -515,6 +517,7 @@ def add_files_to_project(project_id):
                 'files_processed': processed_files,
                 'documents_added': added_documents,
                 'files_skipped': skipped_files,
+                'added_file_id': added_single_file_id,
                 'message': 'Files added successfully'
             }), 201
             

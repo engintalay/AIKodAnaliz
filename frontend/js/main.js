@@ -1969,15 +1969,43 @@ async function addFileToProject() {
         if (response.ok) {
             const result = await response.json();
             progressBar.style.width = '100%';
-            progressText.textContent = `✓ Tamamlandı! ${result.files_processed} dosya eklendi`;
-            
-            // Reset form
-            setTimeout(() => {
-                fileInput.value = '';
-                progressDiv.style.display = 'none';
-                loadFiles();
-                showSuccess('Dosya Ekleme', `${result.files_processed} kaynak dosya, ${result.documents_added} doküman başarıyla eklendi`);
-            }, 1500);
+            progressText.textContent = `✓ Dosya yüklendi, analiz başlatılıyor...`;
+
+            // If a single source code file was added, auto-analyze it
+            if (result.added_file_id) {
+                try {
+                    progressText.textContent = `🔍 Fonksiyonlar çıkarılıyor: ${result.file_name}...`;
+                    const analyzeResp = await fetch(
+                        `${API_URL}/analysis/project/${currentProjectId}/analyze-single-file/${result.added_file_id}`,
+                        { method: 'POST' }
+                    );
+                    const analyzeResult = await analyzeResp.json();
+                    const funcCount = analyzeResult.functions_found || 0;
+                    progressText.textContent = `✓ Tamamlandı! ${funcCount} fonksiyon çıkarıldı`;
+                    setTimeout(() => {
+                        fileInput.value = '';
+                        progressDiv.style.display = 'none';
+                        loadFiles();
+                        loadFunctions();
+                        showSuccess('Dosya Ekleme', `${result.file_name} eklendi, ${funcCount} fonksiyon çıkarıldı`);
+                    }, 1200);
+                } catch (e) {
+                    setTimeout(() => {
+                        fileInput.value = '';
+                        progressDiv.style.display = 'none';
+                        loadFiles();
+                        showSuccess('Dosya Ekleme', `${result.files_processed} kaynak dosya eklendi (analiz başlatılamadı)`);
+                    }, 1200);
+                }
+            } else {
+                // ZIP/doc uploads
+                setTimeout(() => {
+                    fileInput.value = '';
+                    progressDiv.style.display = 'none';
+                    loadFiles();
+                    showSuccess('Dosya Ekleme', `${result.files_processed} kaynak dosya, ${result.documents_added} doküman başarıyla eklendi`);
+                }, 1200);
+            }
         } else {
             const error = await response.json();
             clearInterval(progressInterval);
