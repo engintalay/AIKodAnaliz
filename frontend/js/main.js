@@ -1850,26 +1850,146 @@ async function addMark() {
 async function loadFiles() {
     try {
         const response = await fetch(`${API_URL}/projects/${currentProjectId}/files`);
-        const files = await response.json();
+        const data = await response.json();
 
         const list = document.getElementById('filesList');
         list.innerHTML = '';
 
-        files.forEach(file => {
-            const item = document.createElement('div');
-            item.className = 'file-item';
-            item.innerHTML = `
-                <h4>${file.file_name}</h4>
-                <p>${file.file_path}</p>
-                <small>Dil: ${file.language}</small>
-            `;
-            list.appendChild(item);
-        });
+        const sourceFiles = data.source_files || [];
+        const documents = data.documents || [];
+
+        if (sourceFiles.length === 0 && documents.length === 0) {
+            const empty = document.createElement('p');
+            empty.style.cssText = 'color:#666; padding:10px;';
+            empty.textContent = 'Henüz dosya yok.';
+            list.appendChild(empty);
+            return;
+        }
+
+        if (sourceFiles.length > 0) {
+            const header = document.createElement('h4');
+            header.style.cssText = 'margin: 0 0 10px 0; color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 6px;';
+            header.textContent = `📄 Kaynak Dosyalar (${sourceFiles.length})`;
+            list.appendChild(header);
+
+            sourceFiles.forEach(file => {
+                const item = document.createElement('div');
+                item.className = 'file-item';
+                const nameEl = document.createElement('h4');
+                nameEl.textContent = file.file_name;
+                const pathEl = document.createElement('p');
+                pathEl.style.cssText = 'font-size:12px; color:#666; margin:2px 0;';
+                pathEl.textContent = file.file_path;
+                const langEl = document.createElement('small');
+                langEl.textContent = `Dil: ${file.language || 'bilinmiyor'}`;
+                item.appendChild(nameEl);
+                item.appendChild(pathEl);
+                item.appendChild(langEl);
+                list.appendChild(item);
+            });
+        }
+
+        if (documents.length > 0) {
+            const header = document.createElement('h4');
+            header.style.cssText = 'margin: 16px 0 10px 0; color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 6px;';
+            header.textContent = `📁 Dokümanlar / RAG Dosyaları (${documents.length})`;
+            list.appendChild(header);
+
+            documents.forEach(doc => {
+                const item = document.createElement('div');
+                item.className = 'file-item';
+                const nameEl = document.createElement('h4');
+                nameEl.textContent = doc.file_name;
+                const pathEl = document.createElement('p');
+                pathEl.style.cssText = 'font-size:12px; color:#666; margin:2px 0;';
+                pathEl.textContent = doc.file_path;
+                const typeEl = document.createElement('small');
+                typeEl.textContent = `Tip: ${doc.document_type || 'doküman'} • RAG`;
+                item.appendChild(nameEl);
+                item.appendChild(pathEl);
+                item.appendChild(typeEl);
+                list.appendChild(item);
+            });
+        }
     } catch (error) {
         console.error('Dosyalar yükleme hatası:', error);
     }
 }
 
+// Add file to existing project (GELIS8)
+async function addFileToProject() {
+    const fileInput = document.getElementById('addFileInput');
+    const file = fileInput.files[0];
+    
+    if (!file) {
+        showError('Dosya Seçiniz', 'Lütfen eklemek için bir dosya seçiniz');
+        return;
+    }
+    
+    // Validate file type
+    const fileName = file.name.toLowerCase();
+    const validExtensions = ['.zip', '.war', '.jar', '.java', '.sql', '.py', '.js', '.ts', '.php',
+                             '.pdf', '.doc', '.docx', '.txt', '.md'];
+    const isValid = validExtensions.some(ext => fileName.endsWith(ext));
+    
+    if (!isValid) {
+        showError('Geçersiz Dosya Tipi', `Desteklenmeyen dosya tipi: ${file.name}\n\nDesteklenen: ZIP, WAR, JAR, Java, Python, JavaScript, SQL, PDF, DOC, DOCX, TXT, MD`);
+        return;
+    }
+    
+    const progressDiv = document.getElementById('addFileProgress');
+    const progressBar = document.getElementById('addFileProgressBar');
+    const progressText = document.getElementById('addFileProgressText');
+    
+    progressDiv.style.display = 'block';
+    progressBar.style.width = '0%';
+    progressText.textContent = `Yükleniyor: ${file.name}...`;
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+        // Simulate progress
+        let simulatedProgress = 0;
+        const progressInterval = setInterval(() => {
+            if (simulatedProgress < 90) {
+                simulatedProgress += Math.random() * 30;
+                if (simulatedProgress > 90) simulatedProgress = 90;
+                progressBar.style.width = simulatedProgress + '%';
+            }
+        }, 300);
+        
+        const response = await fetch(`${API_URL}/projects/${currentProjectId}/add-file`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        clearInterval(progressInterval);
+        
+        if (response.ok) {
+            const result = await response.json();
+            progressBar.style.width = '100%';
+            progressText.textContent = `✓ Tamamlandı! ${result.files_processed} dosya eklendi`;
+            
+            // Reset form
+            setTimeout(() => {
+                fileInput.value = '';
+                progressDiv.style.display = 'none';
+                loadFiles();
+                showSuccess('Dosya Ekleme', `${result.files_processed} kaynak dosya, ${result.documents_added} doküman başarıyla eklendi`);
+            }, 1500);
+        } else {
+            const error = await response.json();
+            clearInterval(progressInterval);
+            progressDiv.style.display = 'none';
+            showError('Dosya Ekleme Hatası', error.error || 'Dosya eklenirken hata oluştu');
+        }
+    } catch (error) {
+        console.error('Dosya ekleme hatası:', error);
+        progressDiv.style.display = 'none';
+        showError('Dosya Ekleme Hatası', error.message || 'Bilinmeyen bir hata oluştu');
+    }
+}
 
 
 // ============================================

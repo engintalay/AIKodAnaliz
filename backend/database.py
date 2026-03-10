@@ -245,6 +245,36 @@ class Database:
                 )
             ''')
 
+            # Project Documents table for RAG and external files (GELIS8)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS project_documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    file_name TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    file_type TEXT NOT NULL,
+                    document_type TEXT,
+                    file_size INTEGER,
+                    content TEXT,
+                    extracted_text TEXT,
+                    source_folder TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                )
+            ''')
+
+            # FTS5 for document search (GELIS8)
+            cursor.execute('''
+                CREATE VIRTUAL TABLE IF NOT EXISTS fts_documents
+                USING fts5(
+                    document_id UNINDEXED,
+                    file_name,
+                    document_type,
+                    extracted_text,
+                    tokenize = "unicode61"
+                )
+            ''')
 
             # Backward-compatible migration for existing databases
             cursor.execute("PRAGMA table_info(user_settings)")

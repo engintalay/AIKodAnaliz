@@ -23,7 +23,7 @@
     - Fonksiyonlar arasındaki ilişkileri analiz ederek detaylı ve anlaşılır bir açıklama sunabilmeli.
     - Kod içindeki yorumları, fonksiyon isimlerini ve mantıksal akışı değerlendirerek fonksiyonların ne yaptığını detaylı şekilde açıklayabilmeli.
   - **Amaç:** Bu sayede kullanıcı, büyük ve karmaşık projelerde kodu manuel olarak incelemek zorunda kalmadan AI destekli analiz ve açıklamalar aracılığıyla sistemi daha hızlı anlayabilecektir.
-- [❌] **GELIS8:** Mevcut bir projeye yeni bir dosya eklenmesine izin verilmeli. Eğer sql, java, zip, war dosyası ise aynı proje altına uygun bir klasör ile eklenmeli ve bu dosyalar analize dahil edilmesli. Eğer doc,docx, pdf vb. dokümanlar ise bunlar RAG analizine dahil edilmeli. 
+- [✅] **GELIS8:** Mevcut bir projeye yeni bir dosya eklenmesine izin verilmeli. Eğer sql, java, zip, war dosyası ise aynı proje altına uygun bir klasör ile eklenmeli ve bu dosyalar analize dahil edilmesli. Eğer doc,docx, pdf vb. dokümanlar ise bunlar RAG analizine dahil edilmeli. 
 
 
 
