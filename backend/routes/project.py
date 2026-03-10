@@ -458,31 +458,44 @@ def add_files_to_project(project_id):
                 
                 language = _detect_language(file.filename)
                 
-                try:
-                    # Read file content
-                    file.seek(0)
-                    content = file.read().decode('utf-8', errors='ignore')
-                    
-                    # Save to project directory
-                    file_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}')
-                    os.makedirs(file_dir, exist_ok=True)
-                    
-                    file_path = os.path.join(file_dir, file.filename)
-                    with open(file_path, 'w', encoding='utf-8') as f:
-                        f.write(content)
-                    
-                    # Add to source_files
+                # Sanitize filename to prevent directory traversal
+                safe_name = os.path.basename(file.filename).strip()
+                if not safe_name:
+                    raise ValueError(f"Geçersiz dosya adı: {file.filename}")
+                
+                # Read file content
+                file.seek(0)
+                content = file.read().decode('utf-8', errors='ignore')
+                
+                # Save to project directory
+                file_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}')
+                os.makedirs(file_dir, exist_ok=True)
+                
+                save_path = os.path.join(file_dir, safe_name)
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                
+                # Add to source_files (update if already exists)
+                existing = db.execute_query(
+                    'SELECT id FROM source_files WHERE project_id = ? AND file_path = ?',
+                    (project_id, safe_name)
+                )
+                if existing:
+                    db.execute_update(
+                        'UPDATE source_files SET content = ?, language = ? WHERE project_id = ? AND file_path = ?',
+                        (content, language, project_id, safe_name)
+                    )
+                    file_id = existing[0][0]
+                    logger.info(f"[Project {project_id}] Updated existing source file: {safe_name} (ID: {file_id})")
+                else:
                     file_id = db.execute_insert(
                         '''INSERT INTO source_files
                         (project_id, file_path, file_name, language, content)
                         VALUES (?, ?, ?, ?, ?)''',
-                        (project_id, file.filename, file.filename, language, content)
+                        (project_id, safe_name, safe_name, language, content)
                     )
-                    processed_files = 1
-                    logger.debug(f"[Project {project_id}] Added source file: {file.filename} (ID: {file_id})")
-                except Exception as e:
-                    logger.warning(f"[Project {project_id}] Failed to process {file.filename}: {e}")
-                    skipped_files = 1
+                    logger.info(f"[Project {project_id}] Added source file: {safe_name} (ID: {file_id})")
+                processed_files = 1
             else:
                 return jsonify({'error': f'Unsupported file type: {file.filename}'}), 400
             
