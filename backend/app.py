@@ -15,9 +15,9 @@ os.environ['no_proxy'] = '*'
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.config import DATABASE_PATH, UPLOAD_DIR
+from config.config import DATABASE_PATH, UPLOAD_DIR, SECRET_KEY, FLASK_HOST, FLASK_PORT, FLASK_DEBUG
 from backend.database import db
-from backend.routes import project, analysis, user, ai_settings, diagram, report, admin_audit, chat, rag
+from backend.routes import project, analysis, user, ai_settings, diagram, report, admin_audit, chat, rag, project_files
 from backend.logger import logger
 
 # Setup Flask app with static and template folders
@@ -32,7 +32,7 @@ app = Flask(__name__,
     template_folder=FRONTEND_DIR)
 
 # Configure session
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['SECRET_KEY'] = SECRET_KEY
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
 app.config['PERMANENT_SESSION_LIFETIME'] = 7 * 24 * 3600  # 7 days
@@ -71,6 +71,7 @@ app.register_blueprint(report.bp)
 app.register_blueprint(admin_audit.bp)
 app.register_blueprint(chat.bp)
 app.register_blueprint(rag.bp)
+app.register_blueprint(project_files.bp)
 
 @app.route('/')
 def index():
@@ -117,4 +118,4 @@ def assetlinks():
 
 if __name__ == '__main__':
     # Threaded mode keeps UI/API responsive while long AI requests are running.
-    app.run(debug=True, host='0.0.0.0', port=5000, threaded=True)
+    app.run(debug=FLASK_DEBUG, host=FLASK_HOST, port=FLASK_PORT, threaded=True)

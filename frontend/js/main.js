@@ -262,6 +262,51 @@ async function buildRagIndex() {
     }
 }
 
+async function addFileToProject() {
+    if (!currentProjectId) return;
+    const input = document.getElementById('addFileInput');
+    const resultDiv = document.getElementById('addFileResult');
+    const resultTxt = document.getElementById('addFileResultText');
+    if (!input || !input.files || input.files.length === 0) return;
+
+    resultDiv.style.display = 'block';
+    resultTxt.textContent = `⏳ ${input.files.length} dosya yükleniyor...`;
+
+    const formData = new FormData();
+    for (const file of input.files) {
+        formData.append('file', file);
+    }
+
+    try {
+        const res = await fetch(`${API_URL}/projects/${currentProjectId}/add-file`, {
+            method: 'POST',
+            body: formData
+        });
+        const d = await res.json();
+
+        if (!res.ok) {
+            resultTxt.innerHTML = `❌ Hata: ${d.error || res.statusText}`;
+            return;
+        }
+
+        const lines = [`✅ İşlem tamamlandı: <b>${d.code_files_added || 0}</b> kod dosyası eklendi, <b>${d.doc_chunks_added || 0}</b> doküman chunk'ı oluşturuldu.`];
+        if (d.files && d.files.length > 0) {
+            d.files.forEach(f => {
+                const icon = f.status === 'ok' ? '📄' : f.status === 'skipped' ? '⏭️' : '⚠️';
+                lines.push(`${icon} ${f.file} — ${f.type || f.status}${f.chunks ? ` (${f.chunks} chunk)` : ''}`);
+            });
+        }
+        if ((d.code_files_added || 0) > 0) {
+            lines.push('<small>🔄 Kod analizi arka planda çalışıyor, FTS5 indeksi güncelleniyor.</small>');
+        }
+        resultTxt.innerHTML = lines.join('<br>');
+    } catch (e) {
+        resultTxt.innerHTML = `❌ Bağlantı hatası: ${e.message}`;
+    } finally {
+        input.value = ''; // Reset file input for next use
+    }
+}
+
 async function startBulkAiAnalysis() {
     if (!currentProjectId) return;
 

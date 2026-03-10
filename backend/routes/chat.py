@@ -15,7 +15,8 @@ bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 
 def _build_context(project_id: int, project_name: str, query: str) -> tuple[str, str, list]:
     """Return (system_prompt, context_block, refs) for the LLM.
-    Uses RagIndex for hybrid embedding + FTS5 + LIKE search."""
+    Uses RagIndex for hybrid embedding + FTS5 + LIKE search.
+    Also searches doc_chunks (GELIS8) for relevant document passages."""
     funcs = RagIndex.search(project_id, query)
 
     context_lines = []
@@ -38,6 +39,17 @@ def _build_context(project_id: int, project_name: str, query: str) -> tuple[str,
 
     context_block = '\n'.join(context_lines) if context_lines else 'İlgili fonksiyon bulunamadı.'
 
+    # Also search doc_chunks for relevant document passages (GELIS8)
+    doc_hits = RagIndex.search_doc_chunks(project_id, query, limit=3)
+    doc_block = ''
+    if doc_hits:
+        doc_parts = []
+        for hit in doc_hits:
+            if hit['score'] > 0.35:   # Only include reasonably relevant chunks
+                doc_parts.append(f"[{hit['file_name']}#{hit['chunk_index']}]\n{hit['content']}")
+        if doc_parts:
+            doc_block = '\n\n'.join(doc_parts)
+
     system_prompt = (
         f"Sen '{project_name}' projesinin AI kod asistanısın. "
         "YALNIZCA Türkçe yanıt ver. "
@@ -47,6 +59,7 @@ def _build_context(project_id: int, project_name: str, query: str) -> tuple[str,
         "=== PROJE FONKSİYONLARI ===\n"
         f"{context_block}\n"
         "==========================="
+        + (("\n\n=== PROJE DOKÜMANLARI ===\n" + doc_block + "\n========================") if doc_block else '')
     )
     return system_prompt, context_block, refs
 

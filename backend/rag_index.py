@@ -319,6 +319,41 @@ class RagIndex:
         logger.debug("RAG index miss — falling back to LIKE search")
         return cls._like_fallback(project_id, query, limit)
 
+    @classmethod
+    def search_doc_chunks(cls, project_id: int, query: str, limit: int = 5) -> list:
+        """Search doc_chunks embeddings for relevant document passages.
+        Returns list of dicts: {file_name, chunk_index, content, score}"""
+        try:
+            count_rows = db.execute_query(
+                'SELECT COUNT(*) FROM doc_chunks WHERE project_id = ? AND embedding IS NOT NULL',
+                (project_id,)
+            )
+            if not count_rows or count_rows[0][0] == 0:
+                return []
+
+            query_vec = _get_embedding(query)
+            if not query_vec:
+                return []
+
+            stored = db.execute_query(
+                'SELECT file_name, chunk_index, content, embedding FROM doc_chunks WHERE project_id = ? AND embedding IS NOT NULL',
+                (project_id,)
+            )
+            scored = []
+            for row in stored:
+                try:
+                    vec = json.loads(row[3])
+                    sim = cosine_similarity(query_vec, vec)
+                    scored.append({'file_name': row[0], 'chunk_index': row[1], 'content': row[2], 'score': sim})
+                except Exception:
+                    pass
+
+            scored.sort(key=lambda x: x['score'], reverse=True)
+            return scored[:limit]
+        except Exception as e:
+            logger.warning(f"Doc chunk search error: {e}")
+            return []
+
     @staticmethod
     def _like_fallback(project_id: int, query: str, limit: int) -> list:
         """Original LIKE-based search as a safety net."""

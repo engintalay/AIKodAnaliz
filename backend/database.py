@@ -245,6 +245,21 @@ class Database:
                 )
             ''')
 
+            # Document RAG chunks table for PDF/DOCX files (GELIS8)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS doc_chunks (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id  INTEGER NOT NULL,
+                    file_name   TEXT,
+                    chunk_index INTEGER DEFAULT 0,
+                    content     TEXT NOT NULL,
+                    embedding   TEXT,
+                    model_name  TEXT,
+                    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                )
+            ''')
+
 
             # Backward-compatible migration for existing databases
             cursor.execute("PRAGMA table_info(user_settings)")

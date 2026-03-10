@@ -207,6 +207,33 @@
                     </div>
 
 
+                    <!-- GELIS8: Add Files to Project -->
+                    <div id="overviewTabInner" style="display:contents;">
+                        <div
+                            style="background: white; padding: 20px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-top:16px;">
+                            <h3 style="margin-top: 0; color: #333;">📎 Projeye Dosya Ekle</h3>
+                            <p style="color: #666; margin-bottom: 15px; font-size:13px;">
+                                <b>Kod dosyaları</b> (ZIP, WAR, Java, SQL, Python, …) → analiz edilir, fonksiyonlar
+                                eklenir.<br>
+                                <b>Dokümanlar</b> (PDF, DOCX, TXT) → RAG analizine dahil edilir, sohbette kullanılır.
+                            </p>
+                            <div style="margin-bottom:12px;">
+                                <input type="file" id="addFileInput" multiple
+                                    accept=".zip,.war,.java,.sql,.py,.js,.ts,.php,.xml,.json,.pdf,.docx,.txt,.md"
+                                    style="display:none;" onchange="addFileToProject()">
+                                <button class="btn btn-primary"
+                                    onclick="document.getElementById('addFileInput').click()"
+                                    style="background:#27ae60;">
+                                    📂 Dosya Seç ve Ekle
+                                </button>
+                            </div>
+                            <div id="addFileResult"
+                                style="display:none; background:#f5f8fd; border:1px solid #d0e3fa; border-radius:6px; padding:12px; font-size:13px; color:#333;">
+                                <span id="addFileResultText">Yükleniyor...</span>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Chat Tab -->
                     <div class="tab-content" id="chatTab" style="display:none;">
                         <div class="chat-container">
@@ -736,7 +763,7 @@
     <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/js/main.js?v=20260310_15"></script>
+    <script src="/static/js/main.js?v=20260310_16"></script>
     <script src="/static/js/admin-functions.js?v=20260310_02"></script>
 </body>
 
