@@ -335,7 +335,7 @@ def get_user_settings():
         
         rows = db.execute_query(
             '''SELECT u.id, u.username, u.role, u.full_name, u.email,
-                      s.theme, s.notifications_enabled, s.items_per_page, s.default_filter, s.ai_api_url
+                      s.theme, s.notifications_enabled, s.items_per_page, s.default_filter, s.ai_api_url, s.preferences
                FROM users u
                LEFT JOIN user_settings s ON u.id = s.user_id
                WHERE u.id = ?''',
@@ -399,11 +399,31 @@ def update_user_settings():
         if 'ai_api_url' in data:
             settings_updates.append('ai_api_url = ?')
             settings_params.append((data['ai_api_url'] or '').strip() or None)
+
+        if 'preferences' in data:
+            settings_updates.append('preferences = ?')
+            settings_params.append(data['preferences'])
         
         if settings_updates:
-            settings_params.append(user_id)
-            query = f"UPDATE user_settings SET {', '.join(settings_updates)} WHERE user_id = ?"
-            db.execute_update(query, settings_params)
+            existing = db.execute_query('SELECT id FROM user_settings WHERE user_id = ?', [user_id])
+            if not existing:
+                db.execute_insert(
+                    '''INSERT INTO user_settings (user_id, theme, notifications_enabled, items_per_page, default_filter, ai_api_url, preferences)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                    [
+                        user_id,
+                        data.get('theme', 'light'),
+                        data.get('notifications_enabled', 1),
+                        data.get('items_per_page', 20),
+                        data.get('default_filter'),
+                        (data.get('ai_api_url') or '').strip() or None,
+                        data.get('preferences')
+                    ]
+                )
+            else:
+                settings_params.append(user_id)
+                query = f"UPDATE user_settings SET {', '.join(settings_updates)} WHERE user_id = ?"
+                db.execute_update(query, settings_params)
         
         return jsonify({'message': 'Settings updated'}), 200
     except Exception as e:

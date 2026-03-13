@@ -4,7 +4,7 @@
 - [✅] **DZT-1:** Genel hata düzeltmeleri - 1 
 - [✅] **DZT-2:** Kullanıcı yetkilerinin düzeltilmesi. Geliştirici rolü ve Anazlici rollerindeki kısıtların uygulanması. 
 - [❌] **DZT-3:** Ayarlarda kaydetme işleminden önce test yapılmalı. Ekrandaki bilgilerle eğer başarılı olursa kaydet yapılmalı. 
-- [❌] **DZT-4:** Eğer AI Özet  Al düğmesine basılır ise ve mevcutta bir özet zaten mevcut ise değiştirilmek istenip istenmediği sorularak analiz oluşturulması sağlanmalıdır. 
+- [✅] **DZT-4:** Eğer AI Özet  Al düğmesine basılır ise ve mevcutta bir özet zaten mevcut ise değiştirilmek istenip istenmediği sorularak analiz oluşturulması sağlanmalıdır. 
 - [❌] **DZT-5:** Projeye sonradan eklenen dosyaların düzgün bir şekilde görüntülenmesi, SQL ve kodların fonksiyonlar altına eklenmesi, documanlarında ise ayrı bir alanda gösterilmesi gerekmektei. Dokümanlar için vektörel arama yapılabilmesi ve sonuçların doküman özelinde gösterilmesinin sağlanmalıdır.
 - [❌] **DZT-6:** 
 

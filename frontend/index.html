@@ -53,6 +53,7 @@
                 <span id="userInfo"></span>
                 <a href="#" onclick="loadProjects(); return false;">Projeler</a>
                 <a href="#" onclick="showReport(); return false;">📊 Rapor</a>
+                <a href="#" onclick="showAiJobs(); return false;">🤖 AI İşleri</a>
                 <a href="#" id="adminLink" style="display:none;" onclick="showAdminPanel(); return false;">⚙️
                     Yönetim</a>
                 <a href="#" id="permissionsLink" style="display:none;"
@@ -321,6 +322,28 @@
                 </div>
             </div>
 
+            <div id="aiJobsSection" class="section">
+                <h2>🤖 AI İşleri</h2>
+                <div style="background:white; padding:16px; border-radius:6px; border:1px solid #d6e9ff; margin-bottom:16px;">
+                    <div style="font-size:14px; color:#2c3e50; margin-bottom:6px;">
+                        Tüm AI istekleri global kuyruğa alınır. Aynı anda en fazla <strong id="aiQueueLimitLabel">2</strong> iş başlatılır.
+                    </div>
+                    <div style="font-size:12px; color:#7f8c8d;">Bu ekran; tek fonksiyon özeti, dosya bazlı eksik özet üretimi, toplu AI özeti ve error tekrar analiz işlerini birlikte gösterir.</div>
+                    <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+                        <button class="btn btn-secondary" onclick="cancelQueuedAiJobs()">🛑 Bekleyenleri İptal Et</button>
+                    </div>
+                </div>
+                <div id="globalAiJobsMonitor"
+                    style="display:none; margin-top: 16px; background: #f8fbff; border: 1px solid #d6e9ff; border-radius: 6px; padding: 12px;">
+                    <h3 style="margin: 0 0 8px 0;">📡 Global AI İş Monitörü</h3>
+                    <div id="globalAiJobsStats" style="font-size: 13px; color: #2c3e50; margin-bottom: 8px;"></div>
+                    <div id="globalAiJobsList"></div>
+                </div>
+                <div id="globalAiJobsEmpty" style="background:white; border:1px dashed #cfd8e3; border-radius:6px; padding:18px; color:#7f8c8d;">
+                    Şu anda aktif veya kuyrukta AI işi yok.
+                </div>
+            </div>
+
             <!-- Settings Section -->
             <div id="settingsSection" class="section">
                 <h2>Ayarlar</h2>
@@ -362,6 +385,10 @@
                         <div class="setting-item">
                             <label>Tekrar Deneme Sayısı:</label>
                             <input type="number" id="retryCount" value="3" min="1" max="10">
+                        </div>
+                        <div class="setting-item">
+                            <label>Global AI Kuyruk Limiti:</label>
+                            <input type="number" id="globalAiQueueLimit" value="2" min="1" max="8">
                         </div>
                         <button class="btn btn-primary" onclick="saveLMSettings()">Kaydet</button>
                         <button class="btn btn-secondary" onclick="testLMConnection()">Bağlantı Test Et</button>
@@ -771,8 +798,8 @@
     <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/js/main.js?v=20260310_15"></script>
-    <script src="/static/js/admin-functions.js?v=20260310_02"></script>
+    <script src="/static/js/main.js?v=20260313_01"></script>
+    <script src="/static/js/admin-functions.js?v=20260313_01"></script>
 </body>
 
 </html>

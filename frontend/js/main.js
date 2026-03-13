@@ -90,6 +90,25 @@ async function loadProjects() {
         const response = await fetch(`${API_URL}/projects`);
         const projects = await response.json();
 
+        if (!response.ok) {
+            if (response.status === 401) {
+                localStorage.removeItem('currentUser');
+                currentUser = null;
+                const navbar = document.getElementById('navbar');
+                const mainContent = document.getElementById('mainContent');
+                const loginSection = document.getElementById('loginSection');
+                if (navbar) navbar.style.display = 'none';
+                if (mainContent) mainContent.style.display = 'none';
+                if (loginSection) loginSection.style.display = 'block';
+                return;
+            }
+            throw new Error(projects.error || `HTTP ${response.status}`);
+        }
+
+        if (!Array.isArray(projects)) {
+            throw new Error(projects.error || 'Beklenmeyen proje listesi yanıtı');
+        }
+
         const projectsList = document.getElementById('projectsList');
         projectsList.innerHTML = '';
 
@@ -125,6 +144,9 @@ async function loadProjects() {
             projectsList.appendChild(card);
         });
     } catch (error) {
+        if (String(error).toLowerCase().includes('unauthorized')) {
+            return;
+        }
         showError('Projeler Yükleme Hatası', 'Projeler yüklenirken hata oluştu: ' + error);
     }
 }
@@ -289,23 +311,30 @@ async function startBulkAiAnalysis() {
         const taskId = 'bulk_ai_' + Date.now();
         const extraCriteria = (document.getElementById('bulkAiExtraCriteria')?.value || '').trim();
         const extraQuestion = (document.getElementById('bulkAiExtraQuestion')?.value || '').trim();
-        const response = await fetch(`${API_URL}/analysis/project/${currentProjectId}/bulk-ai-summary?task_id=${taskId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                extra_criteria: extraCriteria,
-                extra_question: extraQuestion
+        const response = await startTrackedAnalysis(
+            taskId,
+            `Toplu AI Ozeti: Proje #${currentProjectId}`,
+            () => fetch(`${API_URL}/analysis/project/${currentProjectId}/bulk-ai-summary?task_id=${taskId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    extra_criteria: extraCriteria,
+                    extra_question: extraQuestion
+                })
             })
-        });
+        );
 
         if (!response.ok) {
             const err = await response.json();
             throw new Error(err.error || 'İşlem başlatılamadı');
         }
 
-        // Start polling progress
-        currentTaskId = taskId;
-        pollProgress(taskId);
+        if (progressText) {
+            progressText.textContent = 'AI toplu analiz işi global kuyruğa alındı.';
+        }
+        setTimeout(() => {
+            progressDiv.style.display = 'none';
+        }, 1200);
     } catch (error) {
         showError('Hata', error.message);
         progressDiv.style.display = 'none';
@@ -593,6 +622,13 @@ function showSettings() {
 function showReport() {
     showSection('reportSection');
     loadReport();
+}
+
+function showAiJobs() {
+    showSection('aiJobsSection');
+    if (typeof renderAnalysisMonitor === 'function') {
+        renderAnalysisMonitor();
+    }
 }
 
 // ============================================
@@ -983,6 +1019,9 @@ document.getElementById('gitImportForm')?.addEventListener('submit', async (e) =
 
 async function loadDiagramData() {
     try {
+        const container = document.getElementById('diagramContainer');
+        if (!container || !currentProjectId) return;
+
         // Check if Cytoscape is loaded
         if (typeof cytoscape === 'undefined') {
             console.error('Cytoscape library not loaded. Waiting...');
@@ -998,13 +1037,12 @@ async function loadDiagramData() {
             });
         }
 
-        const response = await fetch(`${API_URL}/diagram/project/${currentProjectId}`);
+        const response = await fetch(`${API_URL}/diagram/project/${currentProjectId}/`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
         const data = await response.json();
-
-        // Initialize Cytoscape
-        const container = document.getElementById('diagramContainer');
-
-        // Create set of valid node IDs for defensive filtering
         const validNodeIds = new Set(data.nodes.map(node => node.id.toString()));
 
         cy = cytoscape({
@@ -1344,8 +1382,9 @@ async function showFunctionDetails(functionId) {
         summaryTextarea.value = func.ai_summary || '';
         document.getElementById('funcModalSource').textContent = func.source_code || 'Kaynak kod yok.';
 
-        // Apply role constraints: Analyzer cannot edit or generate AI summaries
-        const canEdit = currentUser && currentUser.role !== 'analyzer';
+        // Apply role constraints: analyzer cannot edit, others can.
+        // If currentUser is temporarily null (e.g. transient session/UI state), keep editor writable.
+        const canEdit = !currentUser || currentUser.role !== 'analyzer';
         summaryTextarea.readOnly = !canEdit;
         const saveBtn = document.getElementById('btnSaveSummary');
         const aiBtn = document.getElementById('btnGenerateAI');
@@ -1499,10 +1538,29 @@ async function saveFunctionSummary() {
 }
 
 async function generateAISummary() {
-    if (!currentModalFunctionId) return;
+    if (!currentModalFunctionId) {
+        showWarning('Bilgi', 'Önce bir fonksiyon detayı açmalısınız.');
+        return;
+    }
 
     const summaryArea = document.getElementById('funcModalSummary');
+    if (summaryArea.readOnly) {
+        showWarning('Yetki', 'Bu kullanıcı rolü ile özet düzenleme/AI üretimi kapalı.');
+        return;
+    }
+
     const oldText = summaryArea.value;
+    const trimmedExisting = (oldText || '').trim();
+    const hasExistingSummary =
+        trimmedExisting.length > 0 &&
+        trimmedExisting !== 'AI Yükleniyor... Lütfen bekleyin...';
+
+    if (hasExistingSummary) {
+        const shouldOverwrite = confirm('Bu fonksiyon için mevcut bir özet var. AI ile yeniden oluşturup mevcut özeti değiştirmek istiyor musunuz?');
+        if (!shouldOverwrite) {
+            return;
+        }
+    }
 
     // Show progress UI
     const progressDiv = document.getElementById('uploadProgress');
@@ -1521,21 +1579,18 @@ async function generateAISummary() {
         progressBar.textContent = '0%';
     }
     if (progressText) {
-        progressText.textContent = 'AI analiz başlatılıyor...';
+        progressText.textContent = 'AI işi global kuyruğa alındı, sıra bekleniyor...';
     }
     if (progressDetails) {
-        progressDetails.innerHTML = '<div class="progress-detail">• LMStudio bağlantısı kontrol ediliyor...</div>';
+        progressDetails.innerHTML = '<div class="progress-detail">• İş global kuyruğa alındı. Sırası gelince başlatılacak...</div>';
     }
-
-    summaryArea.value = "AI Yükleniyor... Lütfen bekleyin...";
-    summaryArea.disabled = true;
 
     // Generate task ID for progress tracking
     const aiTaskId = (window.crypto && window.crypto.randomUUID)
         ? window.crypto.randomUUID()
         : `ai-summary-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
-    // Start polling progress
+    // Progress polling starts only after the request is actually started by the global queue.
     const poll = async () => {
         try {
             const response = await fetch(`${API_URL}/projects/progress/${aiTaskId}`);
@@ -1568,23 +1623,42 @@ async function generateAISummary() {
         }
     };
 
-    let aiPolling = setInterval(poll, 1500);  // Poll every 1500ms
-    poll();  // Initial poll
+    let aiPolling = null;
+    let requestStarted = false;
 
     try {
         const extraCriteria = (document.getElementById('funcAiExtraCriteria')?.value || '').trim();
         const extraQuestion = (document.getElementById('funcAiExtraQuestion')?.value || '').trim();
-        const aiResponse = await fetch(`${API_URL}/analysis/function/${currentModalFunctionId}/ai-summary?task_id=${encodeURIComponent(aiTaskId)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                extra_criteria: extraCriteria,
-                extra_question: extraQuestion
+        const aiResponse = await startTrackedAnalysis(
+            aiTaskId,
+            `Fonksiyon AI Ozeti: #${currentModalFunctionId}`,
+            () => fetch(`${API_URL}/analysis/function/${currentModalFunctionId}/ai-summary?task_id=${encodeURIComponent(aiTaskId)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    extra_criteria: extraCriteria,
+                    extra_question: extraQuestion
+                })
             })
-        });
+        );
+        requestStarted = true;
+
+        summaryArea.value = 'AI Yükleniyor... Lütfen bekleyin...';
+        summaryArea.disabled = true;
+
+        if (progressText) {
+            progressText.textContent = 'AI analiz başlatıldı...';
+        }
+        if (progressDetails) {
+            progressDetails.innerHTML = '<div class="progress-detail">• LMStudio bağlantısı kontrol ediliyor...</div>';
+        }
+
+        aiPolling = setInterval(poll, 1500);
+        poll();
+
         const aiResult = await aiResponse.json();
 
-        clearInterval(aiPolling);
+        if (aiPolling) clearInterval(aiPolling);
 
         if (aiResponse.ok) {
             summaryArea.value = aiResult.summary;
@@ -1605,8 +1679,10 @@ async function generateAISummary() {
             showError('AI Analiz Hatası', 'AI analiz hatası: ' + aiResult.error);
         }
     } catch (error) {
-        clearInterval(aiPolling);
-        summaryArea.value = oldText;
+        if (aiPolling) clearInterval(aiPolling);
+        if (requestStarted) {
+            summaryArea.value = oldText;
+        }
         progressDiv.style.display = 'none';
         showError('Bağlantı Hatası', 'AI analiz bağlantı hatası: ' + error);
     } finally {
@@ -2082,15 +2158,28 @@ async function analyzeFileById(fileId, fileName, btn) {
 async function loadSettings() {
     try {
         const apiUrlInput = document.getElementById('apiUrl');
+        const queueLimitInput = document.getElementById('globalAiQueueLimit');
         let userApiUrl = '';
+        let userPreferences = {};
 
         // Load per-user settings first (includes ai_api_url)
         const userSettingsResp = await fetch(`${API_URL}/users/settings`);
         if (userSettingsResp.ok) {
             const userSettings = await userSettingsResp.json();
             userApiUrl = (userSettings.ai_api_url || '').trim();
+            try {
+                userPreferences = userSettings.preferences ? JSON.parse(userSettings.preferences) : {};
+            } catch (_err) {
+                userPreferences = {};
+            }
             if (apiUrlInput && userApiUrl) {
                 apiUrlInput.value = userApiUrl;
+            }
+            if (queueLimitInput) {
+                queueLimitInput.value = userPreferences.ai_queue_limit || 2;
+            }
+            if (typeof setGlobalAiQueueLimit === 'function') {
+                setGlobalAiQueueLimit(userPreferences.ai_queue_limit || 2);
             }
         }
 
@@ -2169,6 +2258,7 @@ async function loadSettings() {
 
 async function saveLMSettings() {
     const apiUrlValue = document.getElementById('apiUrl').value.trim();
+    const queueLimitValue = parseInt(document.getElementById('globalAiQueueLimit').value, 10);
     const tempValue = parseFloat(document.getElementById('temperature').value);
     const topPValue = parseFloat(document.getElementById('topP').value);
     const maxTokensValue = parseInt(document.getElementById('maxTokens').value);
@@ -2190,11 +2280,27 @@ async function saveLMSettings() {
     try {
         console.log('Saving settings:', settings);
 
+        let existingPreferences = {};
+        try {
+            const currentUserSettingsResponse = await fetch(`${API_URL}/users/settings`);
+            if (currentUserSettingsResponse.ok) {
+                const currentUserSettings = await currentUserSettingsResponse.json();
+                existingPreferences = currentUserSettings.preferences ? JSON.parse(currentUserSettings.preferences) : {};
+            }
+        } catch (_err) {
+            existingPreferences = {};
+        }
+
+        const nextPreferences = {
+            ...existingPreferences,
+            ai_queue_limit: Math.max(1, Math.min(8, queueLimitValue || 2))
+        };
+
         // Save per-user AI server URL
         const userSettingsResponse = await fetch(`${API_URL}/users/settings`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ai_api_url: apiUrlValue })
+            body: JSON.stringify({ ai_api_url: apiUrlValue, preferences: JSON.stringify(nextPreferences) })
         });
 
         if (!userSettingsResponse.ok) {
@@ -2217,6 +2323,10 @@ async function saveLMSettings() {
             }
 
             console.log(`Setting ${key} saved successfully`);
+        }
+
+        if (typeof setGlobalAiQueueLimit === 'function') {
+            setGlobalAiQueueLimit(nextPreferences.ai_queue_limit);
         }
 
         showSuccess('Başarılı', 'Ayarlar kaydedildi ve sisteme uygulandı');

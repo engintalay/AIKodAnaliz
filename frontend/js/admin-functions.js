@@ -4,38 +4,48 @@
 
 const analysisJobs = new Map();
 let latestReportData = null;
-const bulkAnalysisState = {
+const globalAiQueue = {
     active: 0,
     maxConcurrent: 2,
     pending: [],
-    running: false,
-    total: 0,
     succeeded: 0,
     failed: 0,
 };
 
-function formatEta(seconds) {
-    if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
-    const s = Math.max(0, parseInt(seconds, 10));
-    if (s < 60) return `${s} sn`;
-    const m = Math.floor(s / 60);
-    const r = s % 60;
-    return `${m} dk ${r} sn`;
+function setGlobalAiQueueLimit(limit) {
+    const parsed = Math.max(1, Math.min(8, parseInt(limit, 10) || 2));
+    globalAiQueue.maxConcurrent = parsed;
+    renderAnalysisMonitor();
+    processGlobalAiQueue();
+    return parsed;
 }
 
-function formatDuration(seconds) {
-    if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
-    const value = Number(seconds);
-    if (value < 60) return `${value.toFixed(1)} sn`;
-    const minutes = Math.floor(value / 60);
-    const remaining = Math.round(value % 60);
-    return `${minutes} dk ${remaining} sn`;
+function cancelQueuedAiJobs() {
+    const queuedJobs = Array.from(analysisJobs.values()).filter(job => job.status === 'queued');
+    if (queuedJobs.length === 0) {
+        showInfo('Bilgi', 'İptal edilecek bekleyen AI işi yok.');
+        return;
+    }
+
+    globalAiQueue.pending = [];
+    queuedJobs.forEach(job => {
+        job.status = 'failed';
+        job.current_step = 'Kullanıcı tarafından kuyruktan çıkarıldı.';
+        if (typeof job.resolveStarted === 'function') {
+            job.resolveStarted(Promise.resolve(new Response(JSON.stringify({ error: 'Kuyruktan iptal edildi' }), { status: 499, headers: { 'Content-Type': 'application/json' } })));
+            job.resolveStarted = null;
+        }
+        setTimeout(() => removeAnalysisJob(job.taskId), job.retentionMs || 10000);
+    });
+    renderAnalysisMonitor();
+    showWarning('Kuyruk Temizlendi', `${queuedJobs.length} bekleyen AI işi iptal edildi.`);
 }
 
-function renderAnalysisMonitor() {
-    const monitor = document.getElementById('analysisMonitor');
-    const list = document.getElementById('analysisTaskList');
-    const stats = document.getElementById('analysisGlobalStats');
+function renderAnalysisMonitorTarget(monitorId, statsId, listId, emptyId) {
+    const monitor = document.getElementById(monitorId);
+    const list = document.getElementById(listId);
+    const stats = document.getElementById(statsId);
+    const empty = emptyId ? document.getElementById(emptyId) : null;
     if (!monitor || !list || !stats) return;
 
     const jobs = Array.from(analysisJobs.values());
@@ -43,10 +53,12 @@ function renderAnalysisMonitor() {
         monitor.style.display = 'none';
         list.innerHTML = '';
         stats.textContent = '';
+        if (empty) empty.style.display = 'block';
         return;
     }
 
     monitor.style.display = 'block';
+    if (empty) empty.style.display = 'none';
 
     let totalFunctions = 0;
     let completedFunctions = 0;
@@ -74,6 +86,8 @@ function renderAnalysisMonitor() {
     const combinedEta = etaCount > 0 ? Math.round(etaTotal / etaCount) : null;
     stats.innerHTML = `
         <strong>Aktif İş:</strong> ${jobs.filter(j => j.status === 'started').length} |
+        <strong>Kuyrukta:</strong> ${jobs.filter(j => j.status === 'queued').length} |
+        <strong>Global Limit:</strong> ${globalAiQueue.maxConcurrent} |
         <strong>Toplam Fonksiyon:</strong> ${totalFunctions} |
         <strong>Biten:</strong> ${completedFunctions} |
         <strong>Kalan:</strong> ${remainingFunctions} |
@@ -86,7 +100,7 @@ function renderAnalysisMonitor() {
     list.innerHTML = jobs.map(job => {
         const m = job.metrics || {};
         const progress = job.progress || 0;
-        const color = job.status === 'completed' ? '#27ae60' : job.status === 'failed' ? '#e74c3c' : '#3498db';
+        const color = job.status === 'completed' ? '#27ae60' : job.status === 'failed' ? '#e74c3c' : job.status === 'queued' ? '#f39c12' : '#3498db';
         const threadName = m.active_thread || '-';
         return `
             <div style="background:white; border:1px solid #e4ecf5; border-left:4px solid ${color}; border-radius:4px; padding:8px; margin-bottom:8px;">
@@ -118,6 +132,31 @@ function renderAnalysisMonitor() {
     }).join('');
 }
 
+function formatEta(seconds) {
+    if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
+    const s = Math.max(0, parseInt(seconds, 10));
+    if (s < 60) return `${s} sn`;
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m} dk ${r} sn`;
+}
+
+function formatDuration(seconds) {
+    if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
+    const value = Number(seconds);
+    if (value < 60) return `${value.toFixed(1)} sn`;
+    const minutes = Math.floor(value / 60);
+    const remaining = Math.round(value % 60);
+    return `${minutes} dk ${remaining} sn`;
+}
+
+function renderAnalysisMonitor() {
+    renderAnalysisMonitorTarget('analysisMonitor', 'analysisGlobalStats', 'analysisTaskList');
+    renderAnalysisMonitorTarget('globalAiJobsMonitor', 'globalAiJobsStats', 'globalAiJobsList', 'globalAiJobsEmpty');
+    const queueLabel = document.getElementById('aiQueueLimitLabel');
+    if (queueLabel) queueLabel.textContent = String(globalAiQueue.maxConcurrent);
+}
+
 function removeAnalysisJob(taskId) {
     const job = analysisJobs.get(taskId);
     if (job && job.pollTimer) {
@@ -125,6 +164,7 @@ function removeAnalysisJob(taskId) {
     }
     analysisJobs.delete(taskId);
     renderAnalysisMonitor();
+    processGlobalAiQueue();
 }
 
 function pollAnalysisTask(taskId) {
@@ -149,7 +189,7 @@ function pollAnalysisTask(taskId) {
                     renderAnalysisMonitor();
                     clearInterval(job.pollTimer);
                     job.pollTimer = null;
-                    setTimeout(() => removeAnalysisJob(taskId), 15000);
+                    setTimeout(() => removeAnalysisJob(taskId), job.retentionMs || 45000);
                     return;
                 }
                 throw new Error(`Progress endpoint error: ${response.status}`);
@@ -169,7 +209,7 @@ function pollAnalysisTask(taskId) {
                 if (job.status === 'completed') {
                     setTimeout(() => loadReport(), 500);
                 }
-                setTimeout(() => removeAnalysisJob(taskId), 12000);
+                setTimeout(() => removeAnalysisJob(taskId), job.retentionMs || 45000);
             }
         } catch (err) {
             job.errorCount = (job.errorCount || 0) + 1;
@@ -179,7 +219,7 @@ function pollAnalysisTask(taskId) {
                 job.status = 'failed';
                 clearInterval(job.pollTimer);
                 job.pollTimer = null;
-                setTimeout(() => removeAnalysisJob(taskId), 15000);
+                setTimeout(() => removeAnalysisJob(taskId), job.retentionMs || 45000);
             }
 
             renderAnalysisMonitor();
@@ -190,13 +230,89 @@ function pollAnalysisTask(taskId) {
     job.pollTimer = setInterval(tick, 1500);
 }
 
-function startTrackedAnalysis(taskId, label, requestPromise) {
-    analysisJobs.set(taskId, {
+function processGlobalAiQueue() {
+    // Self-heal: if there are queued jobs in the map but missing from pending queue,
+    // enqueue them so previously stuck jobs can start.
+    if (globalAiQueue.pending.length === 0) {
+        const queuedJobs = Array.from(analysisJobs.values()).filter(job => job.status === 'queued');
+        if (queuedJobs.length > 0) {
+            queuedJobs.forEach(job => {
+                if (!globalAiQueue.pending.some(p => p.taskId === job.taskId)) {
+                    globalAiQueue.pending.push(job);
+                }
+            });
+        }
+    }
+
+    while (globalAiQueue.active < globalAiQueue.maxConcurrent && globalAiQueue.pending.length > 0) {
+        const nextJob = globalAiQueue.pending.shift();
+        globalAiQueue.active += 1;
+        nextJob.status = 'started';
+        nextJob.current_step = 'İstek başlatıldı, backend görevi oluşturuluyor...';
+        renderAnalysisMonitor();
+        pollAnalysisTask(nextJob.taskId);
+
+        const requestPromise = nextJob.requestFactory();
+        nextJob.requestPromise = requestPromise;
+        nextJob.resolveStarted(requestPromise);
+
+        requestPromise
+            .then(async (response) => {
+                const data = await response.clone().json().catch(() => ({}));
+                const job = analysisJobs.get(nextJob.taskId);
+                if (!job) return response;
+
+                if (!response.ok) {
+                    globalAiQueue.failed += 1;
+                    job.status = 'failed';
+                    job.current_step = data.error || `Analiz başarısız (${response.status})`;
+                    renderAnalysisMonitor();
+                    return response;
+                }
+
+                globalAiQueue.succeeded += 1;
+                if (data.error) {
+                    job.status = 'failed';
+                    job.current_step = data.error;
+                    renderAnalysisMonitor();
+                    return response;
+                }
+
+                if (job.status !== 'completed') {
+                    job.current_step = data.message || 'Analiz tamamlandı';
+                    renderAnalysisMonitor();
+                }
+
+                return response;
+            })
+            .catch((err) => {
+                const job = analysisJobs.get(nextJob.taskId);
+                if (!job) return;
+                globalAiQueue.failed += 1;
+                job.status = 'failed';
+                job.current_step = `İstek hatası: ${err}`;
+                renderAnalysisMonitor();
+            })
+            .finally(() => {
+                globalAiQueue.active = Math.max(0, globalAiQueue.active - 1);
+                processGlobalAiQueue();
+            });
+    }
+}
+
+function startTrackedAnalysis(taskId, label, requestFactory, options = {}) {
+    let resolveStarted;
+    const startedPromise = new Promise((resolve) => {
+        resolveStarted = resolve;
+    });
+    const retentionMs = Math.max(5000, parseInt(options.retentionMs, 10) || 45000);
+
+    const job = {
         taskId,
         label,
-        status: 'started',
+        status: 'queued',
         progress: 0,
-        current_step: 'Analiz işi kuyruğa alındı...',
+        current_step: 'Analiz işi global kuyruğa alındı...',
         metrics: {
             total_functions: 0,
             completed_functions: 0,
@@ -211,45 +327,21 @@ function startTrackedAnalysis(taskId, label, requestPromise) {
             ai_avg_duration_seconds: 0,
         },
         createdAt: Date.now(),
+        retentionMs,
         notFoundCount: 0,
         errorCount: 0,
         pollTimer: null,
-    });
+        requestFactory,
+        requestPromise: null,
+        resolveStarted,
+    };
+
+    analysisJobs.set(taskId, job);
+    globalAiQueue.pending.push(job);
+
     renderAnalysisMonitor();
-    pollAnalysisTask(taskId);
-
-    requestPromise
-        .then(async (response) => {
-            const data = await response.json().catch(() => ({}));
-            const job = analysisJobs.get(taskId);
-            if (!job) return;
-
-            if (!response.ok) {
-                job.status = 'failed';
-                job.current_step = data.error || `Analiz başarısız (${response.status})`;
-                renderAnalysisMonitor();
-                return;
-            }
-
-            if (data.error) {
-                job.status = 'failed';
-                job.current_step = data.error;
-                renderAnalysisMonitor();
-                return;
-            }
-
-            if (job.status !== 'completed') {
-                job.current_step = data.message || 'Analiz tamamlandı';
-                renderAnalysisMonitor();
-            }
-        })
-        .catch((err) => {
-            const job = analysisJobs.get(taskId);
-            if (!job) return;
-            job.status = 'failed';
-            job.current_step = `İstek hatası: ${err}`;
-            renderAnalysisMonitor();
-        });
+    processGlobalAiQueue();
+    return startedPromise;
 }
 
 function loadReport() {
@@ -312,71 +404,24 @@ function analyzeAllMissingFiles() {
         return;
     }
 
-    bulkAnalysisState.pending = targets.slice();
-    bulkAnalysisState.active = 0;
-    bulkAnalysisState.total = targets.length;
-    bulkAnalysisState.succeeded = 0;
-    bulkAnalysisState.failed = 0;
-    bulkAnalysisState.running = true;
-
-    processBulkAnalysisQueue();
-
-    showSuccess(
-        'Toplu Analiz Başlatıldı',
-        `${targets.length} dosya kuyruğa alındı. Aynı anda en fazla ${bulkAnalysisState.maxConcurrent} analiz çalıştırılacak.`
-    );
-}
-
-function processBulkAnalysisQueue() {
-    if (!bulkAnalysisState.running) {
-        return;
-    }
-
-    while (
-        bulkAnalysisState.active < bulkAnalysisState.maxConcurrent &&
-        bulkAnalysisState.pending.length > 0
-    ) {
-        const target = bulkAnalysisState.pending.shift();
+    globalAiQueue.succeeded = 0;
+    globalAiQueue.failed = 0;
+    targets.forEach((target) => {
         const taskId = `ai-file-${target.fileId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        const requestPromise = fetch(
-            `${API_URL}/analysis/file/${target.fileId}?missing_only=true&task_id=${encodeURIComponent(taskId)}`,
-            { method: 'POST' }
-        );
-
-        bulkAnalysisState.active += 1;
-
         startTrackedAnalysis(
             taskId,
             `Toplu Dosya Analizi: ${target.projectName} / ${target.fileName}`,
-            requestPromise
+            () => fetch(
+                `${API_URL}/analysis/file/${target.fileId}?missing_only=true&task_id=${encodeURIComponent(taskId)}`,
+                { method: 'POST' }
+            )
         );
+    });
 
-        requestPromise
-            .then((response) => {
-                if (response.ok) {
-                    bulkAnalysisState.succeeded += 1;
-                } else {
-                    bulkAnalysisState.failed += 1;
-                }
-            })
-            .catch(() => {
-                bulkAnalysisState.failed += 1;
-            })
-            .finally(() => {
-                bulkAnalysisState.active = Math.max(0, bulkAnalysisState.active - 1);
-
-                if (bulkAnalysisState.pending.length === 0 && bulkAnalysisState.active === 0) {
-                    bulkAnalysisState.running = false;
-                    showInfo(
-                        'Toplu Analiz Kuyruğu Tamamlandı',
-                        `Toplam: ${bulkAnalysisState.total}, Başarılı: ${bulkAnalysisState.succeeded}, Hatalı: ${bulkAnalysisState.failed}`
-                    );
-                    return;
-                }
-
-                processBulkAnalysisQueue();
-            });
-    }
+    showSuccess(
+        'Toplu Analiz Başlatıldı',
+        `${targets.length} dosya global kuyruğa alındı. Aynı anda en fazla ${globalAiQueue.maxConcurrent} AI işi başlatılacak.`
+    );
 }
 
 function clearErrorSummary(functionId) {
@@ -422,7 +467,7 @@ function reanalyzeErrorSummary(functionId) {
     startTrackedAnalysis(
         taskId,
         `Error Re-Analyze: #${functionId}`,
-        fetch(`${API_URL}/analysis/errors/reanalyze?task_id=${encodeURIComponent(taskId)}`, {
+        () => fetch(`${API_URL}/analysis/errors/reanalyze?task_id=${encodeURIComponent(taskId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ function_ids: [functionId] })
@@ -436,7 +481,7 @@ function reanalyzeAllErrorSummaries() {
     startTrackedAnalysis(
         taskId,
         'Error Re-Analyze: Tümü',
-        fetch(`${API_URL}/analysis/errors/reanalyze?task_id=${encodeURIComponent(taskId)}`, {
+        () => fetch(`${API_URL}/analysis/errors/reanalyze?task_id=${encodeURIComponent(taskId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({})
@@ -458,11 +503,11 @@ function toggleFileDetails(button, fileId) {
 function analyzeMissingFunctions(projectId, fileName, fileId) {
     if (confirm(`"${fileName}" dosyasındaki tüm eksik özetler oluşturulacak. Devam etmek istiyor musunuz?`)) {
         const taskId = `ai-file-${fileId}-${Date.now()}`;
-        showSuccess('Bilgi', `"${fileName}" için analiz işi başlatıldı`);
+        showSuccess('Bilgi', `"${fileName}" için AI işi global kuyruğa alındı`);
         startTrackedAnalysis(
             taskId,
             `Dosya Analizi: ${fileName}`,
-            fetch(`${API_URL}/analysis/file/${fileId}?missing_only=true&task_id=${encodeURIComponent(taskId)}`, {
+            () => fetch(`${API_URL}/analysis/file/${fileId}?missing_only=true&task_id=${encodeURIComponent(taskId)}`, {
                 method: 'POST'
             })
         );
@@ -475,7 +520,7 @@ function analyzeSingleFunction(functionId) {
     startTrackedAnalysis(
         taskId,
         `Fonksiyon Analizi: #${functionId}`,
-        fetch(`${API_URL}/analysis/function/${functionId}/ai-summary?task_id=${encodeURIComponent(taskId)}`, {
+        () => fetch(`${API_URL}/analysis/function/${functionId}/ai-summary?task_id=${encodeURIComponent(taskId)}`, {
             method: 'POST'
         })
     );
@@ -573,60 +618,63 @@ function renderReport(reportData, errorData) {
 
         reportData.projects.forEach(project => {
             const pStats = project.statistics;
-            html += `
-                <div style="background: white; padding: 15px; margin-bottom: 15px; border-left: 4px solid #3498db; border-radius: 4px;">
-                    <h4 style="margin-top: 0;">${project.name}</h4>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 10px;">
-                        <div><strong>Fonksiyonlar:</strong> ${pStats.total}</div>
-                        <div><strong>Özetlendi:</strong> ${pStats.with_summary} (${pStats.coverage})</div>
-                        <div><strong>Beklemede:</strong> ${pStats.without_summary}</div>
-                    </div>
-            `;
+            const fileEntries = project.files ? Object.entries(project.files) : [];
+            const pendingFiles = fileEntries.filter(([, fileData]) => (fileData.total - fileData.with_summary) > 0);
+            const completedFiles = fileEntries.filter(([, fileData]) => fileData.total > 0 && fileData.with_summary === fileData.total);
 
-            // Dosya detayları
-            if (project.files) {
-                html += '<div style="margin-top: 15px;"><strong>Dosyalar:</strong>';
-                for (const [fileName, fileData] of Object.entries(project.files)) {
-                    const coverage = fileData.total > 0 ? Math.round((fileData.with_summary / fileData.total) * 100) : 0;
-                    const isComplete = coverage === 100;
-                    const progressColor = coverage === 100 ? '#27ae60' : coverage >= 80 ? '#f39c12' : '#e74c3c';
+            const renderFileCard = ([fileName, fileData]) => {
+                const coverage = fileData.total > 0 ? Math.round((fileData.with_summary / fileData.total) * 100) : 0;
+                const isComplete = coverage === 100;
+                const progressColor = coverage === 100 ? '#27ae60' : coverage >= 80 ? '#f39c12' : '#e74c3c';
+                const fileNameArg = JSON.stringify(fileName);
+                const missingFunctions = Array.isArray(fileData.missing_functions)
+                    ? fileData.missing_functions
+                    : (fileData.functions || []).filter(f => !f.has_summary);
+                const summarizedFunctions = Array.isArray(fileData.functions)
+                    ? fileData.functions.filter(f => f.has_summary)
+                    : [];
 
-                    html += `
-                        <div style="background: ${isComplete ? '#f0fff4' : '#fff5f5'}; margin-top: 10px; padding: 10px; border-radius: 4px; border-left: 3px solid ${progressColor};">
-                            <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <div style="flex: 1;">
-                                    <strong>${fileName}</strong>
-                                    <div style="font-size: 14px; color: #7f8c8d; margin-top: 5px;">
-                                        İlerleme: <strong style="color: ${progressColor};">${coverage}%</strong> (${fileData.with_summary}/${fileData.total})
-                                    </div>
-                                    <div style="width: 200px; height: 8px; background: #e0e0e0; border-radius: 4px; margin-top: 5px; overflow: hidden;">
-                                        <div style="width: ${coverage}%; height: 100%; background: ${progressColor};"></div>
-                                    </div>
+                return `
+                    <div style="background: ${isComplete ? '#f0fff4' : '#fff5f5'}; margin-top: 10px; padding: 10px; border-radius: 4px; border-left: 3px solid ${progressColor};">
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            <div style="flex: 1; min-width: 220px;">
+                                <strong>${fileName}</strong>
+                                <div style="font-size: 14px; color: #7f8c8d; margin-top: 5px;">
+                                    İlerleme: <strong style="color: ${progressColor};">${coverage}%</strong> (${fileData.with_summary}/${fileData.total})
                                 </div>
-                                <div style="margin-left: 10px; display: flex; gap: 5px;">
-                                    ${coverage < 100 ? (canAnalyze ? `
-                                        <button class="btn btn-sm" onclick="analyzeMissingFunctions(${project.id}, '${fileName}', ${fileData.file_id})" 
-                                                style="padding: 6px 12px; background: #3498db; color: white; border: none; border-radius: 3px; cursor: pointer;">
-                                            🤖 Analiz Et (${fileData.missing_functions ? fileData.missing_functions.length : 0})
-                                        </button>
-                                    ` : `<span style="color: #7f8c8d; font-weight: bold;">Eksik Özetler Var</span>`) : `
-                                        <span style="color: #27ae60; font-weight: bold;">✅ Tamamlandı</span>
-                                    `}
-                                    <button class="btn btn-sm" onclick="toggleFileDetails(this, ${fileData.file_id})" 
-                                            style="padding: 6px 12px; background: #95a5a6; color: white; border: none; border-radius: 3px; cursor: pointer;">
-                                        📋 Detaylar
-                                    </button>
+                                <div style="font-size: 12px; color: #7f8c8d; margin-top: 4px;">
+                                    Eksik: <strong>${missingFunctions.length}</strong> | Tamamlanan: <strong>${summarizedFunctions.length}</strong>
+                                </div>
+                                <div style="width: 200px; height: 8px; background: #e0e0e0; border-radius: 4px; margin-top: 5px; overflow: hidden;">
+                                    <div style="width: ${coverage}%; height: 100%; background: ${progressColor};"></div>
                                 </div>
                             </div>
-                            
-                            <!-- Dosya detayları (gizli) -->
-                            <div data-file-id="${fileData.file_id}" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd;">
-                                <strong>Eksik Özetler:</strong>
-                                ${fileData.missing_functions && fileData.missing_functions.length > 0 ? `
-                                    <ul style="margin: 5px 0 0 20px; font-size: 13px;">
-                                        ${fileData.missing_functions.map(f => `
+                            <div style="display: flex; gap: 5px; flex-wrap: wrap;">
+                                ${coverage < 100 ? (canAnalyze ? `
+                                    <button class="btn btn-sm" onclick="analyzeMissingFunctions(${project.id}, ${fileNameArg}, ${fileData.file_id})" 
+                                            style="padding: 6px 12px; background: #3498db; color: white; border: none; border-radius: 3px; cursor: pointer;">
+                                        🤖 Analiz Et (${missingFunctions.length})
+                                    </button>
+                                ` : `<span style="color: #7f8c8d; font-weight: bold;">Eksik Özetler Var</span>`) : `
+                                    <span style="color: #27ae60; font-weight: bold;">✅ Tamamlandı</span>
+                                `}
+                                <button class="btn btn-sm" onclick="toggleFileDetails(this, ${fileData.file_id})" 
+                                        style="padding: 6px 12px; background: #95a5a6; color: white; border: none; border-radius: 3px; cursor: pointer;">
+                                    📋 Detaylar
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div data-file-id="${fileData.file_id}" style="display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd;">
+                            <details ${missingFunctions.length > 0 ? 'open' : ''} style="background:white; border:1px solid #f1d2d2; border-radius:4px; padding:8px 10px; margin-bottom:10px;">
+                                <summary style="cursor:pointer; font-weight:bold; color:#c0392b;">
+                                    ❌ Eksik Özetler (${missingFunctions.length})
+                                </summary>
+                                ${missingFunctions.length > 0 ? `
+                                    <ul style="margin: 8px 0 0 20px; font-size: 13px;">
+                                        ${missingFunctions.map(f => `
                                             <li style="margin: 5px 0;">
-                                                <span style="color: #e74c3c;">❌</span> 
+                                                <span style="color: #e74c3c;">❌</span>
                                                 <strong>${f.qualified_name}</strong> (${f.type})
                                                 ${canAnalyze ? `
                                                 <button onclick="analyzeSingleFunction(${f.function_id})" 
@@ -638,12 +686,69 @@ function renderReport(reportData, errorData) {
                                         `).join('')}
                                     </ul>
                                 ` : `
-                                    <p style="margin-top: 5px; color: #27ae60; font-size: 13px;">✅ Tüm fonksiyonlar özetlenmiş</p>
+                                    <p style="margin-top: 8px; color: #27ae60; font-size: 13px;">✅ Eksik özet yok</p>
                                 `}
-                            </div>
+                            </details>
+
+                            <details style="background:white; border:1px solid #d8eadc; border-radius:4px; padding:8px 10px;">
+                                <summary style="cursor:pointer; font-weight:bold; color:#1e8449;">
+                                    ✅ Özetlenmiş Fonksiyonlar (${summarizedFunctions.length})
+                                </summary>
+                                ${summarizedFunctions.length > 0 ? `
+                                    <ul style="margin: 8px 0 0 20px; font-size: 13px;">
+                                        ${summarizedFunctions.map(f => `
+                                            <li style="margin: 5px 0; color:#1e8449;">
+                                                <span>✅</span>
+                                                <strong>${f.qualified_name}</strong> (${f.type})
+                                            </li>
+                                        `).join('')}
+                                    </ul>
+                                ` : `
+                                    <p style="margin-top: 8px; color: #7f8c8d; font-size: 13px;">Özetlenmiş fonksiyon yok</p>
+                                `}
+                            </details>
                         </div>
-                    `;
-                }
+                    </div>
+                `;
+            };
+
+            html += `
+                <div style="background: white; padding: 15px; margin-bottom: 15px; border-left: 4px solid #3498db; border-radius: 4px;">
+                    <h4 style="margin-top: 0;">${project.name}</h4>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 10px;">
+                        <div><strong>Fonksiyonlar:</strong> ${pStats.total}</div>
+                        <div><strong>Özetlendi:</strong> ${pStats.with_summary} (${pStats.coverage})</div>
+                        <div><strong>Beklemede:</strong> ${pStats.without_summary}</div>
+                    </div>
+            `;
+
+            if (fileEntries.length > 0) {
+                const pendingFunctionsTotal = pendingFiles.reduce((sum, [, fileData]) => sum + ((fileData.total || 0) - (fileData.with_summary || 0)), 0);
+                const completedFunctionsTotal = completedFiles.reduce((sum, [, fileData]) => sum + (fileData.with_summary || 0), 0);
+
+                html += '<div style="margin-top: 15px;"><strong>Dosyalar:</strong>';
+                html += `
+                    <details open style="margin-top:10px; background:#fff8f8; border:1px solid #f2d1d1; border-radius:6px; padding:10px 12px;">
+                        <summary style="cursor:pointer; font-weight:bold; color:#c0392b;">
+                            ❌ Analiz Edilmemiş / Eksik Özetli Dosyalar (${pendingFiles.length} dosya, ${pendingFunctionsTotal} fonksiyon)
+                        </summary>
+                        ${pendingFiles.length > 0
+                            ? pendingFiles.map(renderFileCard).join('')
+                            : '<p style="margin:10px 0 0 0; color:#27ae60; font-size:13px;">✅ Eksik özetli dosya yok</p>'}
+                    </details>
+                `;
+
+                html += `
+                    <details style="margin-top:10px; background:#f5fff7; border:1px solid #d6eadb; border-radius:6px; padding:10px 12px;">
+                        <summary style="cursor:pointer; font-weight:bold; color:#1e8449;">
+                            ✅ Analiz Edilmiş / Tamamlanan Dosyalar (${completedFiles.length} dosya, ${completedFunctionsTotal} fonksiyon)
+                        </summary>
+                        ${completedFiles.length > 0
+                            ? completedFiles.map(renderFileCard).join('')
+                            : '<p style="margin:10px 0 0 0; color:#7f8c8d; font-size:13px;">Tamamlanan dosya yok</p>'}
+                    </details>
+                `;
+
                 html += '</div>';
             }
 
