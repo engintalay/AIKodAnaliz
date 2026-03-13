@@ -183,7 +183,8 @@ class LMStudioClient:
             }
     
     def analyze_function(self, code: str, signature: str, dependency_summaries: list = None, 
-                        temperature: float = None, top_p: float = None, max_tokens: int = None) -> str:
+                        temperature: float = None, top_p: float = None, max_tokens: int = None,
+                        extra_criteria: str = None, extra_question: str = None) -> str:
         """Get AI summary for a function
         
         Args:
@@ -210,6 +211,12 @@ class LMStudioClient:
             for dep in dependency_summaries:
                 dependency_context += f"\n- {dep['name']}: {dep['summary']}\n"
         
+        extra_instructions = ""
+        if extra_criteria:
+            extra_instructions += f"\nEk kriter: {extra_criteria}\n"
+        if extra_question:
+            extra_instructions += f"\nEk soru: {extra_question}\n"
+
         prompt = f"""Bu fonksiyonu analiz et ve SADECE TÜRKÇE yanıt ver.
     Kısa, net ve tekrar etmeyen bir özet üret.
 
@@ -219,12 +226,15 @@ Code:
 ```
 {code}
 ```{dependency_context}
+{extra_instructions}
 
 En fazla 200 kelimeyle şunları açıkla:
 1. What the function does
 2. Input parameters and their purpose
 3. Return value/output
 4. Any side effects or important notes
+
+Eğer "Ek soru" verildiyse, özetin sonunda "Ek Soru Yanıtı:" başlığı ile kısa cevap ver.
 
 Summary:"""
         

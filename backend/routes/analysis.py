@@ -150,6 +150,84 @@ def test_lmstudio_connection():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@bp.route('/project/<int:project_id>/analyze-single-file/<int:file_id>', methods=['POST'])
+def analyze_single_file(project_id, file_id):
+    """Analyze a single source file and extract functions (used when adding a file to an existing project)"""
+    task_id = request.args.get('task_id', str(uuid.uuid4()))
+    try:
+        row = db.execute_query(
+            'SELECT id, content, language, file_name FROM source_files WHERE id = ? AND project_id = ?',
+            (file_id, project_id)
+        )
+        if not row:
+            return jsonify({'error': 'File not found in project'}), 404
+
+        file_row = dict(row[0])
+        content = file_row['content']
+        language = file_row['language']
+        file_name = file_row['file_name']
+
+        progress_tracker.start_task(task_id, total_steps=100)
+        progress_tracker.update(task_id, progress=10, step=f'Analiz başlatılıyor: {file_name}', detail='')
+
+        # Remove previous functions for this file only (don't touch the rest of the project)
+        old_func_ids = db.execute_query('SELECT id FROM functions WHERE file_id = ?', (file_id,))
+        for fr in (old_func_ids or []):
+            fid = fr[0]
+            db.execute_update('DELETE FROM function_calls WHERE caller_function_id = ? OR callee_function_id = ?', (fid, fid))
+            db.execute_update('DELETE FROM entry_points WHERE function_id = ?', (fid,))
+        db.execute_update('DELETE FROM functions WHERE file_id = ?', (file_id,))
+
+        analyzer = AdvancedCodeAnalyzer()
+        try:
+            result = analyzer.analyze(file_name, content, language)
+        except ValueError as e:
+            progress_tracker.complete(task_id, success=False, message=f'Desteklenmeyen dil: {language}')
+            return jsonify({'error': str(e)}), 422
+        except Exception as e:
+            progress_tracker.complete(task_id, success=False, message=f'Analiz hatası: {str(e)}')
+            return jsonify({'error': str(e)}), 500
+
+        functions = result.get('functions', [])
+        progress_tracker.update(task_id, progress=50, step=f'{len(functions)} fonksiyon bulundu', detail='Veritabanına kaydediliyor')
+
+        func_id_map = {}
+        for func in functions:
+            fid = db.execute_insert(
+                '''INSERT INTO functions
+                (project_id, file_id, function_name, function_type,
+                start_line, end_line, signature, parameters, return_type,
+                class_name, package_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (project_id, file_id, func['name'], func['type'],
+                 func['start_line'], func['end_line'], func['signature'],
+                 json.dumps(func['parameters']), func.get('return_type', ''),
+                 func.get('class_name'), func.get('package_name'))
+            )
+            func_id_map[func['name']] = fid
+            if func.get('is_entry', False):
+                db.execute_insert(
+                    'INSERT INTO entry_points (project_id, function_id, entry_type) VALUES (?, ?, ?)',
+                    (project_id, fid, 'main')
+                )
+
+        progress_tracker.complete(task_id, success=True, message=f'{len(functions)} fonksiyon çıkarıldı')
+        log_analysis(project_id, f"Single file analyzed: {file_name}", functions_found=len(functions))
+
+        return jsonify({
+            'task_id': task_id,
+            'file_id': file_id,
+            'file_name': file_name,
+            'functions_found': len(functions),
+            'message': f'{len(functions)} fonksiyon başarıyla çıkarıldı'
+        }), 200
+
+    except Exception as e:
+        log_error(f"analyze_single_file (file: {file_id})", e)
+        progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
+        return jsonify({'error': str(e)}), 500
+
+
 @bp.route('/project/<int:project_id>', methods=['POST'])
 def analyze_project(project_id):
     """Analyze entire project"""
@@ -519,7 +597,7 @@ def analyze_project(project_id):
         log_error(f"analyze_project (project: {project_id})", e)
         return jsonify({'error': str(e)}), 500
 
-def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0, temperature=None, top_p=None, max_tokens=None, track_progress=True):
+def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0, temperature=None, top_p=None, max_tokens=None, track_progress=True, extra_criteria=None, extra_question=None):
     """Recursively generate AI summaries for function and its dependencies
     
     Args:
@@ -619,7 +697,9 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
                 temperature,
                 top_p,
                 max_tokens,
-                track_progress
+                track_progress,
+                extra_criteria,
+                extra_question
             )
         
         if dep_summary:
@@ -653,7 +733,8 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
     
     # Generate AI summary with dependency context
     summary = client.analyze_function(func_code, func['signature'], dependency_summaries, 
-                                     temperature=temperature, top_p=top_p, max_tokens=max_tokens)
+                                     temperature=temperature, top_p=top_p, max_tokens=max_tokens,
+                                     extra_criteria=extra_criteria, extra_question=extra_question)
     _accumulate_ai_metrics(task_id, getattr(client, 'last_call_stats', None))
     log_ai_call(function_id, "AI summary received", summary_length=len(summary))
     
@@ -800,10 +881,14 @@ def get_ai_summary(function_id):
         temperature = settings['temperature']
         top_p = settings['top_p']
         max_tokens = settings['max_tokens']
+        payload = request.get_json(silent=True) or {}
+        extra_criteria = (payload.get('extra_criteria') or '').strip()
+        extra_question = (payload.get('extra_question') or '').strip()
         
         # Generate summary recursively (will handle dependencies automatically)
         summary, _ = _generate_ai_summary_recursive(function_id, client, task_id=task_id, total_deps=total_deps,
-                                                   temperature=temperature, top_p=top_p, max_tokens=max_tokens)
+                                                   temperature=temperature, top_p=top_p, max_tokens=max_tokens,
+                                                   extra_criteria=extra_criteria, extra_question=extra_question)
         
         if not summary:
             # Distinguish missing function from failed AI generation
@@ -847,7 +932,7 @@ def get_ai_summary(function_id):
             progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
         return jsonify({'error': str(e)}), 500
 
-def _bulk_generate_worker(project_id, task_id, client, temperature, top_p, max_tokens):
+def _bulk_generate_worker(project_id, task_id, client, temperature, top_p, max_tokens, extra_criteria=None, extra_question=None):
     """Background worker for generating AI summaries for all missing functions."""
     try:
         # Find all functions in the project that lack a valid AI summary
@@ -898,7 +983,9 @@ def _bulk_generate_worker(project_id, task_id, client, temperature, top_p, max_t
                 temperature=temperature, 
                 top_p=top_p, 
                 max_tokens=max_tokens,
-                track_progress=False # We handle our own progress tracking in the loop for the top-level
+                track_progress=False, # We handle our own progress tracking in the loop for the top-level
+                extra_criteria=extra_criteria,
+                extra_question=extra_question
             )
             
             # _generate_ai_summary_recursive actually saves the valid summaries for us.
@@ -954,11 +1041,14 @@ def bulk_generate_ai_summaries(project_id):
             return jsonify({'error': 'LMStudio is not connected'}), 503
 
         settings = _load_ai_runtime_settings()
+        payload = request.get_json(silent=True) or {}
+        extra_criteria = (payload.get('extra_criteria') or '').strip()
+        extra_question = (payload.get('extra_question') or '').strip()
         
         # Start the background thread
         thread = threading.Thread(
             target=_bulk_generate_worker,
-            args=(project_id, task_id, client, settings['temperature'], settings['top_p'], settings['max_tokens']),
+            args=(project_id, task_id, client, settings['temperature'], settings['top_p'], settings['max_tokens'], extra_criteria, extra_question),
             daemon=True,
             name=f"BulkAI_{project_id}_{uuid.uuid4().hex[:6]}"
         )

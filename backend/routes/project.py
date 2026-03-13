@@ -306,6 +306,230 @@ def upload_project():
         progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
         return jsonify({'error': str(e), 'task_id': task_id}), 500
 
+
+@bp.route('/<int:project_id>/add-file', methods=['POST'])
+@check_project_access('write')
+def add_files_to_project(project_id):
+    """Add new files to an existing project (GELIS8)"""
+    try:
+        # Check project exists
+        project = db.execute_query('SELECT * FROM projects WHERE id = ?', (project_id,))
+        if not project:
+            return jsonify({'error': 'Project not found'}), 404
+        
+        if 'file' not in request.files:
+            logger.warning(f"Add file attempt without file for project {project_id}")
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if not file or file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        task_id = str(uuid.uuid4())
+        logger.info(f"Starting add file: {file.filename} to Project {project_id} | Task: {task_id}")
+        
+        try:
+            progress_tracker.start_task(task_id, total_steps=100)
+            progress_tracker.update(task_id, progress=5, step='Dosya işleniyor...', detail=f'Dosya: {file.filename}')
+            
+            user = get_user_from_session()
+            log_upload(project_id, "Add file initiated", task_id=task_id, file_name=file.filename)
+            
+            file_lower = file.filename.lower()
+            processed_files = 0
+            skipped_files = 0
+            added_documents = 0
+            added_single_file_id = None
+            
+            # Determine file type and process accordingly
+            if file_lower.endswith(('.zip', '.war', '.jar')):
+                # Extract archive files
+                progress_tracker.update(task_id, progress=10, step='Arşiv dosyası çıkarılıyor...', detail=f'İçerik analiz ediliyor')
+                
+                # Create temporary extraction directory
+                temp_extract_dir = os.path.join(UPLOAD_DIR, f'temp_{project_id}_{task_id}')
+                os.makedirs(temp_extract_dir, exist_ok=True)
+                
+                # Save and extract
+                with zipfile.ZipFile(file.stream, 'r') as archive_ref:
+                    file_list = archive_ref.namelist()
+                    total_files = len(file_list)
+                    progress_tracker.update(task_id, progress=20, step=f'Arşiv açılıyor ({total_files} dosya)', detail='')
+                    archive_ref.extractall(temp_extract_dir)
+                
+                # Extract nested JARs if WAR
+                if file_lower.endswith('.war'):
+                    progress_tracker.update(task_id, progress=25, step='WAR içindeki JAR dosyaları çıkarılıyor...', detail='')
+                    _extract_nested_jars(temp_extract_dir, logger)
+                
+                # Process extracted files
+                progress_tracker.update(task_id, progress=30, step='Dosyalar işleniyor...', detail='Kaynak dosyalar veritabanına aktarılıyor')
+                
+                all_files = []
+                for root, dirs, files in os.walk(temp_extract_dir):
+                    for fname in files:
+                        fpath = os.path.join(root, fname)
+                        all_files.append((fpath, fname))
+                
+                total_to_process = len(all_files)
+                
+                for idx, (fpath, fname) in enumerate(all_files):
+                    rel_path = os.path.relpath(fpath, temp_extract_dir)
+                    current_progress = 30 + int((idx / total_to_process) * 60) if total_to_process > 0 else 30
+                    progress_tracker.update(task_id, progress=current_progress, detail=f'İşleniyor: {rel_path}')
+                    
+                    if not _should_index_file(fname, fpath, is_war=file_lower.endswith('.war')):
+                        skipped_files += 1
+                        continue
+                    
+                    language = _detect_language(fname)
+                    
+                    try:
+                        with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                        
+                        # Add to source_files
+                        file_id = db.execute_insert(
+                            '''INSERT INTO source_files
+                            (project_id, file_path, file_name, language, content)
+                            VALUES (?, ?, ?, ?, ?)''',
+                            (project_id, rel_path, fname, language, content)
+                        )
+                        processed_files += 1
+                        logger.debug(f"[Project {project_id}] Added file: {rel_path} (ID: {file_id})")
+                    except Exception as e:
+                        skipped_files += 1
+                        logger.warning(f"[Project {project_id}] Failed to process {rel_path}: {str(e)}")
+                        continue
+                
+                # Cleanup
+                shutil.rmtree(temp_extract_dir, ignore_errors=True)
+                
+            elif file_lower.endswith(('.pdf', '.doc', '.docx', '.txt', '.md')):
+                # Document files for RAG
+                progress_tracker.update(task_id, progress=30, step='Doküman işleniyor...', detail='RAG analizine hazırlanıyor')
+                
+                document_type = 'pdf' if file_lower.endswith('.pdf') else \
+                               'docx' if file_lower.endswith('.docx') else \
+                               'doc' if file_lower.endswith('.doc') else \
+                               'text'
+                
+                # Save document file
+                doc_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}', 'documents')
+                os.makedirs(doc_dir, exist_ok=True)
+                
+                doc_path = os.path.join(doc_dir, file.filename)
+                file.save(doc_path)
+                
+                file_size = os.path.getsize(doc_path)
+                
+                # Extract text content based on document type (simplified)
+                extracted_text = ""
+                try:
+                    if file_lower.endswith('.pdf'):
+                        # For PDF, we'd need PyPDF2 or similar - for now store filename in extracted_text
+                        extracted_text = f"PDF Document: {file.filename}"
+                    elif file_lower.endswith(('.doc', '.docx')):
+                        extracted_text = f"Document: {file.filename}"
+                    elif file_lower.endswith('.txt'):
+                        with open(doc_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            extracted_text = f.read()
+                    elif file_lower.endswith('.md'):
+                        with open(doc_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            extracted_text = f.read()
+                except Exception as e:
+                    logger.warning(f"Failed to extract text from {file.filename}: {e}")
+                    extracted_text = f"Document: {file.filename}"
+                
+                # Add to project_documents
+                doc_id = db.execute_insert(
+                    '''INSERT INTO project_documents
+                    (project_id, file_name, file_path, file_type, document_type, 
+                     file_size, extracted_text, source_folder)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                    (project_id, file.filename, os.path.relpath(doc_path, UPLOAD_DIR), 
+                     document_type, document_type, file_size, extracted_text, 'documents')
+                )
+                added_documents = 1
+                logger.debug(f"[Project {project_id}] Added document: {file.filename} (ID: {doc_id})")
+                
+            elif file_lower.endswith(('.java', '.sql', '.py', '.js', '.ts', '.php')):
+                # Single source code files
+                progress_tracker.update(task_id, progress=30, step='Kaynak dosyası işleniyor...', detail=f'{file.filename}')
+                
+                language = _detect_language(file.filename)
+                
+                # Sanitize filename to prevent directory traversal
+                safe_name = os.path.basename(file.filename).strip()
+                if not safe_name:
+                    raise ValueError(f"Geçersiz dosya adı: {file.filename}")
+                
+                # Read file content
+                file.seek(0)
+                content = file.read().decode('utf-8', errors='ignore')
+                
+                # Save to project directory
+                file_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}')
+                os.makedirs(file_dir, exist_ok=True)
+                
+                save_path = os.path.join(file_dir, safe_name)
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                
+                # Add to source_files (update if already exists)
+                existing = db.execute_query(
+                    'SELECT id FROM source_files WHERE project_id = ? AND file_path = ?',
+                    (project_id, safe_name)
+                )
+                if existing:
+                    db.execute_update(
+                        'UPDATE source_files SET content = ?, language = ? WHERE project_id = ? AND file_path = ?',
+                        (content, language, project_id, safe_name)
+                    )
+                    file_id = existing[0][0]
+                    logger.info(f"[Project {project_id}] Updated existing source file: {safe_name} (ID: {file_id})")
+                else:
+                    file_id = db.execute_insert(
+                        '''INSERT INTO source_files
+                        (project_id, file_path, file_name, language, content)
+                        VALUES (?, ?, ?, ?, ?)''',
+                        (project_id, safe_name, safe_name, language, content)
+                    )
+                    logger.info(f"[Project {project_id}] Added source file: {safe_name} (ID: {file_id})")
+                processed_files = 1
+                added_single_file_id = file_id
+            else:
+                return jsonify({'error': f'Unsupported file type: {file.filename}'}), 400
+            
+            progress_tracker.update(task_id, progress=90, step='Temizlik yapılıyor...', detail='Geçici dosyalar temizleniyor')
+            progress_tracker.complete(
+                task_id, 
+                success=True, 
+                message=f'Tamamlandı! {processed_files} kaynak dosya, {added_documents} doküman eklendi, {skipped_files} atlandı'
+            )
+            
+            log_upload(project_id, "File addition complete", processed=processed_files, documents=added_documents, skipped=skipped_files)
+            
+            return jsonify({
+                'project_id': project_id,
+                'task_id': task_id,
+                'file_name': file.filename,
+                'files_processed': processed_files,
+                'documents_added': added_documents,
+                'files_skipped': skipped_files,
+                'added_file_id': added_single_file_id,
+                'message': 'Files added successfully'
+            }), 201
+            
+        except Exception as e:
+            log_error(f"add_files_to_project (task: {task_id})", e, project_id=project_id)
+            progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
+            return jsonify({'error': str(e), 'task_id': task_id}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in add_files_to_project: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @bp.route('/git-info', methods=['POST'])
 def get_git_info():
     """Get Git repository information (branches, repo name)"""
@@ -553,14 +777,19 @@ def import_git_project():
 @bp.route('/<int:project_id>/files', methods=['GET'])
 @check_project_access('read')
 def get_project_files(project_id):
-    """Get all source files in project"""
+    """Get all source files and documents in project"""
     try:
-        rows = db.execute_query(
-            'SELECT id, file_name, file_path, language FROM source_files WHERE project_id = ?',
+        source_rows = db.execute_query(
+            'SELECT id, file_name, file_path, language, NULL as document_type, \'source\' as entry_type FROM source_files WHERE project_id = ?',
             (project_id,)
         )
-        files = [dict(row) for row in rows]
-        return jsonify(files), 200
+        doc_rows = db.execute_query(
+            'SELECT id, file_name, file_path, NULL as language, document_type, \'document\' as entry_type FROM project_documents WHERE project_id = ?',
+            (project_id,)
+        )
+        files = [dict(row) for row in (source_rows or [])]
+        documents = [dict(row) for row in (doc_rows or [])]
+        return jsonify({'source_files': files, 'documents': documents}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
