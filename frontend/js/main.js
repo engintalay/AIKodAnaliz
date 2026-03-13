@@ -1875,16 +1875,30 @@ async function loadFiles() {
             sourceFiles.forEach(file => {
                 const item = document.createElement('div');
                 item.className = 'file-item';
+                item.style.cssText = 'display:flex; justify-content:space-between; align-items:flex-start; gap:8px;';
+
+                const infoDiv = document.createElement('div');
+                infoDiv.style.flex = '1';
                 const nameEl = document.createElement('h4');
+                nameEl.style.margin = '0 0 2px 0';
                 nameEl.textContent = file.file_name;
                 const pathEl = document.createElement('p');
                 pathEl.style.cssText = 'font-size:12px; color:#666; margin:2px 0;';
                 pathEl.textContent = file.file_path;
                 const langEl = document.createElement('small');
                 langEl.textContent = `Dil: ${file.language || 'bilinmiyor'}`;
-                item.appendChild(nameEl);
-                item.appendChild(pathEl);
-                item.appendChild(langEl);
+                infoDiv.appendChild(nameEl);
+                infoDiv.appendChild(pathEl);
+                infoDiv.appendChild(langEl);
+
+                const analyzeBtn = document.createElement('button');
+                analyzeBtn.className = 'btn btn-secondary';
+                analyzeBtn.style.cssText = 'font-size:11px; padding:4px 8px; white-space:nowrap; flex-shrink:0;';
+                analyzeBtn.textContent = '🔍 Analiz Et';
+                analyzeBtn.onclick = () => analyzeFileById(file.id, file.file_name, analyzeBtn);
+
+                item.appendChild(infoDiv);
+                item.appendChild(analyzeBtn);
                 list.appendChild(item);
             });
         }
@@ -1973,30 +1987,28 @@ async function addFileToProject() {
 
             // If a single source code file was added, auto-analyze it
             if (result.added_file_id) {
+                let funcCount = 0;
                 try {
                     progressText.textContent = `🔍 Fonksiyonlar çıkarılıyor: ${result.file_name}...`;
                     const analyzeResp = await fetch(
                         `${API_URL}/analysis/project/${currentProjectId}/analyze-single-file/${result.added_file_id}`,
                         { method: 'POST' }
                     );
-                    const analyzeResult = await analyzeResp.json();
-                    const funcCount = analyzeResult.functions_found || 0;
-                    progressText.textContent = `✓ Tamamlandı! ${funcCount} fonksiyon çıkarıldı`;
-                    setTimeout(() => {
-                        fileInput.value = '';
-                        progressDiv.style.display = 'none';
-                        loadFiles();
-                        loadFunctions();
-                        showSuccess('Dosya Ekleme', `${result.file_name} eklendi, ${funcCount} fonksiyon çıkarıldı`);
-                    }, 1200);
+                    if (analyzeResp.ok) {
+                        const analyzeResult = await analyzeResp.json();
+                        funcCount = analyzeResult.functions_found || 0;
+                    }
                 } catch (e) {
-                    setTimeout(() => {
-                        fileInput.value = '';
-                        progressDiv.style.display = 'none';
-                        loadFiles();
-                        showSuccess('Dosya Ekleme', `${result.files_processed} kaynak dosya eklendi (analiz başlatılamadı)`);
-                    }, 1200);
+                    console.warn('Otomatik analiz başlatılamadı:', e);
                 }
+                progressText.textContent = `✓ Tamamlandı! ${funcCount} fonksiyon çıkarıldı`;
+                setTimeout(() => {
+                    fileInput.value = '';
+                    progressDiv.style.display = 'none';
+                    loadFiles();
+                    loadFunctions();
+                    showSuccess('Dosya Ekleme', `${result.file_name} eklendi, ${funcCount} fonksiyon çıkarıldı`);
+                }, 1200);
             } else {
                 // ZIP/doc uploads
                 setTimeout(() => {
@@ -2016,6 +2028,35 @@ async function addFileToProject() {
         console.error('Dosya ekleme hatası:', error);
         progressDiv.style.display = 'none';
         showError('Dosya Ekleme Hatası', error.message || 'Bilinmeyen bir hata oluştu');
+    }
+}
+
+async function analyzeFileById(fileId, fileName, btn) {
+    if (!fileId || !currentProjectId) return;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Analiz ediliyor...';
+    try {
+        const resp = await fetch(
+            `${API_URL}/analysis/project/${currentProjectId}/analyze-single-file/${fileId}`,
+            { method: 'POST' }
+        );
+        if (resp.ok) {
+            const result = await resp.json();
+            const cnt = result.functions_found || 0;
+            btn.textContent = `✓ ${cnt} fonksiyon`;
+            loadFunctions();
+            showSuccess('Analiz Tamamlandı', `${fileName}: ${cnt} fonksiyon çıkarıldı`);
+        } else {
+            const err = await resp.json().catch(() => ({}));
+            btn.textContent = '❌ Hata';
+            showError('Analiz Hatası', err.error || `HTTP ${resp.status}`);
+        }
+    } catch (e) {
+        btn.textContent = '❌ Hata';
+        showError('Analiz Hatası', e.message || 'Bilinmeyen hata');
+    } finally {
+        setTimeout(() => { btn.disabled = false; btn.textContent = original; }, 3000);
     }
 }
 

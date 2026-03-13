@@ -156,81 +156,49 @@ class AdvancedCodeAnalyzer:
             statements = sqlparse.parse(content)
             
             for stmt in statements:
-                stmt_type = stmt.get_type()
-                stmt_str = str(stmt).upper()
-                
-                # CREATE PROCEDURE/FUNCTION
-                if stmt_type == 'CREATE':
-                    if 'PROCEDURE' in stmt_str or 'FUNCTION' in stmt_str:
-                        name_match = re.search(r'(?:PROCEDURE|FUNCTION)\s+([\w.]+)', stmt_str, re.IGNORECASE)
-                        if name_match:
-                            obj_name = name_match.group(1)
-                            obj_type = 'procedure' if 'PROCEDURE' in stmt_str else 'function'
-                            
-                            params_match = re.search(r'\(([^)]+)\)', str(stmt), re.IGNORECASE)
-                            params = []
-                            if params_match:
-                                params_str = params_match.group(1)
-                                params = [p.strip().split()[0] for p in params_str.split(',') if p.strip()]
-                            
-                            line_num = content[:content.find(str(stmt))].count('\n') + 1 if str(stmt) in content else 1
-                            
-                            func_info = {
-                                'name': obj_name,
-                                'type': obj_type,
-                                'start_line': line_num,
-                                'end_line': line_num + str(stmt).count('\n'),
-                                'parameters': params,
-                                'return_type': None,
-                                'signature': ' '.join(str(stmt).split()[:5]) + '...',
-                                'is_entry': False,
-                                'class_name': None,
-                                'package_name': file_path
-                            }
-                            functions.append(func_info)
-                    
-                    # CREATE VIEW
-                    elif 'VIEW' in stmt_str:
-                        name_match = re.search(r'VIEW\s+([\w.]+)', stmt_str, re.IGNORECASE)
-                        if name_match:
-                            view_name = name_match.group(1)
-                            line_num = content[:content.find(str(stmt))].count('\n') + 1 if str(stmt) in content else 1
-                            
-                            func_info = {
-                                'name': view_name,
-                                'type': 'view',
-                                'start_line': line_num,
-                                'end_line': line_num + str(stmt).count('\n'),
-                                'parameters': [],
-                                'return_type': None,
-                                'signature': 'CREATE VIEW ' + view_name,
-                                'is_entry': False,
-                                'class_name': None,
-                                'package_name': file_path
-                            }
-                            functions.append(func_info)
-                    
-                    # CREATE TRIGGER
-                    elif 'TRIGGER' in stmt_str:
-                        name_match = re.search(r'TRIGGER\s+([\w.]+)', stmt_str, re.IGNORECASE)
-                        if name_match:
-                            trigger_name = name_match.group(1)
-                            line_num = content[:content.find(str(stmt))].count('\n') + 1 if str(stmt) in content else 1
-                            
-                            func_info = {
-                                'name': trigger_name,
-                                'type': 'trigger',
-                                'start_line': line_num,
-                                'end_line': line_num + str(stmt).count('\n'),
-                                'parameters': [],
-                                'return_type': None,
-                                'signature': 'CREATE TRIGGER ' + trigger_name,
-                                'is_entry': True,
-                                'class_name': None,
-                                'package_name': file_path
-                            }
-                            functions.append(func_info)
-                            entry_points.append(func_info)
+                stmt_raw = str(stmt)
+                stmt_str = stmt_raw.upper()
+
+                # Support CREATE / ALTER / CREATE OR ALTER / CREATE OR REPLACE
+                object_match = re.search(
+                    r'\b(?:CREATE|ALTER)(?:\s+OR\s+ALTER|\s+OR\s+REPLACE)?\s+'
+                    r'(PROCEDURE|FUNCTION|VIEW|TRIGGER)\s+([^\s(]+)',
+                    stmt_str,
+                    re.IGNORECASE
+                )
+                if not object_match:
+                    continue
+
+                obj_type = object_match.group(1).lower()
+                raw_name = object_match.group(2).strip()
+                # SQL Server names can be like [SCHEMA].[PROC]; normalize to SCHEMA.PROC
+                obj_name = raw_name.replace('].[', '.').replace('[', '').replace(']', '').strip('`"')
+
+                params = []
+                if obj_type in ['procedure', 'function']:
+                    params_match = re.search(r'\(([^)]+)\)', stmt_raw, re.IGNORECASE)
+                    if params_match:
+                        params_str = params_match.group(1)
+                        params = [p.strip().split()[0] for p in params_str.split(',') if p.strip()]
+
+                line_num = content[:content.find(stmt_raw)].count('\n') + 1 if stmt_raw in content else 1
+
+                func_info = {
+                    'name': obj_name,
+                    'type': obj_type,
+                    'start_line': line_num,
+                    'end_line': line_num + stmt_raw.count('\n'),
+                    'parameters': params,
+                    'return_type': None,
+                    'signature': ' '.join(stmt_raw.split()[:6]) + '...',
+                    'is_entry': obj_type == 'trigger',
+                    'class_name': None,
+                    'package_name': file_path
+                }
+                functions.append(func_info)
+
+                if obj_type == 'trigger':
+                    entry_points.append(func_info)
             
             # Extract table dependencies from SELECT/INSERT/UPDATE/DELETE
             for stmt in statements:
