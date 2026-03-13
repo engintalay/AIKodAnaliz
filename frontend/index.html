@@ -177,6 +177,14 @@
                             <p style="color: #666; margin-bottom: 15px;">Projedeki fonksiyonlar için yapay zeka
                                 analizlerini (AI summary) toplu olarak üretebilirsiniz. Bu işlem biraz zaman alabilir.
                             </p>
+                            <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
+                                <input id="bulkAiExtraCriteria" type="text"
+                                    placeholder="Ek kriter (opsiyonel) - Ornek: guvenlik risklerini mutlaka belirt"
+                                    style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
+                                <input id="bulkAiExtraQuestion" type="text"
+                                    placeholder="AI'ya ek soru (opsiyonel) - Ornek: performans iyilestirme onerileri neler?"
+                                    style="width:100%; padding:8px; border:1px solid #ddd; border-radius:4px;">
+                            </div>
                             <button id="btnBulkAiMissing" class="btn btn-secondary" onclick="startBulkAiAnalysis()"
                                 style="background-color: #f39c12; color: white; border: none;">
                                 🤖 Tüm Eksik Fonksiyonlara Yapay Zeka Özeti Çıkar
@@ -665,6 +673,15 @@
                 </div>
                 <textarea id="funcModalSummary"
                     style="width: 100%; height: 350px; font-family: inherit; padding: 8px; border-radius: 4px; border: 1px solid #ccc; resize: vertical;"></textarea>
+
+                <div style="margin-top: 8px; display: flex; flex-direction: column; gap: 8px;">
+                    <input id="funcAiExtraCriteria" type="text"
+                        placeholder="AI ozeti icin ek kriter (opsiyonel)"
+                        style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ccc;">
+                    <input id="funcAiExtraQuestion" type="text"
+                        placeholder="AI'ya ek soru istegi (opsiyonel)"
+                        style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ccc;">
+                </div>
 
                 <div style="text-align: right; margin-top: 5px; margin-bottom: 15px;">
                     <button id="btnSaveSummary" class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;"

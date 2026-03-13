@@ -597,7 +597,7 @@ def analyze_project(project_id):
         log_error(f"analyze_project (project: {project_id})", e)
         return jsonify({'error': str(e)}), 500
 
-def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0, temperature=None, top_p=None, max_tokens=None, track_progress=True):
+def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0, temperature=None, top_p=None, max_tokens=None, track_progress=True, extra_criteria=None, extra_question=None):
     """Recursively generate AI summaries for function and its dependencies
     
     Args:
@@ -697,7 +697,9 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
                 temperature,
                 top_p,
                 max_tokens,
-                track_progress
+                track_progress,
+                extra_criteria,
+                extra_question
             )
         
         if dep_summary:
@@ -731,7 +733,8 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
     
     # Generate AI summary with dependency context
     summary = client.analyze_function(func_code, func['signature'], dependency_summaries, 
-                                     temperature=temperature, top_p=top_p, max_tokens=max_tokens)
+                                     temperature=temperature, top_p=top_p, max_tokens=max_tokens,
+                                     extra_criteria=extra_criteria, extra_question=extra_question)
     _accumulate_ai_metrics(task_id, getattr(client, 'last_call_stats', None))
     log_ai_call(function_id, "AI summary received", summary_length=len(summary))
     
@@ -878,10 +881,14 @@ def get_ai_summary(function_id):
         temperature = settings['temperature']
         top_p = settings['top_p']
         max_tokens = settings['max_tokens']
+        payload = request.get_json(silent=True) or {}
+        extra_criteria = (payload.get('extra_criteria') or '').strip()
+        extra_question = (payload.get('extra_question') or '').strip()
         
         # Generate summary recursively (will handle dependencies automatically)
         summary, _ = _generate_ai_summary_recursive(function_id, client, task_id=task_id, total_deps=total_deps,
-                                                   temperature=temperature, top_p=top_p, max_tokens=max_tokens)
+                                                   temperature=temperature, top_p=top_p, max_tokens=max_tokens,
+                                                   extra_criteria=extra_criteria, extra_question=extra_question)
         
         if not summary:
             # Distinguish missing function from failed AI generation
@@ -925,7 +932,7 @@ def get_ai_summary(function_id):
             progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
         return jsonify({'error': str(e)}), 500
 
-def _bulk_generate_worker(project_id, task_id, client, temperature, top_p, max_tokens):
+def _bulk_generate_worker(project_id, task_id, client, temperature, top_p, max_tokens, extra_criteria=None, extra_question=None):
     """Background worker for generating AI summaries for all missing functions."""
     try:
         # Find all functions in the project that lack a valid AI summary
@@ -976,7 +983,9 @@ def _bulk_generate_worker(project_id, task_id, client, temperature, top_p, max_t
                 temperature=temperature, 
                 top_p=top_p, 
                 max_tokens=max_tokens,
-                track_progress=False # We handle our own progress tracking in the loop for the top-level
+                track_progress=False, # We handle our own progress tracking in the loop for the top-level
+                extra_criteria=extra_criteria,
+                extra_question=extra_question
             )
             
             # _generate_ai_summary_recursive actually saves the valid summaries for us.
@@ -1032,11 +1041,14 @@ def bulk_generate_ai_summaries(project_id):
             return jsonify({'error': 'LMStudio is not connected'}), 503
 
         settings = _load_ai_runtime_settings()
+        payload = request.get_json(silent=True) or {}
+        extra_criteria = (payload.get('extra_criteria') or '').strip()
+        extra_question = (payload.get('extra_question') or '').strip()
         
         # Start the background thread
         thread = threading.Thread(
             target=_bulk_generate_worker,
-            args=(project_id, task_id, client, settings['temperature'], settings['top_p'], settings['max_tokens']),
+            args=(project_id, task_id, client, settings['temperature'], settings['top_p'], settings['max_tokens'], extra_criteria, extra_question),
             daemon=True,
             name=f"BulkAI_{project_id}_{uuid.uuid4().hex[:6]}"
         )

@@ -287,8 +287,15 @@ async function startBulkAiAnalysis() {
 
     try {
         const taskId = 'bulk_ai_' + Date.now();
+        const extraCriteria = (document.getElementById('bulkAiExtraCriteria')?.value || '').trim();
+        const extraQuestion = (document.getElementById('bulkAiExtraQuestion')?.value || '').trim();
         const response = await fetch(`${API_URL}/analysis/project/${currentProjectId}/bulk-ai-summary?task_id=${taskId}`, {
-            method: 'POST'
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                extra_criteria: extraCriteria,
+                extra_question: extraQuestion
+            })
         });
 
         if (!response.ok) {
@@ -1565,8 +1572,15 @@ async function generateAISummary() {
     poll();  // Initial poll
 
     try {
+        const extraCriteria = (document.getElementById('funcAiExtraCriteria')?.value || '').trim();
+        const extraQuestion = (document.getElementById('funcAiExtraQuestion')?.value || '').trim();
         const aiResponse = await fetch(`${API_URL}/analysis/function/${currentModalFunctionId}/ai-summary?task_id=${encodeURIComponent(aiTaskId)}`, {
-            method: 'POST'
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                extra_criteria: extraCriteria,
+                extra_question: extraQuestion
+            })
         });
         const aiResult = await aiResponse.json();
 
