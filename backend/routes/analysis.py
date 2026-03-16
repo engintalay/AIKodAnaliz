@@ -349,8 +349,18 @@ def analyze_project(project_id):
                 detail=f'Proje {project_id} için analiz başlatıldı'
             )
         
+        # Preserve existing AI summaries (by qualified name) so re-analysis doesn't wipe them.
+        preserved_summaries = {}
+        existing_rows = db.execute_query(
+            'SELECT function_name, class_name, ai_summary FROM functions WHERE project_id = ?',
+            (project_id,)
+        )
+        for r in existing_rows:
+            kval = f"{r['class_name']}.{r['function_name']}" if r.get('class_name') else r['function_name']
+            if r.get('ai_summary'):
+                preserved_summaries[kval] = r['ai_summary']
+
         # Clear previous analysis data (allow re-analysis)
-        # Note: This will clear AI summaries. If re-analyzing, user should save important summaries.
         db.execute_update('DELETE FROM function_calls WHERE project_id = ?', (project_id,))
         db.execute_update('DELETE FROM entry_points WHERE project_id = ?', (project_id,))
         db.execute_update('DELETE FROM functions WHERE project_id = ?', (project_id,))
@@ -436,16 +446,19 @@ def analyze_project(project_id):
             
             # Store functions and entry points
             for func in result.get('functions', []):
+                qualified = f"{func.get('class_name')}.{func.get('name')}" if func.get('class_name') else func.get('name')
+                ai_summary = preserved_summaries.get(qualified)
+
                 func_id = db.execute_insert(
                     '''INSERT INTO functions 
                     (project_id, file_id, function_name, function_type, 
                     start_line, end_line, signature, parameters, return_type,
-                    class_name, package_name)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    class_name, package_name, ai_summary)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                     (project_id, file_id, func['name'], func['type'],
                     func['start_line'], func['end_line'], func['signature'],
                     json.dumps(func['parameters']), func.get('return_type', ''),
-                    func.get('class_name'), func.get('package_name'))
+                    func.get('class_name'), func.get('package_name'), ai_summary)
                 )
                 all_functions.append(func_id)
                 logger.debug(f"[Project {project_id}] Stored function: {func['name']} (ID: {func_id})")
