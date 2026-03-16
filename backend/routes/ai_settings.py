@@ -57,11 +57,24 @@ def update_setting(setting_name):
 
 @bp.route('/lmstudio/test', methods=['POST'])
 def test_lmstudio():
-    """Test LMStudio connection"""
+    """Test LMStudio connection.
+
+    Optional request JSON:
+    { "api_url": "http://..." }
+
+    If an api_url is provided, test it without saving it to the DB.
+    """
     try:
+        data = request.get_json(silent=True) or {}
+        api_url = (data.get('api_url') or '').strip().rstrip('/')
+
         from backend.lmstudio_client import LMStudioClient
         user = get_user_from_session()
         client = LMStudioClient(user_id=user['id'] if user else None)
+
+        if api_url:
+            client.api_url = api_url
+
         result = client.test_connection()
         return jsonify(result), 200
     except Exception as e:

@@ -2571,6 +2571,16 @@ async function saveLMSettings() {
     };
 
     try {
+        // Validate the AI server URL before saving
+        if (!apiUrlValue) {
+            throw new Error('Lütfen AI Sunucu URL’sini girin');
+        }
+
+        const testResult = await testLMConnection(apiUrlValue);
+        if (testResult.status !== 'connected') {
+            throw new Error(`Bağlantı testi başarısız: ${testResult.message || 'Bilinmeyen hata'}`);
+        }
+
         console.log('Saving settings:', settings);
 
         let existingPreferences = {};
@@ -2629,14 +2639,18 @@ async function saveLMSettings() {
     }
 }
 
-async function testLMConnection() {
+async function testLMConnection(apiUrl) {
     try {
         const response = await fetch(`${API_URL}/ai-settings/lmstudio/test`, {
-            method: 'POST'
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ api_url: apiUrl })
         });
         const result = await response.json();
 
         const resultDiv = document.getElementById('connectionResult');
+        if (!resultDiv) return result;
+
         if (result.status === 'connected') {
             resultDiv.textContent = '✓ Bağlantı başarılı!';
             resultDiv.className = 'success';
@@ -2644,9 +2658,15 @@ async function testLMConnection() {
             resultDiv.textContent = '✗ Bağlantı başarısız: ' + result.message;
             resultDiv.className = 'error';
         }
+
+        return result;
     } catch (error) {
-        document.getElementById('connectionResult').textContent = 'Hata: ' + error;
-        document.getElementById('connectionResult').className = 'error';
+        const resultDiv = document.getElementById('connectionResult');
+        if (resultDiv) {
+            resultDiv.textContent = 'Hata: ' + error;
+            resultDiv.className = 'error';
+        }
+        return { status: 'error', message: error.message || String(error) };
     }
 }
 
