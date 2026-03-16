@@ -30,7 +30,7 @@
 - [❌] **GELIS9:** DALMap adı verilen dosyaların eklenmesine izin verilmeli. Bu dosyaların işlenmesi ve tablolar ile uygulamanın bağını sağlaması konusunda detaylı bilgi kullanıcıdan alınaran gerekli destek peojeye eklenmelidir. Detaylandırılan özellikler bu todo dosyası içerisine eklenmelidir. Genel olarak dalMap dosyaları sistem dalmap dosyası tipi ile yüklenebilmeli ayrı olarak işlenmelidir. Dosyanın genel yapısı xml yapısında olup, veri tababı tabloları ile uygulama içindeki sanal tablo tanımları ile ilişikleri yönetmektedir. 
 - [❌] **GELIS10:** Güvenlik riskleri için tarama seçeneği ekle. Tek fonksiyon ya da tüm fonksiyonlar için güvenlik taraması yapabilsin.
 - [✅] **GELIS11:** Projeler için RAG arama ekranı ve daha sonra bulunan sonuç/sonuçlar için AI soru sorulabileceği bir ekran yapılması.
-- [❌] **GELIS12:** Projeler ekranında her projenin ne kadar RAG analizi yapıldığını, ve AI analiz oranını göster
+- [✅] **GELIS12:** Projeler ekranında her projenin ne kadar RAG analizi yapıldığını, ve AI analiz oranını göster
 - [❌] **GELIS13:** Proje yüklendikten sonra, Dosyalar bölümünde filtreleme olsun.
 - [❌] **GELIS14:** Projeler ekranında Proje kutusuna basıncada proje açılsın, sadece aç düğmesinme basılmak zorunda kalmasın.
 - [❌] **GELIS15:** 

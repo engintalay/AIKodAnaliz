@@ -136,22 +136,33 @@ async function loadProjects() {
         projects.forEach(project => {
             const card = document.createElement('div');
             card.className = 'project-card';
+            card.onclick = () => viewProject(project.id);
 
-            let actionButtons = `<button onclick="viewProject(${project.id})" class="btn btn-primary">Aç</button>`;
+            let actionButtons = `<button onclick="event.stopPropagation(); viewProject(${project.id})" class="btn btn-primary">Aç</button>`;
 
             // Restrict Delete & Reanalyze to admin and project owners
             const canManage = currentUser && (currentUser.role === 'admin' || project.admin_id === currentUser.id);
 
             if (canManage) {
                 actionButtons += `
-                    <button onclick="reanalyzeProject(${project.id})" class="btn btn-secondary">🔄 Tekrar Analiz Et</button>
-                    <button onclick="deleteProject(${project.id})" class="btn btn-secondary">Sil</button>
+                    <button onclick="event.stopPropagation(); reanalyzeProject(${project.id})" class="btn btn-secondary">🔄 Tekrar Analiz Et</button>
+                    <button onclick="event.stopPropagation(); deleteProject(${project.id})" class="btn btn-secondary">Sil</button>
                 `;
             }
+
+            const totalFuncs = project.total_functions || 0;
+            const aiCount = project.ai_summary_count || 0;
+            const embCount = project.rag_embedding_indexed || 0;
+            const ftsCount = project.rag_fts_indexed || 0;
+            const ragStatus = project.rag_status || '';
 
             card.innerHTML = `
                 <h3>${project.name}</h3>
                 <p>${project.description || 'Açıklama yok'}</p>
+                <p style="font-size:12px; color:#4a4a4a; margin:6px 0 4px 0;">
+                    <strong>RAG:</strong> FTS ${ftsCount}/${totalFuncs} | Emb ${embCount}/${totalFuncs} ${ragStatus ? `(${ragStatus})` : ''}<br>
+                    <strong>AI:</strong> ${aiCount}/${totalFuncs} (${project.ai_summary_pct || 0}%)
+                </p>
                 <small>Yüklenme: ${new Date(project.upload_date).toLocaleDateString('tr-TR')}</small>
                 <div class="project-card-actions">
                     ${actionButtons}
@@ -1894,6 +1905,40 @@ function closeFunctionModal() {
     clearSourceCodeSearch();
 }
 
+function openFileViewerModal(title, content) {
+    const modal = document.getElementById('fileViewerModal');
+    const titleEl = document.getElementById('fileViewerTitle');
+    const contentEl = document.getElementById('fileViewerContent');
+
+    if (!modal || !titleEl || !contentEl) return;
+    titleEl.textContent = title;
+    contentEl.textContent = content;
+
+    modal.classList.add('visible');
+}
+
+function closeFileViewerModal() {
+    const modal = document.getElementById('fileViewerModal');
+    if (!modal) return;
+    modal.classList.remove('visible');
+}
+
+// Close modals on Escape
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+
+    const fileModal = document.getElementById('fileViewerModal');
+    if (fileModal && fileModal.classList.contains('visible')) {
+        closeFileViewerModal();
+        return;
+    }
+
+    const funcModal = document.getElementById('functionModal');
+    if (funcModal && funcModal.classList.contains('visible')) {
+        closeFunctionModal();
+    }
+});
+
 // Search in source code
 function searchInSourceCode() {
     const searchTerm = document.getElementById('sourceCodeSearch').value.trim();
@@ -2128,6 +2173,9 @@ async function addMark() {
 // SECTION: Files
 // ============================================
 
+let allSourceFiles = [];
+let allDocuments = [];
+
 async function loadFiles() {
     try {
         const response = await fetch(`${API_URL}/projects/${currentProjectId}/files`);
@@ -2136,80 +2184,134 @@ async function loadFiles() {
         const list = document.getElementById('filesList');
         list.innerHTML = '';
 
-        const sourceFiles = data.source_files || [];
-        const documents = data.documents || [];
+        allSourceFiles = data.source_files || [];
+        allDocuments = data.documents || [];
 
-        if (sourceFiles.length === 0 && documents.length === 0) {
-            const empty = document.createElement('p');
-            empty.style.cssText = 'color:#666; padding:10px;';
-            empty.textContent = 'Henüz dosya yok.';
-            list.appendChild(empty);
-            return;
-        }
+        filterFiles();
+        return;
 
-        if (sourceFiles.length > 0) {
-            const header = document.createElement('h4');
-            header.style.cssText = 'margin: 0 0 10px 0; color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 6px;';
-            header.textContent = `📄 Kaynak Dosyalar (${sourceFiles.length})`;
-            list.appendChild(header);
-
-            sourceFiles.forEach(file => {
-                const item = document.createElement('div');
-                item.className = 'file-item';
-                item.style.cssText = 'display:flex; justify-content:space-between; align-items:flex-start; gap:8px;';
-
-                const infoDiv = document.createElement('div');
-                infoDiv.style.flex = '1';
-                const nameEl = document.createElement('h4');
-                nameEl.style.margin = '0 0 2px 0';
-                nameEl.textContent = file.file_name;
-                const pathEl = document.createElement('p');
-                pathEl.style.cssText = 'font-size:12px; color:#666; margin:2px 0;';
-                pathEl.textContent = file.file_path;
-                const langEl = document.createElement('small');
-                langEl.textContent = `Dil: ${file.language || 'bilinmiyor'}`;
-                infoDiv.appendChild(nameEl);
-                infoDiv.appendChild(pathEl);
-                infoDiv.appendChild(langEl);
-
-                const analyzeBtn = document.createElement('button');
-                analyzeBtn.className = 'btn btn-secondary';
-                analyzeBtn.style.cssText = 'font-size:11px; padding:4px 8px; white-space:nowrap; flex-shrink:0;';
-                analyzeBtn.textContent = '🔍 Analiz Et';
-                analyzeBtn.onclick = () => analyzeFileById(file.id, file.file_name, analyzeBtn);
-
-                item.appendChild(infoDiv);
-                item.appendChild(analyzeBtn);
-                list.appendChild(item);
-            });
-        }
-
-        if (documents.length > 0) {
-            const header = document.createElement('h4');
-            header.style.cssText = 'margin: 16px 0 10px 0; color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 6px;';
-            header.textContent = `📁 Dokümanlar / RAG Dosyaları (${documents.length})`;
-            list.appendChild(header);
-
-            documents.forEach(doc => {
-                const item = document.createElement('div');
-                item.className = 'file-item';
-                const nameEl = document.createElement('h4');
-                nameEl.textContent = doc.file_name;
-                const pathEl = document.createElement('p');
-                pathEl.style.cssText = 'font-size:12px; color:#666; margin:2px 0;';
-                pathEl.textContent = doc.file_path;
-                const typeEl = document.createElement('small');
-                typeEl.textContent = `Tip: ${doc.document_type || 'doküman'} • RAG`;
-                item.appendChild(nameEl);
-                item.appendChild(pathEl);
-                item.appendChild(typeEl);
-                list.appendChild(item);
-            });
-        }
     } catch (error) {
         console.error('Dosyalar yükleme hatası:', error);
     }
 }
+
+async function viewFileContent(fileId, fileName) {
+    if (!currentProjectId) return;
+
+    try {
+        const response = await fetch(`${API_URL}/projects/${currentProjectId}/files/${fileId}`);
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            showError('Dosya Yükleme Hatası', err.error || 'Dosya içeriği alınamadı');
+            return;
+        }
+
+        const data = await response.json();
+        const content = data.content || '';
+        openFileViewerModal(fileName || data.file_name || 'Dosya Görüntüleme', content);
+    } catch (error) {
+        showError('Dosya Yükleme Hatası', error.message);
+    }
+}
+
+function filterFiles() {
+    const query = (document.getElementById('fileFilterInput')?.value || '').trim().toLowerCase();
+    const type = (document.getElementById('fileFilterType')?.value || 'all');
+
+    const list = document.getElementById('filesList');
+    list.innerHTML = '';
+
+    const filteredSources = allSourceFiles.filter(f => {
+        if (type === 'doc') return false;
+        if (!query) return true;
+        return (`${f.file_name} ${f.file_path} ${f.language || ''}`).toLowerCase().includes(query);
+    });
+
+    const filteredDocs = allDocuments.filter(d => {
+        if (type === 'source') return false;
+        if (!query) return true;
+        return (`${d.file_name} ${d.file_path} ${d.document_type || ''}`).toLowerCase().includes(query);
+    });
+
+    if (filteredSources.length === 0 && filteredDocs.length === 0) {
+        const empty = document.createElement('p');
+        empty.style.cssText = 'color:#666; padding:10px;';
+        empty.textContent = 'Bu filtreye uyan dosya bulunamadı.';
+        list.appendChild(empty);
+        return;
+    }
+
+    if (filteredSources.length > 0) {
+        const header = document.createElement('h4');
+        header.style.cssText = 'margin: 0 0 10px 0; color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 6px;';
+        header.textContent = `📄 Kaynak Dosyalar (${filteredSources.length})`;
+        list.appendChild(header);
+
+        filteredSources.forEach(file => {
+            const item = document.createElement('div');
+            item.className = 'file-item';
+            item.style.cssText = 'display:flex; justify-content:space-between; align-items:flex-start; gap:8px;';
+
+            const infoDiv = document.createElement('div');
+            infoDiv.style.flex = '1';
+            const nameEl = document.createElement('h4');
+            nameEl.style.margin = '0 0 2px 0';
+            nameEl.textContent = file.file_name;
+            const pathEl = document.createElement('p');
+            pathEl.style.cssText = 'font-size:12px; color:#666; margin:2px 0;';
+            pathEl.textContent = file.file_path;
+            const langEl = document.createElement('small');
+            langEl.textContent = `Dil: ${file.language || 'bilinmiyor'}`;
+            infoDiv.appendChild(nameEl);
+            infoDiv.appendChild(pathEl);
+            infoDiv.appendChild(langEl);
+
+            const analyzeBtn = document.createElement('button');
+            analyzeBtn.className = 'btn btn-secondary';
+            analyzeBtn.style.cssText = 'font-size:11px; padding:4px 8px; white-space:nowrap; flex-shrink:0;';
+            analyzeBtn.textContent = '🔍 Analiz Et';
+            analyzeBtn.onclick = (e) => { e.stopPropagation(); analyzeFileById(file.id, file.file_name, analyzeBtn); };
+
+            item.appendChild(infoDiv);
+            item.appendChild(analyzeBtn);
+            item.style.cursor = 'pointer';
+            item.onclick = () => viewFileContent(file.id, file.file_name);
+            list.appendChild(item);
+        });
+    }
+
+    if (filteredDocs.length > 0) {
+        const header = document.createElement('h4');
+        header.style.cssText = 'margin: 16px 0 10px 0; color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 6px;';
+        header.textContent = `📁 Dokümanlar / RAG Dosyaları (${filteredDocs.length})`;
+        list.appendChild(header);
+
+        filteredDocs.forEach(doc => {
+            const item = document.createElement('div');
+            item.className = 'file-item';
+            const nameEl = document.createElement('h4');
+            nameEl.textContent = doc.file_name;
+            const pathEl = document.createElement('p');
+            pathEl.style.cssText = 'font-size:12px; color:#666; margin:2px 0;';
+            pathEl.textContent = doc.file_path;
+            const typeEl = document.createElement('small');
+            typeEl.textContent = `Tip: ${doc.document_type || 'doküman'} • RAG`;
+            item.appendChild(nameEl);
+            item.appendChild(pathEl);
+            item.appendChild(typeEl);
+            list.appendChild(item);
+        });
+    }
+}
+
+function clearFileFilter() {
+    const input = document.getElementById('fileFilterInput');
+    const typeEl = document.getElementById('fileFilterType');
+    if (input) input.value = '';
+    if (typeEl) typeEl.value = 'all';
+    filterFiles();
+}
+
 
 // Add file to existing project (GELIS8)
 async function addFileToProject() {

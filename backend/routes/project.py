@@ -5,6 +5,7 @@ from datetime import datetime
 from backend.database import db
 from backend.progress_tracker import progress_tracker
 from backend.logger import logger, log_upload, log_error, log_audit
+from backend.rag_index import RagIndex
 from config.config import UPLOAD_DIR
 import uuid
 import subprocess
@@ -50,7 +51,45 @@ def list_projects():
             return jsonify({'error': 'Unauthorized'}), 401
             
         projects = get_user_projects(user['id'])
-        return jsonify([dict(row) for row in projects]), 200
+        enhanced = []
+        for row in projects:
+            proj = dict(row)
+
+            # RAG / AI analysis metrics
+            status = RagIndex.get_build_status(proj['id'])
+            total_funcs = status.get('total_functions', 0) or 0
+            indexed = status.get('indexed', 0) or 0
+
+            # FTS index coverage
+            try:
+                fts_rows = db.execute_query(
+                    'SELECT COUNT(*) FROM fts_functions WHERE function_id IN (SELECT id FROM functions WHERE project_id = ?)',
+                    (proj['id'],)
+                )
+                fts_indexed = fts_rows[0][0] if fts_rows else 0
+            except Exception:
+                fts_indexed = 0
+
+            # AI summary coverage
+            try:
+                ai_rows = db.execute_query(
+                    'SELECT COUNT(*) FROM functions WHERE project_id = ? AND ai_summary IS NOT NULL AND ai_summary != ""',
+                    (proj['id'],)
+                )
+                ai_count = ai_rows[0][0] if ai_rows else 0
+            except Exception:
+                ai_count = 0
+
+            proj['total_functions'] = total_funcs
+            proj['rag_embedding_indexed'] = indexed
+            proj['rag_fts_indexed'] = fts_indexed
+            proj['ai_summary_count'] = ai_count
+            proj['ai_summary_pct'] = total_funcs > 0 and round((ai_count / total_funcs) * 100) or 0
+            proj['rag_status'] = status.get('status', 'idle')
+
+            enhanced.append(proj)
+
+        return jsonify(enhanced), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -790,6 +829,23 @@ def get_project_files(project_id):
         files = [dict(row) for row in (source_rows or [])]
         documents = [dict(row) for row in (doc_rows or [])]
         return jsonify({'source_files': files, 'documents': documents}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/<int:project_id>/files/<int:file_id>', methods=['GET'])
+@check_project_access('read')
+def get_project_file_content(project_id, file_id):
+    """Return raw source file content for viewing."""
+    try:
+        row = db.execute_query(
+            'SELECT id, file_name, file_path, language, content FROM source_files WHERE project_id = ? AND id = ?',
+            (project_id, file_id)
+        )
+        if not row:
+            return jsonify({'error': 'File not found'}), 404
+
+        return jsonify(dict(row[0])), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

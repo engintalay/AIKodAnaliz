@@ -351,6 +351,15 @@
                                 </div>
                             </div>
                         </div>
+                        <div style="margin-bottom: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                            <input id="fileFilterInput" type="text" placeholder="Dosyalarda ara..." style="flex:1; padding:8px; border:1px solid #ddd; border-radius:4px;" oninput="filterFiles()">
+                            <select id="fileFilterType" onchange="filterFiles()" style="padding:8px; border:1px solid #ddd; border-radius:4px;">
+                                <option value="all">Tüm Dosyalar</option>
+                                <option value="source">Kaynak Dosyalar</option>
+                                <option value="doc">Dokümanlar</option>
+                            </select>
+                            <button class="btn btn-secondary" onclick="clearFileFilter()" style="white-space:nowrap;">Temizle</button>
+                        </div>
                         <div id="filesList" class="files-list">
                             <!-- Files akan buraya yüklenecek -->
                         </div>
@@ -797,6 +806,19 @@
                 <button id="btnShowCallGraph" class="btn btn-primary"
                     onclick="showCallGraph(currentModalFunctionId)">🕸️ Call Graph Göster</button>
             </div>
+        </div>
+    </div>
+
+    <!-- File Viewer Modal -->
+    <div id="fileViewerModal" class="modal">
+        <div class="modal-content" style="max-width: 90vw;">
+            <div class="modal-header">
+                <h3 id="fileViewerTitle" style="margin: 0;"></h3>
+                <div class="modal-controls">
+                    <span class="close" onclick="closeFileViewerModal()">&times;</span>
+                </div>
+            </div>
+            <pre id="fileViewerContent" style="background: #282c34; color: #abb2bf; padding: 12px; border-radius: 6px; max-height: 70vh; overflow-y: auto; font-family: monospace; white-space: pre-wrap; word-break: break-word;"></pre>
         </div>
     </div>
 
