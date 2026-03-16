@@ -227,11 +227,27 @@ class RagIndex:
     # ----------------------------------------------------------------
 
     @classmethod
-    def search(cls, project_id: int, query: str, limit: int = 10) -> list:
+    def search(cls, project_id: int, query: str, limit: int = 10, function_ids: list[int] | None = None) -> list:
         """Hybrid search: embedding cosine sim + FTS5 BM25, with LIKE fallback.
 
-        Returns list of dicts matching the shape of _search_functions output.
+        If `function_ids` is provided, returns those functions (in same order) without running a search.
+        Returns list of dicts matching the shape of _search_functions output, with an added `score` field.
         """
+        if function_ids:
+            # Return explicit selection (used when user chooses RAG hits before asking the LLM)
+            placeholders = ','.join('?' * len(function_ids))
+            rows = db.execute_query(
+                f'''SELECT f.id, f.function_name, f.class_name, f.package_name,
+                           f.ai_summary, f.signature, sf.file_name
+                    FROM functions f
+                    LEFT JOIN source_files sf ON f.file_id = sf.id
+                    WHERE f.project_id = ? AND f.id IN ({placeholders})''',
+                [project_id] + function_ids
+            )
+            row_map = {dict(r)['id']: dict(r) for r in rows}
+            result = [dict(row_map[fid], score=1.0) for fid in function_ids if fid in row_map]
+            return result
+
         # Step 1: Embedding search (if embeddings exist)
         embedding_hits = {}  # function_id → score
         try:
@@ -284,6 +300,7 @@ class RagIndex:
 
         # Step 3: Combine scores
         all_ids = set(embedding_hits.keys()) | set(fts_hits.keys())
+        score_map = {}
 
         def combined_score(fid):
             emb = embedding_hits.get(fid, 0.0)
@@ -291,7 +308,9 @@ class RagIndex:
             bm25 = fts_hits.get(fid, 0.0)
             bm25_norm = 1.0 / (1.0 - bm25) if bm25 < 0 else 0.0
             # Weight: embeddings 60%, FTS5 40%
-            return 0.6 * emb + 0.4 * bm25_norm
+            s = 0.6 * emb + 0.4 * bm25_norm
+            score_map[fid] = s
+            return s
 
         if all_ids:
             ranked = sorted(all_ids, key=combined_score, reverse=True)[:limit]
@@ -311,13 +330,21 @@ class RagIndex:
             )
             # Maintain ranking order
             row_map = {dict(r)['id']: dict(r) for r in rows}
-            result = [row_map[fid] for fid in ranked if fid in row_map]
+            result = []
+            for fid in ranked:
+                if fid in row_map:
+                    item = row_map[fid]
+                    item['score'] = round(score_map.get(fid, 0.0), 4)
+                    result.append(item)
             if result:
                 return result
 
         # Step 5: Fallback to LIKE search
         logger.debug("RAG index miss — falling back to LIKE search")
-        return cls._like_fallback(project_id, query, limit)
+        result = cls._like_fallback(project_id, query, limit)
+        for item in result:
+            item['score'] = 0.1
+        return result
 
     @classmethod
     def search_doc_chunks(cls, project_id: int, query: str, limit: int = 5) -> list:

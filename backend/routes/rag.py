@@ -20,6 +20,29 @@ def _require_admin():
 # Per-project build & status
 # ------------------------------------------------------------------
 
+@bp.route('/project/<int:project_id>/search', methods=['GET'])
+@check_project_access('read')
+def search_project(project_id):
+    """Search project functions using the RAG index.
+
+    Returns ranked list of matching functions (with score) so the UI can show results
+    before the user sends a question to the AI.
+    """
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({'error': 'Sorgu boş olamaz'}), 400
+
+    results = RagIndex.search(project_id, query, limit=20)
+    best_score = 0.0
+    if results:
+        best_score = max(0.0, max((r.get('score') or 0.0) for r in results))
+    return jsonify({
+        'results': results,
+        'best_score': best_score,
+        'confidence': best_score,
+    }), 200
+
+
 @bp.route('/project/<int:project_id>/build', methods=['POST'])
 @check_project_access('read')
 def build_project_index(project_id):

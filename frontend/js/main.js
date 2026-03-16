@@ -408,11 +408,109 @@ async function startBulkAiAnalysis() {
 
 let chatHistory = [];        // { role: 'user'|'assistant', content: string }
 let chatStreaming = false;
+let ragSearchResults = [];   // latest RAG search results
+let ragSearchBestScore = 0;   // best score from last RAG search (0-1)
+let ragSelectedFunctionIds = new Set();
 
 function initChatTab() {
     // Scroll to bottom on tab switch
     const msgs = document.getElementById('chatMessages');
     if (msgs) msgs.scrollTop = msgs.scrollHeight;
+}
+
+function runRagSearch() {
+    const input = document.getElementById('ragSearchInput');
+    const query = input ? input.value.trim() : '';
+    if (!query) return;
+
+    const resultsContainer = document.getElementById('ragSearchResults');
+    const resultsList = document.getElementById('ragSearchResultsList');
+    resultsContainer.style.display = 'block';
+    resultsList.innerHTML = '<div style="opacity:.7; font-size:13px;">Aranıyor...</div>';
+
+    // Clear previous selection when a new search is run
+    ragSelectedFunctionIds.clear();
+
+    fetch(`${API_URL}/rag/project/${currentProjectId}/search?q=${encodeURIComponent(query)}`)
+        .then(res => res.json())
+        .then(data => {
+            if (!data.results) {
+                resultsList.innerHTML = '<div style="color:#c0392b;">Arama sonucu alınamadı.</div>';
+                return;
+            }
+            ragSearchResults = data.results;
+            ragSearchBestScore = Number(data.best_score || 0);
+            renderRagSearchResults();
+        })
+        .catch(err => {
+            resultsList.innerHTML = `<div style="color:#c0392b;">Hata: ${err.message}</div>`;
+        });
+}
+
+function clearRagSearchResults() {
+    ragSearchResults = [];
+    ragSelectedFunctionIds.clear();
+    const resultsContainer = document.getElementById('ragSearchResults');
+    const resultsList = document.getElementById('ragSearchResultsList');
+    if (resultsContainer) resultsContainer.style.display = 'none';
+    if (resultsList) resultsList.innerHTML = '';
+}
+
+function toggleRagSelection(functionId) {
+    if (ragSelectedFunctionIds.has(functionId)) {
+        ragSelectedFunctionIds.delete(functionId);
+    } else {
+        ragSelectedFunctionIds.add(functionId);
+    }
+    renderRagSearchResults();
+}
+
+function renderRagSearchResults() {
+    const resultsList = document.getElementById('ragSearchResultsList');
+    if (!resultsList) return;
+
+    if (!ragSearchResults || ragSearchResults.length === 0) {
+        resultsList.innerHTML = '<div style="opacity:.7; font-size:13px;">Sonuç bulunamadı.</div>';
+        return;
+    }
+
+const bestScore = ragSearchBestScore || Math.max(...ragSearchResults.map(r => Number(r.score) || 0));
+    const lowConfidence = bestScore < 0.25;
+
+    resultsList.innerHTML = (lowConfidence ?
+        '<div style="color:#c0392b; margin-bottom:8px; font-size:13px;">Bu arama için yeterli bağlam bulunamadı. Lütfen daha genel ya da farklı bir arama yapın.</div>' :
+        '') +
+        ragSearchResults.map(r => {
+            const qualified = r.class_name ? `${r.class_name}.${r.function_name}` : r.function_name;
+            const selected = ragSelectedFunctionIds.has(r.id);
+            const score = r.score != null ? ` (score: ${Number(r.score).toFixed(3)})` : '';
+            return `
+                <div class="rag-result-item">
+                    <div class="rag-result-meta">
+                        <div><strong>${qualified}</strong>${score}</div>
+                        <button class="btn btn-sm" onclick="toggleRagSelection(${r.id})">${selected ? '✓ Seçili' : 'Seç'}</button>
+                    </div>
+                    <p style="margin:4px 0 0 0;" title="${r.file_name || ''}">Dosya: ${r.file_name || 'bilinmiyor'}</p>
+                    ${r.ai_summary ? `<p style="margin:4px 0 0 0; color:#555;">Özet: ${r.ai_summary}</p>` : ''}
+                </div>
+            `;
+        }).join('');
+}
+
+function askAiWithRagSelection() {
+    if (!ragSelectedFunctionIds.size) {
+        showError('Seçim Yok', 'Önce bir veya daha fazla RAG sonucu seçin.');
+        return;
+    }
+
+    // If there is text in the chat input, keep it; otherwise use a default prompt
+    const input = document.getElementById('chatInput');
+    if (input && !input.value.trim()) {
+        input.value = 'Bu seçilen fonksiyonlar hakkında ne söyleyebilirsin?';
+    }
+
+    // Send message with selection context
+    sendChatMessage();
 }
 
 function handleChatKeydown(event) {
@@ -521,10 +619,15 @@ async function sendChatMessage() {
     const historySlice = chatHistory.slice(-8);
 
     try {
+        const payload = { message: text, history: historySlice };
+        if (ragSelectedFunctionIds.size > 0) {
+            payload.context_function_ids = Array.from(ragSelectedFunctionIds);
+        }
+
         const response = await fetch(`${API_URL}/chat/project/${currentProjectId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, history: historySlice })
+            body: JSON.stringify(payload)
         });
 
         if (!response.ok) {

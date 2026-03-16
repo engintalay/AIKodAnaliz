@@ -1256,6 +1256,74 @@ code {
     scroll-behavior: smooth;
 }
 
+.rag-search {
+    padding: 12px 16px;
+    background: #fff;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.rag-search-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.rag-search-input {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid #d1d5da;
+    border-radius: 6px;
+}
+
+.rag-search-results {
+    margin-top: 10px;
+    border: 1px solid #d1d5da;
+    border-radius: 6px;
+    padding: 10px;
+    background: #fbfdff;
+    max-height: 230px;
+    overflow-y: auto;
+}
+
+.rag-search-results-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.rag-result-item {
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+    margin-bottom: 8px;
+    background: #fff;
+}
+
+.rag-result-item h4 {
+    margin: 0 0 4px;
+    font-size: 14px;
+}
+
+.rag-result-item p {
+    margin: 2px 0;
+    font-size: 13px;
+    color: #444;
+}
+
+.rag-result-item .rag-result-meta {
+    font-size: 12px;
+    color: #666;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.rag-result-item button {
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
 .chat-bubble {
     max-width: 85%;
     padding: 10px 16px;

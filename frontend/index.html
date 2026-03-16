@@ -251,6 +251,26 @@
                                 <button class="btn btn-secondary btn-sm" onclick="clearChatHistory()"
                                     style="padding:4px 12px; font-size:12px;">🗑️ Konuşmayı Sıfırla</button>
                             </div>
+
+                            <!-- RAG Search (GELIS11) -->
+                            <div class="rag-search">
+                                <div class="rag-search-controls">
+                                    <input id="ragSearchInput" class="rag-search-input" type="text"
+                                        placeholder="RAG ile ara (örn. 'login', 'veri tabanı işlemleri')">
+                                    <button class="btn btn-secondary" onclick="runRagSearch()">🔍 Ara</button>
+                                </div>
+                                <div id="ragSearchResults" class="rag-search-results" style="display:none;">
+                                    <div class="rag-search-results-header">
+                                        <span>RAG sonuçları (seçip AI'ya sorabilirsiniz)</span>
+                                        <button class="btn btn-sm btn-secondary" onclick="clearRagSearchResults()">Temizle</button>
+                                    </div>
+                                    <div id="ragSearchResultsList"></div>
+                                    <div style="margin-top:10px; text-align:right;">
+                                        <button class="btn btn-primary" onclick="askAiWithRagSelection()">✅ Seçilenlerle AI'ya Sor</button>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div class="chat-messages" id="chatMessages">
                                 <div class="chat-bubble chat-bubble-assistant">
                                     Merhaba! Bu proje hakkında sorular sorabilirsiniz. Örneğin:<br>

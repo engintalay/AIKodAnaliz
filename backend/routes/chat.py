@@ -13,11 +13,17 @@ bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 # Context retrieval helpers
 # ------------------------------------------------------------------
 
-def _build_context(project_id: int, project_name: str, query: str) -> tuple[str, str, list]:
+def _build_context(project_id: int, project_name: str, query: str, function_ids: list[int] | None = None) -> tuple[str, str, list]:
     """Return (system_prompt, context_block, refs) for the LLM.
     Uses RagIndex for hybrid embedding + FTS5 + LIKE search.
-    Also searches doc_chunks (GELIS8) for relevant document passages."""
-    funcs = RagIndex.search(project_id, query)
+    Also searches doc_chunks (GELIS8) for relevant document passages.
+
+    If `function_ids` is provided, those functions are used as the primary context.
+    """
+    if function_ids:
+        funcs = RagIndex.search(project_id, query, limit=len(function_ids) or 10, function_ids=function_ids)
+    else:
+        funcs = RagIndex.search(project_id, query)
 
     context_lines = []
     refs = []  # For the frontend to render as links
@@ -81,6 +87,7 @@ def chat_with_project(project_id):
     data = request.get_json(silent=True) or {}
     user_message = (data.get('message') or '').strip()
     history = data.get('history', [])  # list of {role, content}
+    context_function_ids = data.get('context_function_ids') or None
 
     if not user_message:
         return jsonify({'error': 'Mesaj boş olamaz'}), 400
@@ -91,7 +98,7 @@ def chat_with_project(project_id):
         return jsonify({'error': 'Proje bulunamadı'}), 404
     project_name = dict(proj_rows[0])['name']
 
-    system_prompt, _, refs = _build_context(project_id, project_name, user_message)
+    system_prompt, _, refs = _build_context(project_id, project_name, user_message, function_ids=context_function_ids)
 
     # Build message list for LLM
     messages = [dict(h) for h in history if h.get('role') in ('user', 'assistant')]
