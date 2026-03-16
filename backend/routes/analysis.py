@@ -9,6 +9,7 @@ import json
 import uuid
 import re
 import threading
+import math
 
 CALL_NAME_PATTERN = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(')
 QUALIFIED_CALL_PATTERN = re.compile(r'(\w+)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(')  # receiver.method()
@@ -24,6 +25,10 @@ COMMON_EXTERNAL_CALLS = {
     'fetch', 'setTimeout', 'setInterval', 'require', 'console', 'log',
     'System', 'Math', 'String', 'Integer', 'Long', 'Double'
 }
+
+MAX_AI_CODE_LINES = 360
+CLASS_HEADER_PREVIEW_LINES = 40
+MAX_CLASS_METHOD_SIGNATURES = 180
 
 
 def _is_ai_error_response(summary_text):
@@ -91,6 +96,106 @@ def _accumulate_ai_metrics(task_id, call_stats):
         ai_total_tokens=prev_total + total_tokens,
         ai_total_duration_seconds=round(prev_duration + duration_seconds, 3),
     )
+
+
+def _prepare_function_code_for_ai(func):
+    """Prepare code sent to AI with safeguards for very large class/function bodies."""
+    content = func.get('content') or ''
+    lines = content.split('\n')
+    start_line = max(0, (func.get('start_line') or 1) - 1)
+    end_line = min(len(lines), func.get('end_line') or len(lines))
+    snippet_lines = lines[start_line:end_line]
+    snippet_len = len(snippet_lines)
+
+    function_type = (func.get('function_type') or '').lower()
+    class_name = func.get('class_name')
+
+    # For class-level records, avoid sending the full body to model context.
+    if function_type == 'class' and snippet_len > MAX_AI_CODE_LINES:
+        class_header_preview = snippet_lines[:CLASS_HEADER_PREVIEW_LINES]
+        method_rows = db.execute_query(
+            '''SELECT function_name, signature, start_line, end_line, function_type
+               FROM functions
+               WHERE project_id = ? AND file_id = ?
+                 AND COALESCE(class_name, '') = COALESCE(?, '')
+                 AND id != ?
+               ORDER BY start_line''',
+            (func.get('project_id'), func.get('file_id'), class_name, func.get('id'))
+        )
+
+        method_lines = []
+        for idx, row in enumerate(method_rows or []):
+            if idx >= MAX_CLASS_METHOD_SIGNATURES:
+                break
+            r = dict(row)
+            sig = (r.get('signature') or '').strip() or r.get('function_name') or '<unknown>'
+            m_start = r.get('start_line') or '-'
+            m_end = r.get('end_line') or '-'
+            m_type = r.get('function_type') or '-'
+            method_lines.append(f"- [{m_type}] {sig}  (lines {m_start}-{m_end})")
+
+        truncated_count = max(0, len(method_rows or []) - MAX_CLASS_METHOD_SIGNATURES)
+        header = [
+            '/* COMPACT_CLASS_MODE */',
+            f"Class: {func.get('function_name')}",
+            f"Original class size: {snippet_len} lines",
+            f"Method/function entries in class: {len(method_rows or [])}",
+            '',
+            'Class header preview:',
+            *class_header_preview,
+            '',
+            'Class members (signature list):',
+            *(method_lines or ['- (no method signatures found)'])
+        ]
+        if truncated_count > 0:
+            header.append(f"- ... and {truncated_count} more signatures not listed")
+
+        compact_code = '\n'.join(header)
+        return compact_code, len(compact_code.split('\n')), 'class-compact'
+
+    # Generic safeguard for huge non-class snippets: keep head+tail.
+    if snippet_len > MAX_AI_CODE_LINES:
+        head_count = 220
+        tail_count = 120
+        compact_lines = (
+            snippet_lines[:head_count]
+            + ['/* ... middle section omitted to fit model context ... */']
+            + snippet_lines[-tail_count:]
+        )
+        compact_code = '\n'.join(compact_lines)
+        return compact_code, len(compact_lines), 'trimmed'
+
+    return '\n'.join(snippet_lines), snippet_len, 'full'
+
+
+def _estimate_text_tokens(text):
+    """Approximate token count without model-specific tokenizer."""
+    if not text:
+        return 0
+    # Practical heuristic for GPT-like tokenizers: ~4 chars/token in mixed code/text.
+    return int(math.ceil(len(text) / 4.0))
+
+
+def _estimate_ai_input_tokens(func, dependency_summaries):
+    """Estimate how many input tokens a single-function AI summary call would consume."""
+    func_code, _, code_mode = _prepare_function_code_for_ai(func)
+
+    dep_block = []
+    for dep in dependency_summaries or []:
+        dep_name = dep.get('name') or ''
+        dep_summary = dep.get('summary') or ''
+        dep_block.append(f"{dep_name}: {dep_summary}")
+
+    signature = func.get('signature') or ''
+    estimated_payload = (
+        f"SIGNATURE:\n{signature}\n\n"
+        f"CODE_MODE:{code_mode}\n"
+        f"CODE:\n{func_code}\n\n"
+        f"DEPENDENCIES:\n" + '\n'.join(dep_block)
+    )
+
+    # Add a small fixed overhead for system/user instruction scaffold.
+    return _estimate_text_tokens(estimated_payload) + 180, code_mode
 
 
 def extract_imported_symbols(content, language):
@@ -708,15 +813,17 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
                 'summary': dep_summary
             })
     
-    # Extract function code
-    content = func['content']
-    lines = content.split('\n')
-    start_line = max(0, (func.get('start_line') or 1) - 1)
-    end_line = min(len(lines), func.get('end_line') or len(lines))
-    func_code = '\n'.join(lines[start_line:end_line])
+    # Prepare function code with context-safe limits
+    func_code, code_line_count, code_mode = _prepare_function_code_for_ai(func)
     
     qualified_func_name = f"{func.get('class_name')}.{func['function_name']}" if func.get('class_name') else func['function_name']
-    log_ai_call(function_id, f"Generating summary for {qualified_func_name}", code_lines=end_line-start_line, dependencies=len(dependency_summaries))
+    log_ai_call(
+        function_id,
+        f"Generating summary for {qualified_func_name}",
+        code_lines=code_line_count,
+        dependencies=len(dependency_summaries),
+        code_mode=code_mode
+    )
     
     if task_id:
         progress_tracker.set_metrics(
@@ -728,7 +835,10 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
         progress_tracker.update(
             task_id,
             step=f"LMStudio'ya gönderiliyor: {qualified_func_name}",
-            detail=f"🤖 AI özeti üretiliyor: {qualified_func_name} ({len(dependency_summaries)} bağımlılık)"
+            detail=(
+                f"🤖 AI özeti üretiliyor: {qualified_func_name} "
+                f"({len(dependency_summaries)} bağımlılık, kod modu: {code_mode})"
+            )
         )
     
     # Generate AI summary with dependency context
@@ -888,7 +998,7 @@ def get_ai_summary(function_id):
         # Generate summary recursively (will handle dependencies automatically)
         summary, _ = _generate_ai_summary_recursive(function_id, client, task_id=task_id, total_deps=total_deps,
                                                    temperature=temperature, top_p=top_p, max_tokens=max_tokens,
-                                                   extra_criteria=extra_criteria, extra_question=extra_question)
+                               extra_criteria=extra_criteria, extra_question=extra_question)
         
         if not summary:
             # Distinguish missing function from failed AI generation
@@ -1491,8 +1601,9 @@ def get_project_functions(project_id):
     """Get all functions in project"""
     try:
         rows = db.execute_query(
-            '''SELECT f.id, f.function_name, f.function_type, f.start_line, f.end_line, f.ai_summary, 
-                      f.class_name, f.package_name, s.file_path 
+            '''SELECT f.id, f.project_id, f.file_id, f.function_name, f.function_type,
+                      f.start_line, f.end_line, f.signature, f.ai_summary,
+                      f.class_name, f.package_name, s.file_path, s.content
                FROM functions f 
                LEFT JOIN source_files s ON f.file_id = s.id 
                WHERE f.project_id = ?''',
@@ -1553,6 +1664,30 @@ def get_project_functions(project_id):
             func_id = func['id']
             func['called_functions'] = called_map.get(func_id, [])
             func['called_by_functions'] = caller_map.get(func_id, [])
+
+        # Estimate per-item AI input token cost for UI visibility.
+        func_by_id = {f['id']: f for f in functions}
+        for func in functions:
+            dep_summaries = []
+            for dep in func.get('called_functions', []):
+                dep_func = func_by_id.get(dep.get('id'))
+                if not dep_func:
+                    continue
+                dep_summary = (dep_func.get('ai_summary') or '').strip()
+                if not dep_summary or dep_summary.startswith('⚠️') or dep_summary.startswith('Error:'):
+                    continue
+                dep_summaries.append({
+                    'name': dep.get('qualified_name') or dep.get('function_name') or 'Unknown',
+                    'summary': dep_summary
+                })
+
+            est_tokens, code_mode = _estimate_ai_input_tokens(func, dep_summaries)
+            func['ai_estimated_input_tokens'] = est_tokens
+            func['ai_code_mode'] = code_mode
+
+            # Do not send full source content to the client.
+            if 'content' in func:
+                del func['content']
 
         return jsonify(functions), 200
     except Exception as e:

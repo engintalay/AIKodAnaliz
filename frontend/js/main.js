@@ -52,6 +52,22 @@ function showWarning(title, message) {
     showMessage(title, message, 'warning');
 }
 
+function getTokenBadgeStyle(tokenCount) {
+    const value = Number(tokenCount || 0);
+    if (value >= 16000) {
+        return 'background:#fdecea; color:#c0392b; border:1px solid #f5b7b1;';
+    }
+    if (value >= 4000) {
+        return 'background:#fff4e5; color:#b9770e; border:1px solid #f8c471;';
+    }
+    return 'background:#eafaf1; color:#1e8449; border:1px solid #a9dfbf;';
+}
+
+function renderTokenBadge(tokenCount, codeMode) {
+    const value = Number(tokenCount || 0);
+    return `<span style="display:inline-block; margin-top:4px; padding:1px 6px; border-radius:999px; font-size:11px; ${getTokenBadgeStyle(value)}">AI Tahmini Girdi: ~${value} token${codeMode ? `, ${codeMode}` : ''}</span>`;
+}
+
 // ============================================
 // SECTION: Utility Functions
 // ============================================
@@ -1321,6 +1337,8 @@ async function loadFunctions() {
                 funcs.forEach(func => {
                     const called = Array.isArray(func.called_functions) ? func.called_functions : [];
                     const calledBy = Array.isArray(func.called_by_functions) ? func.called_by_functions : [];
+                    const estimatedTokens = Number(func.ai_estimated_input_tokens || 0);
+                    const codeMode = func.ai_code_mode || 'full';
 
                     const item = document.createElement('div');
                     item.className = 'function-item searchable-item';
@@ -1338,6 +1356,7 @@ async function loadFunctions() {
                         <div class="function-meta">
                             Satırlar: ${func.start_line}-${func.end_line}
                             <br/><small>Dosya: ${func.file_path || 'Bilinmiyor'}</small>
+                            <br/>${renderTokenBadge(estimatedTokens, codeMode)}
                             <div class="function-deps" data-deps-loaded="false">
                                 <div><strong>Çağırdığı Fonksiyonlar:</strong> <span class="deps-placeholder">Yükleniyor...</span></div>
                                 <div><strong>Bunu Çağıran Fonksiyonlar:</strong> <span class="deps-placeholder">Yükleniyor...</span></div>

@@ -6,7 +6,7 @@
 - [❌] **DZT-3:** Ayarlarda kaydetme işleminden önce test yapılmalı. Ekrandaki bilgilerle eğer başarılı olursa kaydet yapılmalı. 
 - [✅] **DZT-4:** Eğer AI Özet  Al düğmesine basılır ise ve mevcutta bir özet zaten mevcut ise değiştirilmek istenip istenmediği sorularak analiz oluşturulması sağlanmalıdır. 
 - [❌] **DZT-5:** Projeye sonradan eklenen dosyaların düzgün bir şekilde görüntülenmesi, SQL ve kodların fonksiyonlar altına eklenmesi, documanlarında ise ayrı bir alanda gösterilmesi gerekmektei. Dokümanlar için vektörel arama yapılabilmesi ve sonuçların doküman özelinde gösterilmesinin sağlanmalıdır.
-- [❌] **DZT-6:** Fonksiyonlar ayrı ayrı analiz ediliyor. Tüm classın tekrar analiz edilmesi gerekir mi? Class içindeki fonksiyonların toptan analizi bekli olabilir ama gereksiz gibi duruyor. 
+- [✅] **DZT-6:** Fonksiyonlar ayrı ayrı analiz ediliyor. Tüm classın tekrar analiz edilmesi gerekir mi? Class içindeki fonksiyonların toptan analizi bekli olabilir ama gereksiz gibi duruyor. 
 
 ## ✨ Geliştirmeler (GELIS)
 - [✅] **GELIS1:** Input box'ların düzeltilmesi. Görsel olarak daha uyumlu modern bir tarza çevrilmesi.
@@ -27,8 +27,8 @@
   - **Amaç:** Bu sayede kullanıcı, büyük ve karmaşık projelerde kodu manuel olarak incelemek zorunda kalmadan AI destekli analiz ve açıklamalar aracılığıyla sistemi daha hızlı anlayabilecektir.
 - [✅] **GELIS8:** Mevcut bir projeye yeni bir dosya eklenmesine izin verilmeli. Eğer sql, java, zip, war dosyası ise aynı proje altına uygun bir klasör ile eklenmeli ve bu dosyalar analize dahil edilmesli. Eğer doc,docx, pdf vb. dokümanlar ise bunlar RAG analizine dahil edilmeli. 
 - [❌] **GELIS9:** DALMap adı verilen dosyaların eklenmesine izin verilmeli. Bu dosyaların işlenmesi ve tablolar ile uygulamanın bağını sağlaması konusunda detaylı bilgi kullanıcıdan alınaran gerekli destek peojeye eklenmelidir. Detaylandırılan özellikler bu todo dosyası içerisine eklenmelidir. Genel olarak dalMap dosyaları sistem dalmap dosyası tipi ile yüklenebilmeli ayrı olarak işlenmelidir. Dosyanın genel yapısı xml yapısında olup, veri tababı tabloları ile uygulama içindeki sanal tablo tanımları ile ilişikleri yönetmektedir. 
-
-
+- [❌] **GELIS10:** Güvenlik riskleri için tarama seçeneği ekle. Tek fonksiyon ya da tüm fonksiyonlar için güvenlik taraması yapabilsin.
+- [❌] **GELIS11:** Projeler için RAG arama ekranı ve daha sonra bulunan sonuç/sonuçlar için AI soru sorulabileceği bir ekran yapılması.
 
 Referanslar
 [❌] [✅]

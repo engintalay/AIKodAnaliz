@@ -196,6 +196,19 @@ function pollAnalysisTask(taskId) {
             }
 
             const progress = await response.json();
+
+            if (progress && progress.task_exists === false) {
+                job.notFoundCount = (job.notFoundCount || 0) + 1;
+                const ageMs = Date.now() - (job.createdAt || Date.now());
+
+                // The backend may not have created the tracker entry yet.
+                if (ageMs < 10000 && job.notFoundCount < 8) {
+                    job.current_step = 'Backend görevi hazırlanıyor...';
+                    renderAnalysisMonitor();
+                    return;
+                }
+            }
+
             job.notFoundCount = 0;
             job.progress = progress.progress || 0;
             job.status = progress.status || 'started';
@@ -250,11 +263,11 @@ function processGlobalAiQueue() {
         nextJob.status = 'started';
         nextJob.current_step = 'İstek başlatıldı, backend görevi oluşturuluyor...';
         renderAnalysisMonitor();
-        pollAnalysisTask(nextJob.taskId);
 
         const requestPromise = nextJob.requestFactory();
         nextJob.requestPromise = requestPromise;
         nextJob.resolveStarted(requestPromise);
+        pollAnalysisTask(nextJob.taskId);
 
         requestPromise
             .then(async (response) => {
@@ -514,6 +527,23 @@ function analyzeMissingFunctions(projectId, fileName, fileId) {
     }
 }
 
+function getTokenBadgeStyle(tokenCount) {
+    const value = Number(tokenCount || 0);
+    if (value >= 16000) {
+        return 'background:#fdecea; color:#c0392b; border:1px solid #f5b7b1;';
+    }
+    if (value >= 4000) {
+        return 'background:#fff4e5; color:#b9770e; border:1px solid #f8c471;';
+    }
+    return 'background:#eafaf1; color:#1e8449; border:1px solid #a9dfbf;';
+}
+
+function renderTokenBadge(tokenCount, codeMode) {
+    const value = Number(tokenCount || 0);
+    const style = getTokenBadgeStyle(value);
+    return `<span style="display:inline-block; margin-left:6px; padding:1px 6px; border-radius:999px; font-size:11px; ${style}">~${value} token${codeMode ? `, ${codeMode}` : ''}</span>`;
+}
+
 function analyzeSingleFunction(functionId) {
     // Generate AI summary for single function
     const taskId = `ai-func-${functionId}-${Date.now()}`;
@@ -626,13 +656,20 @@ function renderReport(reportData, errorData) {
                 const coverage = fileData.total > 0 ? Math.round((fileData.with_summary / fileData.total) * 100) : 0;
                 const isComplete = coverage === 100;
                 const progressColor = coverage === 100 ? '#27ae60' : coverage >= 80 ? '#f39c12' : '#e74c3c';
-                const fileNameArg = JSON.stringify(fileName);
+                const fileNameArg = JSON.stringify(fileName).replace(/"/g, '&quot;');
                 const missingFunctions = Array.isArray(fileData.missing_functions)
                     ? fileData.missing_functions
                     : (fileData.functions || []).filter(f => !f.has_summary);
                 const summarizedFunctions = Array.isArray(fileData.functions)
                     ? fileData.functions.filter(f => f.has_summary)
                     : [];
+                const allFunctions = Array.isArray(fileData.functions) ? fileData.functions : [];
+                const tokenValues = allFunctions
+                    .map(f => Number(f.ai_estimated_input_tokens || 0))
+                    .filter(v => v > 0);
+                const minTokens = tokenValues.length > 0 ? Math.min(...tokenValues) : 0;
+                const maxTokens = tokenValues.length > 0 ? Math.max(...tokenValues) : 0;
+                const rangeStyle = getTokenBadgeStyle(maxTokens);
 
                 return `
                     <div style="background: ${isComplete ? '#f0fff4' : '#fff5f5'}; margin-top: 10px; padding: 10px; border-radius: 4px; border-left: 3px solid ${progressColor};">
@@ -644,6 +681,12 @@ function renderReport(reportData, errorData) {
                                 </div>
                                 <div style="font-size: 12px; color: #7f8c8d; margin-top: 4px;">
                                     Eksik: <strong>${missingFunctions.length}</strong> | Tamamlanan: <strong>${summarizedFunctions.length}</strong>
+                                </div>
+                                <div style="font-size: 12px; color: #7f8c8d; margin-top: 4px;">
+                                    AI Tahmini Token Araligi:
+                                    <span style="display:inline-block; margin-left:6px; padding:1px 6px; border-radius:999px; font-size:11px; ${rangeStyle}">
+                                        ${minTokens} - ${maxTokens} token
+                                    </span>
                                 </div>
                                 <div style="width: 200px; height: 8px; background: #e0e0e0; border-radius: 4px; margin-top: 5px; overflow: hidden;">
                                     <div style="width: ${coverage}%; height: 100%; background: ${progressColor};"></div>
@@ -676,6 +719,7 @@ function renderReport(reportData, errorData) {
                                             <li style="margin: 5px 0;">
                                                 <span style="color: #e74c3c;">❌</span>
                                                 <strong>${f.qualified_name}</strong> (${f.type})
+                                                ${renderTokenBadge(f.ai_estimated_input_tokens, f.ai_code_mode || 'full')}
                                                 ${canAnalyze ? `
                                                 <button onclick="analyzeSingleFunction(${f.function_id})" 
                                                         style="margin-left: 10px; padding: 2px 6px; background: #3498db; color: white; border: none; border-radius: 2px; cursor: pointer; font-size: 11px;">
@@ -700,6 +744,7 @@ function renderReport(reportData, errorData) {
                                             <li style="margin: 5px 0; color:#1e8449;">
                                                 <span>✅</span>
                                                 <strong>${f.qualified_name}</strong> (${f.type})
+                                                ${renderTokenBadge(f.ai_estimated_input_tokens, f.ai_code_mode || 'full')}
                                             </li>
                                         `).join('')}
                                     </ul>
