@@ -1514,6 +1514,31 @@ def get_function_details(function_id):
             
         # Don't send the entire file content back
         func.pop('content', None)
+
+        # Extract DB table/SP usage from source code (e.g. .from("table"), storedProcedure("SP"), insert(..., obj))
+        try:
+            import re
+            src = func.get('source_code', '') or ''
+
+            tables = set()
+            for m in re.finditer(r"\.from\(\s*['\"]([^'\"]+)['\"]\s*\)", src):
+                tables.add(m.group(1))
+
+            procs = set()
+            for m in re.finditer(r"DALDB\.storedProcedure\(\s*['\"]([^'\"]+)['\"]\s*\)", src):
+                procs.add(m.group(1))
+
+            dalmap_classes = set()
+            for m in re.finditer(r"DALDB\.persistenceBroker\(\)\.insert\(\s*[^,]+,\s*([A-Za-z_][A-Za-z0-9_]*)", src):
+                dalmap_classes.add(m.group(1))
+
+            func['used_db_tables'] = sorted(tables)
+            func['used_stored_procedures'] = sorted(procs)
+            func['used_dalmap_classes'] = sorted(dalmap_classes)
+        except Exception:
+            func['used_db_tables'] = []
+            func['used_stored_procedures'] = []
+            func['used_dalmap_classes'] = []
         
         # Parse parameters from JSON string
         if func['parameters']:

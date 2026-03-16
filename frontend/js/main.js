@@ -1563,6 +1563,10 @@ async function showFunctionDetails(functionId) {
             }).join('')
             : '<span class="dep-empty">Yok</span>';
 
+        // Build DB mapping section placeholders (will be filled async)
+        const dbTablesPlaceholderId = 'funcModalDbTables';
+        const dbProcsPlaceholderId = 'funcModalDbProcs';
+
         // Meta info display with dependencies
         document.getElementById('funcModalContent').innerHTML = `
             <p><strong>Tür:</strong> ${func.function_type}</p>
@@ -1577,7 +1581,128 @@ async function showFunctionDetails(functionId) {
                 <p><strong>Bunu Çağıran Fonksiyonlar:</strong></p>
                 <div style="padding: 8px 0;">${calledByHtml}</div>
             </div>
+            <div style="margin-top: 15px;">
+                <p><strong>Kullanılan Veri Tabanı Tabloları:</strong></p>
+                <div id="${dbTablesPlaceholderId}" style="padding: 8px 0; color: #555;">Yükleniyor...</div>
+            </div>
+            <div style="margin-top: 15px;">
+                <p><strong>Kullanılan SP/Fonksiyonlar:</strong></p>
+                <div id="${dbProcsPlaceholderId}" style="padding: 8px 0; color: #555;">Yükleniyor...</div>
+            </div>
         `;
+
+        // Start async load of DB mapping info
+        (async () => {
+            try {
+                const resp = await fetch(`${API_URL}/projects/${currentProjectId}/dalmaps`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+                const data = await resp.json();
+                const dalmaps = Array.isArray(data.dalmaps) ? data.dalmaps : [];
+                const sqlTables = (data.sql_tables && typeof data.sql_tables === 'object') ? data.sql_tables : {};
+                const sqlProcs = (data.sql_procedures && typeof data.sql_procedures === 'object') ? data.sql_procedures : {};
+
+                const className = func.class_name || '';
+                const usedTablesFromCode = Array.isArray(func.used_db_tables) ? func.used_db_tables : [];
+                const usedProcsFromCode = Array.isArray(func.used_stored_procedures) ? func.used_stored_procedures : [];
+                const usedDalmapClasses = Array.isArray(func.used_dalmap_classes) ? func.used_dalmap_classes : [];
+
+                // Collect table candidates (from code usage + DALMap class mapping)
+                const tableEntries = [];
+
+                // From code usage (.from("table"))
+                usedTablesFromCode.forEach(t => {
+                    const normalized = (t || '').toLowerCase().split('.').pop();
+                    const createStmt = sqlTables[normalized];
+                    tableEntries.push({label: t, sql: createStmt, source: 'code'});
+                });
+
+                // From DALMap class -> table mapping
+                if (className) {
+                    const match = dalmaps
+                        .flatMap(d => (d.sections && Array.isArray(d.sections.classes) ? d.sections.classes : []))
+                        .find(c => (c.name || c.class || '').toLowerCase() === className.toLowerCase());
+                    if (match && match.table) {
+                        const tableName = match.table;
+                        const normalized = tableName.toLowerCase().split('.').pop();
+                        const createStmt = sqlTables[normalized];
+                        tableEntries.push({label: tableName, sql: createStmt, source: 'dalmap'});
+                    }
+                }
+
+                // From DALMap insert class usage (DALDB.persistenceBroker().insert(..., ClassInstance))
+                usedDalmapClasses.forEach(cls => {
+                    const match = dalmaps
+                        .flatMap(d => (d.sections && Array.isArray(d.sections.classes) ? d.sections.classes : []))
+                        .find(c => (c.name || c.class || '').toLowerCase().endsWith(cls.toLowerCase()));
+                    if (match && match.table) {
+                        const tableName = match.table;
+                        const normalized = tableName.toLowerCase().split('.').pop();
+                        const createStmt = sqlTables[normalized];
+                        tableEntries.push({label: tableName, sql: createStmt, source: 'dalmap'});
+                    }
+                });
+
+                const tableContainer = document.getElementById(dbTablesPlaceholderId);
+                if (!tableContainer) return;
+
+                if (tableEntries.length === 0) {
+                    tableContainer.textContent = 'Tablo ilişkisi bulunamadı.';
+                } else {
+                    tableContainer.innerHTML = tableEntries.map((t, idx) => {
+                        if (t.sql) {
+                            return `<div style="margin-bottom:6px;"><a href="#" data-sql-index="${idx}" class="db-table-link">${t.label}</a></div>`;
+                        } else {
+                            return `<div style="margin-bottom:6px;">${t.label}</div>`;
+                        }
+                    }).join('');
+
+                    // Attach click handlers to show SQL DDL
+                    tableContainer.querySelectorAll('.db-table-link').forEach(link => {
+                        link.onclick = (e) => {
+                            e.preventDefault();
+                            const idx = parseInt(link.dataset.sqlIndex);
+                            if (!Number.isNaN(idx) && tableEntries[idx] && tableEntries[idx].sql) {
+                                openFileViewerModal(`Tablo DDL: ${tableEntries[idx].label}`, tableEntries[idx].sql);
+                            }
+                        };
+                    });
+                }
+
+                // Build SP list HTML (from code usage + SQL procedure definitions)
+                const procContainer = document.getElementById(dbProcsPlaceholderId);
+                if (!procContainer) return;
+
+                const procFromCode = usedProcsFromCode || [];
+                const procFromSql = Object.keys(sqlProcs || {});
+
+                const procCandidates = Array.from(new Set([...(procFromCode || []), ...procFromSql]));
+
+                if (procCandidates.length === 0) {
+                    procContainer.textContent = 'İlişkili SP/fonksiyon bulunamadı.';
+                } else {
+                    procContainer.innerHTML = procCandidates.map((pn, idx) => {
+                        const hasSql = Boolean(sqlProcs && sqlProcs[pn]);
+                        return `<div style="margin-bottom:6px;"><a href="#" data-proc-name="${pn}" class="db-proc-link">${pn}</a>${hasSql ? ' <small style="color:#666;">(tanım bulundu)</small>' : ''}</div>`;
+                    }).join('');
+
+                    procContainer.querySelectorAll('.db-proc-link').forEach(link => {
+                        link.onclick = (e) => {
+                            e.preventDefault();
+                            const procName = link.dataset.procName;
+                            const sql = sqlProcs[procName];
+                            openFileViewerModal(`SP: ${procName}`, sql || '<i>Tanım bulunamadı</i>');
+                        };
+                    });
+                }
+            } catch (innerErr) {
+                const tableContainer = document.getElementById(dbTablesPlaceholderId);
+                const procContainer = document.getElementById(dbProcsPlaceholderId);
+                if (tableContainer) tableContainer.textContent = 'DB haritalama yüklenirken hata oluştu.';
+                if (procContainer) procContainer.textContent = 'DB haritalama yüklenirken hata oluştu.';
+                console.warn('DALMap/SQL mapping load error', innerErr);
+            }
+        })();
 
         // Update Text Areas
         const summaryTextarea = document.getElementById('funcModalSummary');
@@ -2215,7 +2340,7 @@ async function viewFileContent(fileId, fileName) {
     }
 }
 
-async function buildDalmapMappingView(dalmap, sqlTables) {
+async function buildDalmapMappingView(dalmap, sqlTables, sqlProcedures) {
     const sections = dalmap.sections || {};
     const classes = Array.isArray(sections.classes) ? sections.classes : [];
 
@@ -2256,7 +2381,37 @@ async function buildDalmapMappingView(dalmap, sqlTables) {
                 }
             }
 
+            // Find related stored procedures (by table name or class name)
+            const normalizedClassName = (className || '').toLowerCase();
+            const procMatches = [];
+            if (sqlProcedures) {
+                Object.keys(sqlProcedures).forEach(procName => {
+                    const pn = procName.toLowerCase();
+                    if (normalizedTable && pn.includes(normalizedTable)) {
+                        procMatches.push(procName);
+                    } else if (normalizedClassName && pn.includes(normalizedClassName)) {
+                        procMatches.push(procName);
+                    }
+                });
+            }
+
+            if (procMatches.length > 0) {
+                lines.push('   İlgili SP/Function (SQL):');
+                procMatches.forEach(pn => lines.push(`     - ${pn}`));
+            }
+
             lines.push('');
+        });
+    }
+
+    // Global SQL procedures list
+    const procedures = sqlProcedures || {};
+    const procNames = Object.keys(procedures);
+    if (procNames.length > 0) {
+        lines.push('SQL PROSEDÜRLERİ / FONKSİYONLAR:');
+        lines.push('');
+        procNames.forEach(name => {
+            lines.push(`- ${name}`);
         });
     }
 
@@ -2280,6 +2435,7 @@ async function loadDalmapFiles() {
         const data = await resp.json();
         const dalmaps = Array.isArray(data.dalmaps) ? data.dalmaps : [];
         const sqlTables = (data.sql_tables && typeof data.sql_tables === 'object') ? data.sql_tables : {};
+        const sqlProcedures = (data.sql_procedures && typeof data.sql_procedures === 'object') ? data.sql_procedures : {};
 
         if (!dalmaps.length) {
             container.innerHTML = '<div style="color:#666;">Bu projede DALMap dosyası bulunamadı.</div>';
@@ -2307,7 +2463,7 @@ async function loadDalmapFiles() {
             btn.style.fontSize = '12px';
             btn.textContent = 'Göster';
             btn.onclick = async () => {
-                const mappedView = await buildDalmapMappingView(d, sqlTables);
+                const mappedView = await buildDalmapMappingView(d, sqlTables, sqlProcedures);
                 openFileViewerModal(d.file_name || 'DALMap', mappedView);
             };
 

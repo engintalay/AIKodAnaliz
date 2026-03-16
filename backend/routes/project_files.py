@@ -493,9 +493,9 @@ def _extract_sql_create_tables_from_text(sql_text: str) -> dict:
         return tables
 
     # Matches CREATE TABLE [IF NOT EXISTS] table_name ( ... );
-    # Supports multi-line definitions.
+    # Supports multi-line definitions and optional trailing table options.
     pattern = re.compile(
-        r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w\.\"]+)\s*\((.*?)\)\s*;?',
+        r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w\.\"`]+)\s*\((.*?)\)\s*[^;]*;?',
         re.IGNORECASE | re.DOTALL
     )
 
@@ -503,10 +503,41 @@ def _extract_sql_create_tables_from_text(sql_text: str) -> dict:
         raw_name = m.group(1)
         stmt = m.group(0).strip()
         norm_name = _normalize_table_name(raw_name)
-        # Store the original statement (trim whitespace)
         tables[norm_name] = stmt
 
     return tables
+
+
+def _extract_sql_procedures_from_text(sql_text: str) -> dict:
+    """Extract CREATE PROCEDURE/FUNCTION statements from SQL text."""
+    import re
+
+    procs = {}
+    if not sql_text:
+        return procs
+
+    # Matches CREATE [OR REPLACE] PROCEDURE|FUNCTION proc_name (...) ...;
+    # Works across multiple lines.
+    pattern = re.compile(
+        r'CREATE\s+(?:OR\s+REPLACE\s+)?(PROCEDURE|FUNCTION)\s+([\w\.\"`]+)\s*\((.*?)\)\s*(BEGIN|AS|RETURNS|LANGUAGE|IS|\$\$)',
+        re.IGNORECASE | re.DOTALL
+    )
+
+    for m in pattern.finditer(sql_text):
+        raw_name = m.group(2)
+        norm_name = _normalize_table_name(raw_name)
+        # Attempt to grab the full statement until the matching END or semicolon.
+        start = m.start()
+        remainder = sql_text[start:]
+        # Simple heuristic: find next semicolon after start (could be inside body), but use first semicolon after 'END' if present.
+        end_idx = remainder.find(';')
+        if end_idx != -1:
+            stmt = remainder[:end_idx + 1].strip()
+        else:
+            stmt = remainder.strip()
+        procs[norm_name] = stmt
+
+    return procs
 
 
 @bp.route('/<int:project_id>/dalmaps', methods=['GET'])
@@ -534,21 +565,22 @@ def list_dalmap_files(project_id):
                 entry['sections'] = {}
             dalmaps.append(entry)
 
-        # Gather SQL table create statements from uploaded .sql source files
+        # Gather SQL table create statements + stored procedures from uploaded .sql source files
         sql_rows = db.execute_query(
             '''SELECT file_name, content FROM source_files
                WHERE project_id = ? AND (LOWER(file_name) LIKE '%.sql' OR LOWER(language) = 'sql')''',
             (project_id,)
         )
         sql_tables = {}
+        sql_procedures = {}
         for r in sql_rows:
             try:
                 content = r['content'] or ''
-                tables = _extract_sql_create_tables_from_text(content)
-                sql_tables.update(tables)
+                sql_tables.update(_extract_sql_create_tables_from_text(content))
+                sql_procedures.update(_extract_sql_procedures_from_text(content))
             except Exception:
                 pass
 
-        return jsonify({'dalmaps': dalmaps, 'sql_tables': sql_tables}), 200
+        return jsonify({'dalmaps': dalmaps, 'sql_tables': sql_tables, 'sql_procedures': sql_procedures}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
