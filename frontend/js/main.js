@@ -449,11 +449,26 @@ function runRagSearch() {
 
 function clearRagSearchResults() {
     ragSearchResults = [];
+    ragSearchBestScore = 0;
     ragSelectedFunctionIds.clear();
     const resultsContainer = document.getElementById('ragSearchResults');
     const resultsList = document.getElementById('ragSearchResultsList');
     if (resultsContainer) resultsContainer.style.display = 'none';
     if (resultsList) resultsList.innerHTML = '';
+}
+
+function clearRagSelection() {
+    ragSelectedFunctionIds.clear();
+    renderRagSearchResults();
+}
+
+function selectAllRagResults() {
+    ragSearchResults.forEach(r => {
+        if (r && r.id) {
+            ragSelectedFunctionIds.add(r.id);
+        }
+    });
+    renderRagSearchResults();
 }
 
 function toggleRagSelection(functionId) {
@@ -474,7 +489,7 @@ function renderRagSearchResults() {
         return;
     }
 
-const bestScore = ragSearchBestScore || Math.max(...ragSearchResults.map(r => Number(r.score) || 0));
+    const bestScore = ragSearchBestScore || Math.max(...ragSearchResults.map(r => Number(r.score) || 0));
     const lowConfidence = bestScore < 0.25;
 
     resultsList.innerHTML = (lowConfidence ?
@@ -505,8 +520,17 @@ function askAiWithRagSelection() {
 
     // If there is text in the chat input, keep it; otherwise use a default prompt
     const input = document.getElementById('chatInput');
+
+    const selectedNames = Array.from(ragSelectedFunctionIds).map(id => {
+        const r = ragSearchResults.find(x => x.id === id);
+        if (!r) return null;
+        return r.class_name ? `${r.class_name}.${r.function_name}` : r.function_name;
+    }).filter(Boolean);
+
     if (input && !input.value.trim()) {
-        input.value = 'Bu seçilen fonksiyonlar hakkında ne söyleyebilirsin?';
+        input.value = selectedNames.length > 0
+            ? `Bu fonksiyonlar hakkında ne söyleyebilirsin? ${selectedNames.join(', ')}`
+            : 'Bu seçilen fonksiyonlar hakkında ne söyleyebilirsin?';
     }
 
     // Send message with selection context

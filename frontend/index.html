@@ -262,7 +262,11 @@
                                 <div id="ragSearchResults" class="rag-search-results" style="display:none;">
                                     <div class="rag-search-results-header">
                                         <span>RAG sonuçları (seçip AI'ya sorabilirsiniz)</span>
-                                        <button class="btn btn-sm btn-secondary" onclick="clearRagSearchResults()">Temizle</button>
+                                        <div style="display:flex; gap:6px; align-items:center;">
+                                            <button class="btn btn-sm btn-secondary" onclick="selectAllRagResults()">Tümünü seç</button>
+                                            <button class="btn btn-sm btn-secondary" onclick="clearRagSelection()">Seçimi temizle</button>
+                                            <button class="btn btn-sm btn-secondary" onclick="clearRagSearchResults()">Temizle</button>
+                                        </div>
                                     </div>
                                     <div id="ragSearchResultsList"></div>
                                     <div style="margin-top:10px; text-align:right;">
