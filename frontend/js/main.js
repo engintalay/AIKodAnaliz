@@ -2188,6 +2188,7 @@ async function loadFiles() {
         allDocuments = data.documents || [];
 
         filterFiles();
+        await loadDalmapFiles();
         return;
 
     } catch (error) {
@@ -2211,6 +2212,111 @@ async function viewFileContent(fileId, fileName) {
         openFileViewerModal(fileName || data.file_name || 'Dosya Görüntüleme', content);
     } catch (error) {
         showError('Dosya Yükleme Hatası', error.message);
+    }
+}
+
+async function buildDalmapMappingView(dalmap, sqlTables) {
+    const sections = dalmap.sections || {};
+    const classes = Array.isArray(sections.classes) ? sections.classes : [];
+
+    const lines = [];
+    lines.push(`DALMap: ${dalmap.file_name || 'DALMap'}`);
+    lines.push('');
+
+    if (classes.length === 0) {
+        lines.push('⚠️ Hiç CLASS tanımı bulunamadı.');
+    } else {
+        lines.push('CLASS → TABLO EŞLEMELERİ:');
+        lines.push('');
+        classes.forEach((cls, idx) => {
+            const className = cls.name || cls['class'] || '<unknown>';
+            const tableName = cls.table || '<yok>';
+            lines.push(`${idx + 1}. CLASS: ${className}`);
+            lines.push(`   TABLO: ${tableName}`);
+
+            if (Array.isArray(cls.fields) && cls.fields.length > 0) {
+                lines.push('   Alanlar:');
+                cls.fields.forEach(f => {
+                    const fieldName = f.name || f['column'] || f.field || '<unknown>';
+                    const fieldType = f.type || f['datatype'] || '';
+                    lines.push(`     - ${fieldName}${fieldType ? ` (${fieldType})` : ''}`);
+                });
+            } else {
+                lines.push('   (Bu CLASS için alan bilgisi bulunamadı)');
+            }
+
+            // Show SQL schema if available
+            const normalizedTable = (tableName || '').toLowerCase().split('.').pop();
+            if (normalizedTable && sqlTables) {
+                const sql = sqlTables[normalizedTable];
+                if (sql) {
+                    lines.push('   --- DB TABLO ŞEMASI (CREATE TABLE) ---');
+                    const sqlLines = sql.split('\n').map(l => `     ${l}`);
+                    lines.push(...sqlLines);
+                }
+            }
+
+            lines.push('');
+        });
+    }
+
+    return lines.join('\n');
+}
+
+async function loadDalmapFiles() {
+    if (!currentProjectId) return;
+
+    const container = document.getElementById('dalmapList');
+    if (!container) return;
+    container.innerHTML = '<div style="color:#666;">DALMap dosyaları yükleniyor...</div>';
+
+    try {
+        const resp = await fetch(`${API_URL}/projects/${currentProjectId}/dalmaps`);
+        if (!resp.ok) {
+            container.innerHTML = `<div style="color:#c0392b;">Hata: ${resp.status}</div>`;
+            return;
+        }
+
+        const data = await resp.json();
+        const dalmaps = Array.isArray(data.dalmaps) ? data.dalmaps : [];
+        const sqlTables = (data.sql_tables && typeof data.sql_tables === 'object') ? data.sql_tables : {};
+
+        if (!dalmaps.length) {
+            container.innerHTML = '<div style="color:#666;">Bu projede DALMap dosyası bulunamadı.</div>';
+            return;
+        }
+
+        container.innerHTML = '';
+        dalmaps.forEach(d => {
+            const item = document.createElement('div');
+            item.style.cssText = 'padding:8px; border:1px solid #e1e7ee; border-radius:6px; margin-bottom:8px; background:#fff; display:flex; justify-content:space-between; align-items:flex-start;';
+
+            const info = document.createElement('div');
+            const title = document.createElement('div');
+            title.style.fontWeight = '600';
+            title.textContent = d.file_name || 'DALMap';
+            const meta = document.createElement('div');
+            meta.style.fontSize = '12px';
+            meta.style.color = '#555';
+            meta.textContent = `Oluşturulma: ${new Date(d.created_at).toLocaleString('tr-TR')}`;
+            info.appendChild(title);
+            info.appendChild(meta);
+
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-secondary';
+            btn.style.fontSize = '12px';
+            btn.textContent = 'Göster';
+            btn.onclick = async () => {
+                const mappedView = await buildDalmapMappingView(d, sqlTables);
+                openFileViewerModal(d.file_name || 'DALMap', mappedView);
+            };
+
+            item.appendChild(info);
+            item.appendChild(btn);
+            container.appendChild(item);
+        });
+    } catch (error) {
+        container.innerHTML = `<div style="color:#c0392b;">Hata: ${error.message}</div>`;
     }
 }
 
@@ -2325,7 +2431,7 @@ async function addFileToProject() {
     
     // Validate file type
     const fileName = file.name.toLowerCase();
-    const validExtensions = ['.zip', '.war', '.jar', '.java', '.sql', '.py', '.js', '.ts', '.php',
+    const validExtensions = ['.zip', '.war', '.jar', '.java', '.sql', '.py', '.js', '.ts', '.php', '.xml',
                              '.pdf', '.doc', '.docx', '.txt', '.md'];
     const isValid = validExtensions.some(ext => fileName.endsWith(ext));
     

@@ -11,6 +11,7 @@ import uuid
 import subprocess
 import shutil
 from backend.permission_manager import check_permission, check_project_access, get_user_from_session, get_user_projects
+from backend.routes.project_files import _is_dalmap_file, _process_dalmap_file
 
 bp = Blueprint('project', __name__, url_prefix='/api/projects')
 
@@ -379,6 +380,7 @@ def add_files_to_project(project_id):
             skipped_files = 0
             added_documents = 0
             added_single_file_id = None
+            results = []  # keep track of per-file status details
             
             # Determine file type and process accordingly
             if file_lower.endswith(('.zip', '.war', '.jar')):
@@ -421,12 +423,20 @@ def add_files_to_project(project_id):
                         skipped_files += 1
                         continue
                     
+                    # Special case: DALMap config files
+                    if _is_dalmap_file(fname):
+                        if _process_dalmap_file(project_id, fpath, rel_path, fname):
+                            added_documents += 1
+                        else:
+                            skipped_files += 1
+                        continue
+
                     language = _detect_language(fname)
-                    
+
                     try:
                         with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
                             content = f.read()
-                        
+
                         # Add to source_files
                         file_id = db.execute_insert(
                             '''INSERT INTO source_files
@@ -440,10 +450,26 @@ def add_files_to_project(project_id):
                         skipped_files += 1
                         logger.warning(f"[Project {project_id}] Failed to process {rel_path}: {str(e)}")
                         continue
-                
+
                 # Cleanup
                 shutil.rmtree(temp_extract_dir, ignore_errors=True)
                 
+            elif file_lower.endswith('.xml'):
+                # DALMap configuration file
+                progress_tracker.update(task_id, progress=30, step='DALMap işleniyor...', detail='DALMap yapılandırması pars ediliyor')
+
+                dalmap_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}', 'dalmap')
+                os.makedirs(dalmap_dir, exist_ok=True)
+                dalmap_path = os.path.join(dalmap_dir, file.filename)
+                file.save(dalmap_path)
+
+                rel_db = os.path.relpath(dalmap_path, UPLOAD_DIR)
+                if _process_dalmap_file(project_id, dalmap_path, rel_db, file.filename):
+                    added_documents += 1
+                    results.append({'file': file.filename, 'status': 'ok', 'type': 'dalmap'})
+                else:
+                    results.append({'file': file.filename, 'status': 'skipped', 'detail': 'DALMap parse edilemedi'})
+
             elif file_lower.endswith(('.pdf', '.doc', '.docx', '.txt', '.md')):
                 # Document files for RAG
                 progress_tracker.update(task_id, progress=30, step='Doküman işleniyor...', detail='RAG analizine hazırlanıyor')
@@ -557,6 +583,7 @@ def add_files_to_project(project_id):
                 'documents_added': added_documents,
                 'files_skipped': skipped_files,
                 'added_file_id': added_single_file_id,
+                'results': results,
                 'message': 'Files added successfully'
             }), 201
             
