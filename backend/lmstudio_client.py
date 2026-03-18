@@ -253,9 +253,10 @@ Summary:"""
                     'completion_tokens': int(usage.get('completion_tokens', 0) or 0),
                     'total_tokens': int(usage.get('total_tokens', 0) or 0),
                 }
+                import re
                 summary = data['choices'][0]['message']['content'].strip()
-                
-                # Return full summary without truncation
+                # <think> bloklarını temizle
+                summary = re.sub(r'<think>.*?</think>', '', summary, flags=re.DOTALL).strip()
                 return summary
             else:
                 self.last_call_stats = {

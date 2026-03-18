@@ -123,32 +123,11 @@ def chat_with_project(project_id):
             in_think = False         # Currently inside <think>...</think>
 
             for chunk in client.chat_stream(messages, system_prompt=system_prompt):
-                if think_stripped:
-                    # Fast path: think block already handled, stream directly
-                    escaped = chunk.replace('\n', '\\n')
+                # Her chunk için <think> bloklarını temizle
+                cleaned_chunk = _re.sub(r'<think>.*?</think>', '', chunk, flags=_re.DOTALL)
+                escaped = cleaned_chunk.replace('\n', '\n')
+                if escaped:
                     yield f"data:{escaped}\n\n"
-                    continue
-
-                buffer += chunk
-
-                if '<think>' in buffer:
-                    in_think = True
-                    if '</think>' in buffer:
-                        # Strip the entire think block and start streaming the rest
-                        cleaned = _re.sub(r'<think>.*?</think>', '', buffer, flags=_re.DOTALL).lstrip('\n')
-                        think_stripped = True
-                        in_think = False
-                        buffer = ''
-                        if cleaned:
-                            escaped = cleaned.replace('\n', '\\n')
-                            yield f"data:{escaped}\n\n"
-                    # else: still buffering the think block
-                elif not in_think and len(buffer) >= 15:
-                    # No think tag detected after 15 chars → safe to stream normally
-                    think_stripped = True
-                    escaped = buffer.replace('\n', '\\n')
-                    yield f"data:{escaped}\n\n"
-                    buffer = ''
 
             # Flush any remaining buffer after stream ends
             if buffer and not in_think:
