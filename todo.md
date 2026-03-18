@@ -33,7 +33,7 @@
 - [✅] **GELIS12:** Projeler ekranında her projenin ne kadar RAG analizi yapıldığını, ve AI analiz oranını göster
 - [✅] **GELIS13:** Proje yüklendikten sonra, Dosyalar bölümünde filtreleme olsun.
 - [✅] **GELIS14:** Projeler ekranında Proje kutusuna basıncada proje açılsın, sadece aç düğmesinme basılmak zorunda kalmasın.
-- [❌] **GELIS15:** 
+- [❌] **GELIS15:** Think destekleyen modeller için think'in kapatılıp açılması.
 
 
 Referanslar
