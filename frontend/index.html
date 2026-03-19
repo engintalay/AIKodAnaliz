@@ -252,6 +252,11 @@
                                     style="padding:4px 12px; font-size:12px;">🗑️ Konuşmayı Sıfırla</button>
                             </div>
 
+                            <!-- Display for Attached Items -->
+                            <div id="attachedItemsDisplay" class="attached-items-area" style="display: none;">
+                                <!-- Attached files/functions will be listed here -->
+                            </div>
+
                             <!-- RAG Search (GELIS11) -->
                             <div class="rag-search">
                                 <div class="rag-search-controls">
@@ -284,6 +289,7 @@
                                 </div>
                             </div>
                             <div class="chat-input-area">
+                                <button id="attachButton" class="btn btn-secondary chat-attach-btn" onclick="toggleAttachmentPanel()">➕</button>
                                 <textarea id="chatInput" class="chat-input" rows="2"
                                     placeholder="Proje hakkında soru sorun... (Enter ile gönder, Shift+Enter yeni satır)"
                                     onkeydown="handleChatKeydown(event)"></textarea>
@@ -871,8 +877,38 @@
     <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/js/main.js?v=20260313_01"></script>
+    <script src="/static/js/main.js?v=20260313_02"></script>
     <script src="/static/js/admin-functions.js?v=20260313_01"></script>
+
+    <!-- Attachment Selection Panel/Modal -->
+    <div id="attachmentPanel" class="attachment-panel" style="display:none;">
+        <div class="attachment-panel-content">
+            <div class="attachment-panel-header">
+                <h3>Dosya ve Fonksiyon Ekle</h3>
+                <button class="close-attachment-panel" onclick="toggleAttachmentPanel()">&times;</button>
+            </div>
+            <div class="attachment-tabs">
+                <button class="attachment-tab-btn active" onclick="switchAttachmentTab('files')">Dosyalar</button>
+                <button class="attachment-tab-btn" onclick="switchAttachmentTab('functions')">Fonksiyonlar</button>
+            </div>
+            <div id="attachmentFilesTab" class="attachment-tab-content visible">
+                <input type="text" id="attachmentFileSearch" class="attachment-search-input" placeholder="Dosya ara..." oninput="filterAttachmentFiles()">
+                <div id="attachmentFileList" class="attachment-list">
+                    <!-- File list will be populated here -->
+                </div>
+            </div>
+            <div id="attachmentFunctionsTab" class="attachment-tab-content">
+                <input type="text" id="attachmentFunctionSearch" class="attachment-search-input" placeholder="Fonksiyon ara..." oninput="filterAttachmentFunctions()">
+                <div id="attachmentFunctionList" class="attachment-list">
+                    <!-- Function list will be populated here -->
+                </div>
+            </div>
+            <div class="attachment-panel-actions">
+                <button class="btn btn-secondary" onclick="clearAttachmentSelection()">Seçimi Temizle</button>
+                <button class="btn btn-primary" onclick="confirmAttachments()">Ekle</button>
+            </div>
+        </div>
+    </div>
 </body>
 
 </html>

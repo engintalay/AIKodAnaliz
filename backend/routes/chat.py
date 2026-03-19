@@ -13,12 +13,13 @@ bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 # Context retrieval helpers
 # ------------------------------------------------------------------
 
-def _build_context(project_id: int, project_name: str, query: str, function_ids: list[int] | None = None) -> tuple[str, str, list]:
+def _build_context(project_id: int, project_name: str, query: str, function_ids: list[int] | None = None, additional_context: str | None = None) -> tuple[str, str, list]:
     """Return (system_prompt, context_block, refs) for the LLM.
     Uses RagIndex for hybrid embedding + FTS5 + LIKE search.
     Also searches doc_chunks (GELIS8) for relevant document passages.
 
     If `function_ids` is provided, those functions are used as the primary context.
+    If `additional_context` is provided, it is prepended to the main context.
     """
     if function_ids:
         funcs = RagIndex.search(project_id, query, limit=len(function_ids) or 10, function_ids=function_ids)
@@ -55,16 +56,27 @@ def _build_context(project_id: int, project_name: str, query: str, function_ids:
                 doc_parts.append(f"[{hit['file_name']}#{hit['chunk_index']}]\n{hit['content']}")
         if doc_parts:
             doc_block = '\n\n'.join(doc_parts)
+    
+    # Prepend additional context if provided
+    final_context_block = context_block
+    if additional_context:
+        final_context_block = (
+            "=== EK BAĞLAM (Kullanıcı Tarafından Eklendi) ===\n"
+            f"{additional_context}\n"
+            "============================================\n\n"
+            f"{context_block}"
+        )
+
 
     system_prompt = (
         f"Sen '{project_name}' projesinin AI kod asistanısın. "
         "YALNIZCA Türkçe yanıt ver. "
-        "Aşağıdaki proje fonksiyonlarından yola çıkarak soruyu yanıtla. "
+        "Aşağıdaki proje fonksiyonlarından ve ek bağlamdan yola çıkarak soruyu yanıtla. "
         "Eğer soruyla ilgili fonksiyon bulunamazsa bunu açıkça belirt. "
         "Kod snippet'i verirken Markdown kullan.\n\n"
-        "=== PROJE FONKSİYONLARI ===\n"
-        f"{context_block}\n"
-        "==========================="
+        "=== PROJE FONKSİYONLARI VE BAĞLAM ===\n"
+        f"{final_context_block}\n"
+        "======================================"
         + (("\n\n=== PROJE DOKÜMANLARI ===\n" + doc_block + "\n========================") if doc_block else '')
     )
     return system_prompt, context_block, refs
@@ -79,8 +91,12 @@ def _build_context(project_id: int, project_name: str, query: str, function_ids:
 def chat_with_project(project_id):
     """Streaming SSE chat endpoint.
     
-    Body JSON: { "message": "...", "history": [{"role": ..., "content": ...}, ...] }
-    Response: text/event-stream  (each chunk: 'data: <token>\\n\\n', ends with 'data: [DONE]\\n\\n')
+    Body JSON: { 
+        "message": "...", 
+        "history": [{"role": ..., "content": ...}, ...],
+        "attachments": [{"id": "...", "type": "file|function"}, ...] 
+    }
+    Response: text/event-stream
     """
     user = get_user_from_session()
 
@@ -88,9 +104,14 @@ def chat_with_project(project_id):
     user_message = (data.get('message') or '').strip()
     history = data.get('history', [])  # list of {role, content}
     context_function_ids = data.get('context_function_ids') or None
+    attachments = data.get('attachments', [])
 
-    if not user_message:
+    if not user_message and not attachments:
         return jsonify({'error': 'Mesaj boş olamaz'}), 400
+
+    # If message is empty but there are attachments, create a default prompt.
+    if not user_message and attachments:
+        user_message = "Lütfen ekteki bağlamı analiz et ve bir özet sun."
 
     # Fetch project info
     proj_rows = db.execute_query('SELECT id, name FROM projects WHERE id = ?', (project_id,))
@@ -98,10 +119,72 @@ def chat_with_project(project_id):
         return jsonify({'error': 'Proje bulunamadı'}), 404
     project_name = dict(proj_rows[0])['name']
 
-    system_prompt, _, refs = _build_context(project_id, project_name, user_message, function_ids=context_function_ids)
+    # --- Build context from attachments ---
+    additional_context_parts = []
+    if attachments:
+        for item in attachments:
+            item_id = item.get('id')
+            item_type = item.get('type')
+            item_name = item.get('name')
 
-    # Build message list for LLM
-    messages = [dict(h) for h in history if h.get('role') in ('user', 'assistant')]
+            if not item_id or not item_type:
+                continue
+            
+            content = ''
+            if item_type == 'function':
+                # Fetch function source code by getting file content and slicing lines
+                func_meta_rows = db.execute_query(
+                    'SELECT file_id, start_line, end_line FROM functions WHERE id = ? AND project_id = ?',
+                    (item_id, project_id)
+                )
+                if func_meta_rows:
+                    meta = dict(func_meta_rows[0])
+                    file_rows = db.execute_query(
+                        'SELECT content FROM source_files WHERE id = ? AND project_id = ?',
+                        (meta['file_id'], project_id)
+                    )
+                    if file_rows:
+                        try:
+                            full_content = file_rows[0]['content']
+                            if isinstance(full_content, bytes):
+                                full_content = full_content.decode('utf-8', errors='ignore')
+                            
+                            lines = full_content.splitlines()
+                            # Ensure start/end lines are within bounds
+                            start = max(0, meta['start_line'] - 1)
+                            end = min(len(lines), meta['end_line'])
+                            function_lines = lines[start:end]
+                            content = '\n'.join(function_lines)
+                        except Exception as e:
+                            logger.error(f"Error extracting function code for func_id {item_id}: {e}")
+                            content = f"[Hata: Fonksiyon kodu ayıklanamadı - {e}]"
+            
+            elif item_type == 'file':
+                # Fetch file content from the virtual file system
+                file_rows = db.execute_query('SELECT content FROM project_files WHERE file_path = ? AND project_id = ?', (item_id, project_id))
+                if file_rows:
+                    # Content might be binary, so we decode safely
+                    try:
+                        content = file_rows[0]['content'].decode('utf-8')
+                    except (UnicodeDecodeError, AttributeError):
+                        content = '[İkili dosya içeriği gösterilemiyor]'
+
+            if content:
+                additional_context_parts.append(f"--- {item_name} ({item_type}) ---\n{content}\n")
+    
+    additional_context = "\n".join(additional_context_parts)
+    # --- End of attachment context building ---
+
+    system_prompt, _, refs = _build_context(
+        project_id, 
+        project_name, 
+        user_message, 
+        function_ids=context_function_ids,
+        additional_context=additional_context
+    )
+
+    # Build message list for LLM, filtering out any messages with empty content
+    messages = [dict(h) for h in history if h.get('role') in ('user', 'assistant') and h.get('content')]
     messages.append({'role': 'user', 'content': user_message})
 
     log_audit(user, 'chat_message_sent', 'project', project_id,

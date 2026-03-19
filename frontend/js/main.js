@@ -632,7 +632,8 @@ async function sendChatMessage() {
     if (!input) return;
 
     const text = input.value.trim();
-    if (!text) return;
+    // Allow sending message with only attachments
+    if (!text && attachedItems.length === 0) return;
 
     input.value = '';
     chatStreaming = true;
@@ -654,10 +655,13 @@ async function sendChatMessage() {
     const historySlice = chatHistory.slice(-8);
 
     try {
-        const payload = { message: text, history: historySlice };
-        if (ragSelectedFunctionIds.size > 0) {
-            payload.context_function_ids = Array.from(ragSelectedFunctionIds);
-        }
+        // Prepare payload with attachments
+        const payload = { 
+            message: text, 
+            history: historySlice,
+            attachments: attachedItems, // Include attached items
+            context_function_ids: Array.from(ragSelectedFunctionIds) // Include RAG selections
+        };
 
         const response = await fetch(`${API_URL}/chat/project/${currentProjectId}`, {
             method: 'POST',
@@ -705,7 +709,6 @@ async function sendChatMessage() {
                     }
                     if (!line.startsWith('data:')) continue;
 
-                    // NO trim — preserve leading spaces (they are part of LLM word tokens)
                     const chunk = line.slice(5);
 
                     if (currentEvent === 'refs') {
@@ -718,7 +721,6 @@ async function sendChatMessage() {
                         streamDone = true;
                         break;
                     }
-                    // Unescape newlines (backend sends \n as literal \\n)
                     const token = chunk.replace(/\\n/g, '\n');
                     replyText += token;
                     replyBubble.textContent = replyText;
@@ -729,7 +731,6 @@ async function sendChatMessage() {
             if (!replyText) throw streamErr;
         } finally {
             replyBubble.classList.remove('chat-cursor');
-            // Render Markdown after stream completes
             if (replyText) {
                 try {
                     if (typeof marked !== 'undefined') {
@@ -738,7 +739,6 @@ async function sendChatMessage() {
                 } catch (mdErr) { /* keep textContent */ }
             }
 
-            // Render reference function chips
             if (refs.length > 0) {
                 const refsEl = document.createElement('div');
                 refsEl.className = 'chat-refs';
@@ -752,9 +752,11 @@ async function sendChatMessage() {
             }
         }
 
-        // Store in history
         chatHistory.push({ role: 'user', content: text });
         chatHistory.push({ role: 'assistant', content: replyText });
+        
+        // Clear attachments after sending
+        clearAttachedItems();
 
     } catch (err) {
         typingEl.remove();
@@ -3174,3 +3176,232 @@ function toggleCallGraphFullscreen() {
         if (cyCallGraph) cyCallGraph.resize().fit();
     }, 200);
 }
+
+// --- Attachment Panel Logic ---
+
+let attachedItems = []; // To store selected files and functions
+let currentAttachmentPanelTab = 'files'; // To track the active tab
+
+function toggleAttachmentPanel() {
+    const panel = document.getElementById('attachmentPanel');
+    const isVisible = panel.style.display === 'flex';
+    panel.style.display = isVisible ? 'none' : 'flex';
+
+    if (!isVisible) {
+        // Load content when the panel opens
+        if (currentAttachmentPanelTab === 'files') {
+            loadAttachmentFiles();
+        } else {
+            loadAttachmentFunctions();
+        }
+    }
+}
+
+function renderAttachedItems() {
+    const displayArea = document.getElementById('attachedItemsDisplay');
+    if (!displayArea) return;
+    displayArea.innerHTML = ''; 
+
+    if (attachedItems.length > 0) {
+        displayArea.style.display = 'flex';
+    } else {
+        displayArea.style.display = 'none';
+        return;
+    }
+
+    attachedItems.forEach(item => {
+        const chip = document.createElement('div');
+        chip.className = 'attached-item-chip';
+        chip.innerHTML = `
+            <span class="attachment-item-name" title="${item.name}">${item.name}</span>
+            <span class="attachment-item-meta">${item.type === 'file' ? 'Dosya' : 'Fonksiyon'}</span>
+            <button class="remove-item-btn" onclick="removeItemFromAttachments('${item.id}', '${item.type}')" title="Kaldır">&times;</button>
+        `;
+        displayArea.appendChild(chip);
+    });
+}
+
+function removeItemFromAttachments(idToRemove, typeToRemove) {
+    attachedItems = attachedItems.filter(item => !(item.id === idToRemove && item.type === typeToRemove));
+    renderAttachedItems();
+    
+    const panel = document.getElementById('attachmentPanel');
+    if (panel && panel.style.display === 'flex') {
+        const checkbox = panel.querySelector(`input[data-id='${idToRemove}'][data-type='${typeToRemove}']`);
+        if (checkbox) {
+            checkbox.checked = false;
+        }
+    }
+}
+
+function clearAttachedItems() {
+    attachedItems = [];
+    renderAttachedItems();
+    
+    const panel = document.getElementById('attachmentPanel');
+    if (panel) {
+        panel.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    }
+}
+
+
+function switchAttachmentTab(tabName) {
+    currentAttachmentPanelTab = tabName;
+    const filesTab = document.getElementById('attachmentFilesTab');
+    const functionsTab = document.getElementById('attachmentFunctionsTab');
+    const fileBtn = document.querySelector('.attachment-tab-btn[onclick*="files"]');
+    const functionBtn = document.querySelector('.attachment-tab-btn[onclick*="functions"]');
+
+    if (tabName === 'files') {
+        filesTab.classList.add('visible');
+        functionsTab.classList.remove('visible');
+        fileBtn.classList.add('active');
+        functionBtn.classList.remove('active');
+        loadAttachmentFiles();
+    } else {
+        filesTab.classList.remove('visible');
+        functionsTab.classList.add('visible');
+        fileBtn.classList.remove('active');
+        functionBtn.classList.add('active');
+        loadAttachmentFunctions();
+    }
+}
+
+async function loadAttachmentFiles() {
+    const fileListDiv = document.getElementById('attachmentFileList');
+    if (!fileListDiv || !currentProjectId) return;
+    fileListDiv.innerHTML = '<div class="attachment-item"><span class="attachment-item-name">Yükleniyor...</span></div>';
+
+    try {
+        const response = await fetch(`${API_URL}/projects/${currentProjectId}/files`);
+        if (!response.ok) throw new Error('Dosyalar alınamadı');
+        
+        const data = await response.json(); // Get the full response object
+        
+        const sourceFiles = Array.isArray(data.source_files) ? data.source_files : [];
+        const documents = Array.isArray(data.documents) ? data.documents : [];
+        
+        // Combine them into a single array for rendering
+        const files = [...sourceFiles, ...documents]; 
+
+        fileListDiv.innerHTML = '';
+        if (files.length === 0) {
+            fileListDiv.innerHTML = '<div class="attachment-item"><span class="attachment-item-name">Dosya bulunamadı.</span></div>';
+            return;
+        }
+
+        files.forEach(file => {
+            // Backend response uses 'file_path' for unique identifier
+            const itemId = file.file_path; 
+            const itemName = file.file_name;
+            const itemType = file.entry_type; // 'source' or 'document'
+
+            const isAttached = attachedItems.some(att => att.id === String(itemId) && att.type === itemType);
+            
+            const item = document.createElement('div');
+            item.className = 'attachment-item';
+            item.innerHTML = `
+                <label>
+                    <input type="checkbox" data-id="${itemId}" data-type="${itemType}" data-name="${itemName}" onchange="selectAttachmentItem(event)" ${isAttached ? 'checked' : ''}>
+                    <span class="attachment-item-name" title="${itemName}">${itemName}</span>
+                    <span class="attachment-item-meta">${itemType === 'source' ? `(${file.language || 'kod'})` : `(${itemType})`}</span>
+                </label>
+            `;
+            fileListDiv.appendChild(item);
+        });
+    } catch (error) {
+        console.error("Dosya yüklenemedi:", error);
+        fileListDiv.innerHTML = '<div class="attachment-item"><span class="attachment-item-name" style="color:red;">Hata oluştu.</span></div>';
+    }
+}
+
+async function loadAttachmentFunctions() {
+    const functionListDiv = document.getElementById('attachmentFunctionList');
+    if (!functionListDiv || !currentProjectId) return;
+    functionListDiv.innerHTML = '<div class="attachment-item"><span class="attachment-item-name">Yükleniyor...</span></div>';
+
+    try {
+        const response = await fetch(`${API_URL}/analysis/project/${currentProjectId}/functions`);
+        if (!response.ok) throw new Error('Fonksiyonlar alınamadı');
+        const functions = await response.json();
+        
+        functionListDiv.innerHTML = '';
+        if (!functions || functions.length === 0) {
+            functionListDiv.innerHTML = '<div class="attachment-item"><span class="attachment-item-name">Fonksiyon bulunamadı.</span></div>';
+            return;
+        }
+
+        functions.forEach(func => {
+            const item = document.createElement('div');
+            item.className = 'attachment-item';
+            const isAttached = attachedItems.some(att => att.id === String(func.id) && att.type === 'function');
+            const qualifiedName = func.qualified_name || func.function_name;
+            item.innerHTML = `
+                <label>
+                    <input type="checkbox" data-id="${func.id}" data-type="function" data-name="${qualifiedName}" onchange="selectAttachmentItem(event)" ${isAttached ? 'checked' : ''}>
+                    <span class="attachment-item-name" title="${qualifiedName}">${qualifiedName}</span>
+                    <span class="attachment-item-meta" title="${func.file_path}">(${func.file_path || ''})</span>
+                </label>
+            `;
+            functionListDiv.appendChild(item);
+        });
+    } catch (error) {
+        console.error("Fonksiyon yüklenemedi:", error);
+        functionListDiv.innerHTML = '<div class="attachment-item"><span class="attachment-item-name" style="color:red;">Hata oluştu.</span></div>';
+    }
+}
+
+function filterAttachmentFiles() {
+    const searchTerm = document.getElementById('attachmentFileSearch').value.toLowerCase();
+    const items = document.querySelectorAll('#attachmentFileList .attachment-item');
+    items.forEach(item => {
+        const name = item.querySelector('.attachment-item-name')?.textContent.toLowerCase() || '';
+        item.style.display = name.includes(searchTerm) ? '' : 'none';
+    });
+}
+
+function filterAttachmentFunctions() {
+    const searchTerm = document.getElementById('attachmentFunctionSearch').value.toLowerCase();
+    const items = document.querySelectorAll('#attachmentFunctionList .attachment-item');
+    items.forEach(item => {
+        const name = item.querySelector('.attachment-item-name')?.textContent.toLowerCase() || '';
+        const file = item.querySelector('.attachment-item-meta')?.textContent.toLowerCase() || '';
+        item.style.display = (name.includes(searchTerm) || file.includes(searchTerm)) ? '' : 'none';
+    });
+}
+
+function selectAttachmentItem(event) {
+    const checkbox = event.target;
+    const { id, type, name } = checkbox.dataset;
+
+    const itemIndex = attachedItems.findIndex(item => item.id === id && item.type === type);
+
+    if (checkbox.checked) {
+        if (itemIndex === -1) {
+            attachedItems.push({ id, name, type });
+        }
+    } else {
+        if (itemIndex > -1) {
+            attachedItems.splice(itemIndex, 1);
+        }
+    }
+}
+
+function clearAttachmentSelection() {
+    const panel = document.getElementById('attachmentPanel');
+    if (!panel) return;
+    panel.querySelectorAll('input[type="checkbox"]:checked').forEach(checkbox => {
+        checkbox.checked = false;
+        const { id, type } = checkbox.dataset;
+        const itemIndex = attachedItems.findIndex(item => item.id === id && item.type === type);
+        if (itemIndex > -1) {
+            attachedItems.splice(itemIndex, 1);
+        }
+    });
+}
+
+function confirmAttachments() {
+    renderAttachedItems();
+    toggleAttachmentPanel();
+}
+
