@@ -234,7 +234,7 @@ En fazla 200 kelimeyle şunları açıkla:
 3. Return value/output
 4. Any side effects or important notes
 
-Eğer "Ek soru" verildiyse, özetin sonunda "Ek Soru Yanıtı:" başlığı ile kısa cevap ver.
+Eğer "Ek soru" verildiyse, özetin sonunda "Ek Soru Yanıtı:" başlığı ile iş kurallarını, akışları ve koşulları adım adım çıkar ve detaylı cevap ver.
 
 Summary:"""
         

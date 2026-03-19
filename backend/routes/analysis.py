@@ -1158,7 +1158,7 @@ def bulk_generate_ai_summaries(project_id):
         # Start the background thread
         thread = threading.Thread(
             target=_bulk_generate_worker,
-            args=(project_id, task_id, client, settings['temperature'], settings['top_p'], settings['max_tokens'], extra_criteria, extra_question),
+            args=(project_id, task_id, client, settings.get('temperature'), settings.get('top_p'), settings.get('max_tokens'), extra_criteria, extra_question),
             daemon=True,
             name=f"BulkAI_{project_id}_{uuid.uuid4().hex[:6]}"
         )
