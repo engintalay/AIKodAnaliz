@@ -2,7 +2,7 @@
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QFrame, QSizePolicy,
+    QPushButton, QFrame, QSizePolicy, QMessageBox,
 )
 from PyQt6.QtGui import QKeyEvent
 
@@ -38,6 +38,8 @@ class LoginDialog(QDialog):
         self.api_client = api_client
         self._user_info: dict = {}
         self._thread: _LoginThread | None = None
+        self._last_error = ""
+        self.close_btn: QPushButton | None = None
 
         self.setObjectName("loginDialog")
         self.setWindowTitle("AIKodAnaliz – Giriş")
@@ -144,14 +146,14 @@ class LoginDialog(QDialog):
         # Close button (top-right)
         close_row = QHBoxLayout()
         close_row.addStretch()
-        close_btn = QPushButton("✕")
-        close_btn.setStyleSheet(
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setStyleSheet(
             f"background: transparent; border: none; color: {COLOR_TEXT_MUTED}; font-size: 16px;"
         )
-        close_btn.setFixedSize(32, 32)
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.clicked.connect(self.reject)
-        close_row.addWidget(close_btn)
+        self.close_btn.setFixedSize(32, 32)
+        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_btn.clicked.connect(self.reject)
+        close_row.addWidget(self.close_btn)
 
         outer_layout = QVBoxLayout()
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -186,6 +188,10 @@ class LoginDialog(QDialog):
     def user_info(self) -> dict:
         return self._user_info
 
+    @property
+    def last_error(self) -> str:
+        return self._last_error
+
     def _attempt_login(self):
         server_url = self.server_edit.text().strip() or "http://localhost:5000"
         username = self.username_edit.text().strip()
@@ -200,6 +206,7 @@ class LoginDialog(QDialog):
 
         self.api_client.base_url = server_url.rstrip("/")
 
+        self._last_error = ""
         self._set_loading(True)
         self.error_label.hide()
 
@@ -210,23 +217,48 @@ class LoginDialog(QDialog):
 
     def _on_login_success(self, user: dict):
         self._user_info = user
+        self._last_error = ""
         self._set_loading(False)
         self.accept()
 
     def _on_login_failure(self, error: str):
         self._set_loading(False)
         self._show_error(error)
+        self._show_error_dialog(error)
 
     def _show_error(self, msg: str):
+        self._last_error = msg
         self.error_label.setText(msg)
         self.error_label.show()
+
+    def _show_error_dialog(self, msg: str):
+        QMessageBox.critical(
+            self,
+            "Giriş Başarısız",
+            f"Sunucuya giriş yapılamadı.\n\nDetay:\n{msg}",
+        )
 
     def _set_loading(self, loading: bool):
         self.login_btn.setEnabled(not loading)
         self.username_edit.setEnabled(not loading)
         self.password_edit.setEnabled(not loading)
         self.server_edit.setEnabled(not loading)
+        if self.close_btn:
+            self.close_btn.setEnabled(not loading)
         if loading:
             self.login_btn.setText("Giriş yapılıyor...")
         else:
             self.login_btn.setText("Giriş Yap")
+
+    def reject(self):
+        if self._thread and self._thread.isRunning():
+            self._show_error("Giriş işlemi devam ediyor. Lütfen sonucu bekleyin.")
+            return
+        super().reject()
+
+    def closeEvent(self, event):
+        if self._thread and self._thread.isRunning():
+            self._show_error("Giriş işlemi devam ediyor. Lütfen sonucu bekleyin.")
+            event.ignore()
+            return
+        super().closeEvent(event)

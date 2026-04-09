@@ -16,7 +16,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
@@ -27,35 +27,48 @@ from desktop_app.main_window import MainWindow
 
 
 def main():
-    # High-DPI support
     app = QApplication(sys.argv)
     app.setApplicationName("AIKodAnaliz")
     app.setApplicationDisplayName("AIKodAnaliz – Çoklu Proje Asistanı")
 
-    # Apply global stylesheet
-    app.setStyleSheet(MAIN_STYLE)
+    try:
+        # Apply global stylesheet
+        app.setStyleSheet(MAIN_STYLE)
 
-    # Default font
-    font = QFont("Segoe UI", 11)
-    font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
-    app.setFont(font)
+        # Default font
+        font = QFont("Segoe UI", 11)
+        font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+        app.setFont(font)
 
-    # API client (URL may be overridden in login dialog)
-    client = ApiClient("http://localhost:5000")
+        # API client (URL may be overridden in login dialog)
+        client = ApiClient("http://localhost:5000")
 
-    # Show login dialog
-    dlg = LoginDialog(client)
-    dlg.setStyleSheet(MAIN_STYLE)
-    if dlg.exec() != LoginDialog.DialogCode.Accepted:
-        sys.exit(0)
+        # Show login dialog
+        dlg = LoginDialog(client)
+        dlg.setStyleSheet(MAIN_STYLE)
+        if dlg.exec() != LoginDialog.DialogCode.Accepted:
+            if dlg.last_error:
+                QMessageBox.critical(
+                    None,
+                    "Uygulama Kapatılıyor",
+                    f"Giriş yapılamadığı için uygulama kapatıldı.\n\nDetay:\n{dlg.last_error}",
+                )
+            sys.exit(1)
 
-    user_info = dlg.user_info
+        user_info = dlg.user_info
 
-    # Launch main window
-    window = MainWindow(client, user_info)
-    window.show()
+        # Launch main window
+        window = MainWindow(client, user_info)
+        window.show()
 
-    sys.exit(app.exec())
+        sys.exit(app.exec())
+    except Exception as exc:
+        QMessageBox.critical(
+            None,
+            "Başlatma Hatası",
+            f"Uygulama başlatılırken beklenmeyen bir hata oluştu.\n\nDetay:\n{exc}",
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":
