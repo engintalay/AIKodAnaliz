@@ -88,6 +88,12 @@ def chat_with_project(project_id):
     user_message = (data.get('message') or '').strip()
     history = data.get('history', [])  # list of {role, content}
     context_function_ids = data.get('context_function_ids') or None
+    max_tokens = data.get('max_tokens') or None
+    if max_tokens:
+        try:
+            max_tokens = int(max_tokens)
+        except (ValueError, TypeError):
+            max_tokens = None
 
     if not user_message:
         return jsonify({'error': 'Mesaj boş olamaz'}), 400
@@ -122,7 +128,7 @@ def chat_with_project(project_id):
             think_stripped = False   # True once we've dealt with any think block
             in_think = False         # Currently inside <think>...</think>
 
-            for chunk in client.chat_stream(messages, system_prompt=system_prompt):
+            for chunk in client.chat_stream(messages, system_prompt=system_prompt, max_tokens=max_tokens):
                 # Her chunk için <think> bloklarını temizle
                 cleaned_chunk = _re.sub(r'<think>.*?</think>', '', chunk, flags=_re.DOTALL)
                 escaped = cleaned_chunk.replace('\n', '\n')

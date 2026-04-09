@@ -1,0 +1,1 @@
+# AIKodAnaliz Desktop Application

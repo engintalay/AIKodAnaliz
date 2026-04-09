@@ -35,7 +35,7 @@
 - [✅] **GELIS14:** Projeler ekranında Proje kutusuna basıncada proje açılsın, sadece aç düğmesinme basılmak zorunda kalmasın.
 - [✅] **GELIS15:** Tüm modeller için think'in kapatılması.
 - [❌] **GELIS16:** Sohbet alan düzeltmeleri
-- [❌] **GELIS17:** Tüm projeler üzerinden soru sorulabilen bir masa üstü uygulaması hazırlanması.
+- [✅] **GELIS17:** Tüm projeler üzerinden soru sorulabilen bir masa üstü uygulaması hazırlanması.
 
 Referanslar
 [❌] [✅]
