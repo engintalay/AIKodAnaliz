@@ -143,6 +143,8 @@ async function loadProjects() {
             // Restrict Delete & Reanalyze to admin and project owners
             const canManage = currentUser && (currentUser.role === 'admin' || project.admin_id === currentUser.id);
 
+            actionButtons += `<button onclick="event.stopPropagation(); exportProjectWeb(${project.id})" class="btn btn-secondary">📤 Dışa Aktar</button>`;
+
             if (canManage) {
                 actionButtons += `
                     <button onclick="event.stopPropagation(); reanalyzeProject(${project.id})" class="btn btn-secondary">🔄 Tekrar Analiz Et</button>
@@ -3173,4 +3175,79 @@ function toggleCallGraphFullscreen() {
     setTimeout(() => {
         if (cyCallGraph) cyCallGraph.resize().fit();
     }, 200);
+}
+
+// ============================================
+// SECTION: Export / Import
+// ============================================
+
+async function exportProjectWeb(projectId) {
+    try {
+        showMessage('Dışa Aktarılıyor', '📤 Proje dışa aktarılıyor, lütfen bekleyin...', 'info');
+
+        const response = await fetch(`${API_URL}/projects/${projectId}/export`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Dışa aktarma başarısız');
+        }
+
+        // Get filename from Content-Disposition header
+        const filename = response.headers
+            .get('Content-Disposition')
+            .split('filename=')[1]
+            .split(';')[0]
+            .replace(/"/g, '') || 'project.aikodanaliz';
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        showSuccess('Başarılı', `📤 Proje dışa aktarıldı: ${filename}`);
+    } catch (error) {
+        showError('Dışa Aktarma Hatası', error.message);
+    }
+}
+
+async function importProject(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    try {
+        showMessage('İçe Aktarılıyor', '📥 Proje içe aktarılıyor, lütfen bekleyin...', 'info');
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch(`${API_URL}/projects/import`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'İçe aktarma başarısız');
+        }
+
+        const result = await response.json();
+        showSuccess('Başarılı', `📥 Proje başarıyla içe aktarıldı: ${result.project.name}`);
+
+        // Clear file input
+        event.target.value = '';
+
+        // Reload projects
+        loadProjects();
+    } catch (error) {
+        showError('İçe Aktarma Hatası', error.message);
+        // Clear file input
+        event.target.value = '';
+    }
 }

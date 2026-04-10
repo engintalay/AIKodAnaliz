@@ -69,7 +69,11 @@
             <!-- Projects Section -->
             <div id="projectsSection" class="section visible">
                 <h2>Projeler</h2>
-                <button class="btn btn-primary" onclick="showUpload()">+ Yeni Proje</button>
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                    <button class="btn btn-primary" onclick="showUpload()">+ Yeni Proje</button>
+                    <button class="btn btn-secondary" onclick="document.getElementById('importProjectFile').click()">📥 Proje İçe Aktar</button>
+                    <input type="file" id="importProjectFile" accept=".aikodanaliz" style="display:none;" onchange="importProject(event)">
+                </div>
                 <div id="projectsList" class="projects-grid">
                     <!-- Projects akan buraya yüklenecek -->
                 </div>
