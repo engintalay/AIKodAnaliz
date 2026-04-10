@@ -225,3 +225,65 @@ class ApiClient:
         except Exception as e:
             yield "error", f"Beklenmeyen hata: {e}"
             yield "done", ""
+
+    # ------------------------------------------------------------------
+    # Export / Import
+    # ------------------------------------------------------------------
+
+    def export_project(self, project_id: int, output_path: str) -> str:
+        """Export project as ZIP file. Returns output_path on success."""
+        try:
+            with self.session.post(
+                self._url(f"/api/projects/{project_id}/export"),
+                stream=True,
+                timeout=300,
+            ) as resp:
+                if resp.status_code != 200:
+                    try:
+                        err = resp.json().get("error", resp.text)
+                    except Exception:
+                        err = resp.text
+                    raise ApiError(f"Dışa aktarma başarısız: {err}")
+
+                with open(output_path, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        if chunk:
+                            f.write(chunk)
+
+                return output_path
+        except requests.exceptions.ConnectionError:
+            raise ApiError(f"Sunucuya bağlanılamadı: {self.base_url}")
+        except requests.exceptions.Timeout:
+            raise ApiError("Dışa aktarma zaman aşımına uğradı.")
+        except Exception as e:
+            raise ApiError(f"Dışa aktarma hatası: {e}")
+
+    def import_project(self, file_path: str) -> dict:
+        """Import project from ZIP file. Returns new project dict."""
+        try:
+            with open(file_path, "rb") as f:
+                files = {"file": f}
+                resp = self.session.post(
+                    self._url("/api/projects/import"),
+                    files=files,
+                    timeout=300,
+                )
+
+            if resp.status_code == 201:
+                return resp.json().get("project", {})
+            elif resp.status_code in (401, 403):
+                raise ApiError("Oturum sona erdi. Lütfen tekrar giriş yapın.")
+            else:
+                try:
+                    err = resp.json().get("error", resp.text)
+                except Exception:
+                    err = resp.text
+                raise ApiError(f"İçe aktarma başarısız: {err}")
+        except requests.exceptions.ConnectionError:
+            raise ApiError(f"Sunucuya bağlanılamadı: {self.base_url}")
+        except requests.exceptions.Timeout:
+            raise ApiError("İçe aktarma zaman aşımına uğradı.")
+        except FileNotFoundError:
+            raise ApiError(f"Dosya bulunamadı: {file_path}")
+        except Exception as e:
+            raise ApiError(f"İçe aktarma hatası: {e}")

@@ -5,12 +5,13 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QListWidget,
     QListWidgetItem, QTextEdit, QFrame, QSizePolicy,
-    QSplitter, QScrollArea,
+    QSplitter, QScrollArea, QMessageBox, QFileDialog,
 )
 
 from desktop_app.api_client import ApiClient
 from desktop_app.chat_widgets import ChatArea
 from desktop_app.workers import ProjectRouterThread, ChatStreamThread, ProjectListThread
+from desktop_app.export_import_ui import ExportThread, ImportThread
 from desktop_app.styles import (
     C_GREEN, C_RED, C_ORANGE, C_TEXT_MUTED, C_ACCENT_LIGHT
 )
@@ -227,6 +228,26 @@ class MainWindow(QMainWindow):
         self._server_edit.setToolTip("Sunucu adresini değiştirmek için düzenle")
         self._server_edit.returnPressed.connect(self._change_server)
         foot_lay.addWidget(self._server_edit)
+
+        # Export / Import buttons
+        buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(6)
+
+        export_btn = QPushButton("📤 Dışa Aktar")
+        export_btn.setObjectName("exportButton")
+        export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        export_btn.setToolTip("Seçili projeyi dışa aktar")
+        export_btn.clicked.connect(self._on_export_clicked)
+        buttons_row.addWidget(export_btn)
+
+        import_btn = QPushButton("📥 İçe Aktar")
+        import_btn.setObjectName("importButton")
+        import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        import_btn.setToolTip("Proje dosyasını içe aktar")
+        import_btn.clicked.connect(self._on_import_clicked)
+        buttons_row.addWidget(import_btn)
+
+        foot_lay.addLayout(buttons_row)
 
         lay.addWidget(footer)
 
@@ -513,6 +534,57 @@ class MainWindow(QMainWindow):
             self._client.base_url = url.rstrip("/")
             self._server_url_lbl.setText(self._client.base_url)
             self._load_projects()
+
+    # ------------------------------------------------------------------
+    # Export / Import
+    # ------------------------------------------------------------------
+
+    def _on_export_clicked(self):
+        if not self._current_project:
+            QMessageBox.warning(self, "Uyarı", "Lütfen dışa aktarmak için bir proje seçin.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Proje Dışa Aktar", "", "AIKodAnaliz Dosyası (*.aikodanaliz);;Tüm Dosyalar (*.*)"
+        )
+
+        if not path:
+            return
+
+        def _on_success(output_path: str):
+            QMessageBox.information(
+                self, "Başarılı", f"Proje başarıyla dışa aktarıldı:\n{output_path}"
+            )
+
+        def _on_error(error_msg: str):
+            QMessageBox.critical(self, "Hata", f"Dışa aktarma başarısız:\n{error_msg}")
+
+        thread = ExportThread(self._client, self._current_project["id"], path)
+        thread.success.connect(_on_success)
+        thread.error.connect(_on_error)
+        thread.start()
+
+    def _on_import_clicked(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Proje İçe Aktar", "", "AIKodAnaliz Dosyası (*.aikodanaliz);;Tüm Dosyalar (*.*)"
+        )
+
+        if not path:
+            return
+
+        def _on_success(new_project: dict):
+            QMessageBox.information(
+                self, "Başarılı", f"Proje başarıyla içe aktarıldı:\n{new_project.get('name', 'Bilinmiyor')}"
+            )
+            self._load_projects()
+
+        def _on_error(error_msg: str):
+            QMessageBox.critical(self, "Hata", f"İçe aktarma başarısız:\n{error_msg}")
+
+        thread = ImportThread(self._client, path)
+        thread.success.connect(_on_success)
+        thread.error.connect(_on_error)
+        thread.start()
 
         # ==================================================================
         # Close

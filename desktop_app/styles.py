@@ -304,6 +304,27 @@ QMainWindow {{
     color: {C_RED};
 }}
 
+#exportButton, #importButton {{
+    background-color: transparent;
+    border: 1px solid {C_BORDER};
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: {C_TEXT_MUTED};
+    font-size: 11px;
+}}
+
+#exportButton:hover {{
+    border-color: {C_ACCENT};
+    color: {C_TEXT};
+    background-color: {C_CARD};
+}}
+
+#importButton:hover {{
+    border-color: {C_ACCENT};
+    color: {C_TEXT};
+    background-color: {C_CARD};
+}}
+
 /* ─── Login Dialog ───────────────────────────────────── */
 #loginDialog {{
     background-color: {C_SURFACE};
