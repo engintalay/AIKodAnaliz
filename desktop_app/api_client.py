@@ -23,6 +23,8 @@ class ApiClient:
         self.session = requests.Session()
         self.session.trust_env = False  # ignore OS proxy settings
         self._lock = threading.Lock()
+        self.rag_timeout = 60
+        self.chat_timeout = 1800
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
@@ -107,7 +109,7 @@ class ApiClient:
             resp = self.session.get(
                 self._url(f"/api/rag/project/{project_id}/search"),
                 params={"q": query, "limit": limit},
-                timeout=20,
+                timeout=self.rag_timeout,
             )
             if resp.status_code == 200:
                 data = resp.json()
@@ -183,7 +185,7 @@ class ApiClient:
                 self._url(f"/api/chat/project/{project_id}"),
                 json=payload,
                 stream=True,
-                timeout=600,
+                timeout=self.chat_timeout,
             ) as resp:
                 if resp.status_code != 200:
                     try:
@@ -217,7 +219,8 @@ class ApiClient:
             yield "error", f"Sunucu bağlantısı kesildi: {self.base_url}"
             yield "done", ""
         except requests.exceptions.Timeout:
-            yield "error", "İstek zaman aşımına uğradı (10 dakika)."
+            timeout_minutes = self.chat_timeout // 60
+            yield "error", f"İstek zaman aşımına uğradı ({timeout_minutes} dakika)."
             yield "done", ""
         except Exception as e:
             yield "error", f"Beklenmeyen hata: {e}"

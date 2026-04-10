@@ -7,6 +7,7 @@ from config.config import (
     LMSTUDIO_MAX_TOKENS,
     LMSTUDIO_TEMPERATURE,
     LMSTUDIO_TOP_P,
+    LMSTUDIO_REQUEST_TIMEOUT,
     CONTEXT_LIMIT_TOKENS,
 )
 from backend.database import db
@@ -21,9 +22,9 @@ class LMStudioClient:
         self.temperature = LMSTUDIO_TEMPERATURE
         self.top_p = LMSTUDIO_TOP_P
         self.context_limit = CONTEXT_LIMIT_TOKENS
-        # Local models can have long first-token delays while loading.
-        # Increased timeout for local inference (5 minutes)
-        self.request_timeout = 300
+        # Local models can have long load and inference delays.
+        # Default is 15 minutes and can be overridden from env/DB settings.
+        self.request_timeout = LMSTUDIO_REQUEST_TIMEOUT
         self.retry_count = 3
 
         # Load runtime overrides from ai_settings table (if present)

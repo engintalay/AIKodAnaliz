@@ -29,6 +29,7 @@ LMSTUDIO_DEFAULT_MODEL = os.getenv('LMSTUDIO_DEFAULT_MODEL', 'local-model')
 LMSTUDIO_MAX_TOKENS = int(os.getenv('LMSTUDIO_MAX_TOKENS', '1000'))
 LMSTUDIO_TEMPERATURE = float(os.getenv('LMSTUDIO_TEMPERATURE', '0.7'))
 LMSTUDIO_TOP_P = float(os.getenv('LMSTUDIO_TOP_P', '0.9'))
+LMSTUDIO_REQUEST_TIMEOUT = int(os.getenv('LMSTUDIO_REQUEST_TIMEOUT', '900'))
 
 # ---- Veritabanı ----
 DB_CONNECTION_TYPE = os.getenv('DB_CONNECTION_TYPE', 'sqlite')
