@@ -42,6 +42,9 @@ class MainWindow(QMainWindow):
         self._ai_widget = None
         self._stream_thread: ChatStreamThread | None = None
         self._router_thread: ProjectRouterThread | None = None
+        self._project_list_thread: ProjectListThread | None = None
+        self._export_thread: ExportThread | None = None
+        self._import_thread: ImportThread | None = None
         self._drag_pos: QPoint | None = None
 
         self.setWindowTitle("AIKodAnaliz – Çoklu Proje Asistanı")
@@ -366,11 +369,19 @@ class MainWindow(QMainWindow):
     def _load_projects(self):
         self._set_status("⟳", C_ORANGE, "Yükleniyor...")
         self._project_list.clear()
-        t = ProjectListThread(self._client, self)
-        t.loaded.connect(self._on_projects_loaded)
-        t.error_occurred.connect(self._on_projects_error)
-        t.finished.connect(t.deleteLater)
-        t.start()
+        if self._project_list_thread and self._project_list_thread.isRunning():
+            self._project_list_thread.wait(1000)
+        self._project_list_thread = ProjectListThread(self._client, self)
+        self._project_list_thread.loaded.connect(self._on_projects_loaded)
+        self._project_list_thread.error_occurred.connect(self._on_projects_error)
+        self._project_list_thread.finished.connect(self._on_project_list_done)
+        self._project_list_thread.start()
+
+    @pyqtSlot()
+    def _on_project_list_done(self):
+        if self._project_list_thread:
+            self._project_list_thread.deleteLater()
+            self._project_list_thread = None
 
     @pyqtSlot(list)
     def _on_projects_loaded(self, projects: list):
@@ -562,7 +573,9 @@ class MainWindow(QMainWindow):
         thread = ExportThread(self._client, self._current_project["id"], path)
         thread.success.connect(_on_success)
         thread.error.connect(_on_error)
-        thread.start()
+        thread.finished.connect(self._on_export_done)
+        self._export_thread = thread
+        self._export_thread.start()
 
     def _on_import_clicked(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -584,18 +597,36 @@ class MainWindow(QMainWindow):
         thread = ImportThread(self._client, path)
         thread.success.connect(_on_success)
         thread.error.connect(_on_error)
-        thread.start()
+        thread.finished.connect(self._on_import_done)
+        self._import_thread = thread
+        self._import_thread.start()
 
-        # ==================================================================
-        # Close
-        # ==================================================================
+    @pyqtSlot()
+    def _on_export_done(self):
+        if self._export_thread:
+            self._export_thread.deleteLater()
+            self._export_thread = None
 
-        def closeEvent(self, event):
-            # Stop streaming thread
-            if self._stream_thread and self._stream_thread.isRunning():
-                self._stream_thread.abort()
-                self._stream_thread.wait(2000)
-            # Stop router thread
-            if self._router_thread and self._router_thread.isRunning():
-                self._router_thread.wait(2000)
-            event.accept()
+    @pyqtSlot()
+    def _on_import_done(self):
+        if self._import_thread:
+            self._import_thread.deleteLater()
+            self._import_thread = None
+
+    # ==================================================================
+    # Close
+    # ==================================================================
+
+    def closeEvent(self, event):
+        if self._stream_thread and self._stream_thread.isRunning():
+            self._stream_thread.abort()
+            self._stream_thread.wait(2000)
+        if self._router_thread and self._router_thread.isRunning():
+            self._router_thread.wait(2000)
+        if self._project_list_thread and self._project_list_thread.isRunning():
+            self._project_list_thread.wait(2000)
+        if self._export_thread and self._export_thread.isRunning():
+            self._export_thread.wait(2000)
+        if self._import_thread and self._import_thread.isRunning():
+            self._import_thread.wait(2000)
+        event.accept()
