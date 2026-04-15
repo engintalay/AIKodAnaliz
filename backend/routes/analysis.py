@@ -702,7 +702,7 @@ def analyze_project(project_id):
         log_error(f"analyze_project (project: {project_id})", e)
         return jsonify({'error': str(e)}), 500
 
-def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0, temperature=None, top_p=None, max_tokens=None, track_progress=True, extra_criteria=None, extra_question=None):
+def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0, temperature=None, top_p=None, max_tokens=None, track_progress=True, extra_criteria=None, extra_question=None, force=False):
     """Recursively generate AI summaries for function and its dependencies
     
     Args:
@@ -743,8 +743,8 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
     
     func = dict(row[0])
     
-    # Check if summary already exists
-    if func.get('ai_summary') and func['ai_summary'].strip() and not func['ai_summary'].startswith('⚠️'):
+    # Check if summary already exists (skip unless `force` is True)
+    if not force and func.get('ai_summary') and func['ai_summary'].strip() and not func['ai_summary'].startswith('⚠️'):
         logger.debug(f"Function {function_id} ({func['function_name']}) already has summary, skipping")
         if task_id:
             processed += 1
@@ -996,9 +996,10 @@ def get_ai_summary(function_id):
         extra_question = (payload.get('extra_question') or '').strip()
         
         # Generate summary recursively (will handle dependencies automatically)
+        force = bool(payload.get('force'))
         summary, _ = _generate_ai_summary_recursive(function_id, client, task_id=task_id, total_deps=total_deps,
-                                                   temperature=temperature, top_p=top_p, max_tokens=max_tokens,
-                               extra_criteria=extra_criteria, extra_question=extra_question)
+                               temperature=temperature, top_p=top_p, max_tokens=max_tokens,
+                       extra_criteria=extra_criteria, extra_question=extra_question, force=force)
         
         if not summary:
             # Distinguish missing function from failed AI generation
@@ -1612,6 +1613,9 @@ def get_project_functions(project_id):
         functions = []
         for row in rows:
             func_dict = dict(row)
+            # Mark whether the underlying source file contains a @Service annotation
+            src_content = func_dict.get('content') or ''
+            func_dict['is_service_file'] = True if '@Service' in src_content else False
             # Add qualified name for disambiguation
             class_name = func_dict.get('class_name')
             func_name = func_dict['function_name']

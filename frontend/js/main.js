@@ -1403,6 +1403,14 @@ async function loadFunctions() {
         }
 
         const functions = await response.json();
+
+        // Ensure functions from @Service files are processed first so they appear at top
+        if (Array.isArray(functions)) {
+            functions.sort((a, b) => {
+                if ((a.is_service_file ? 1 : 0) === (b.is_service_file ? 1 : 0)) return 0;
+                return (a.is_service_file ? -1 : 1);
+            });
+        }
         console.log('Functions loaded, count:', functions.length);
 
         const list = document.getElementById('functionsList');
@@ -1474,6 +1482,12 @@ async function loadFunctions() {
                 clsDiv.appendChild(clsHeader);
                 clsDiv.appendChild(clsContent);
 
+                // Move functions that belong to @Service files to the top of the list
+                funcs.sort((a, b) => {
+                    if (a.is_service_file === b.is_service_file) return 0;
+                    return a.is_service_file ? -1 : 1;
+                });
+
                 funcs.forEach(func => {
                     const called = Array.isArray(func.called_functions) ? func.called_functions : [];
                     const calledBy = Array.isArray(func.called_by_functions) ? func.called_by_functions : [];
@@ -1491,7 +1505,7 @@ async function loadFunctions() {
 
                     // Minimal HTML - dependencies lazy-loaded when class opens
                     item.innerHTML = `
-                        <h5>${func.function_name} <small>(${func.function_type})</small></h5>
+                        <h5>${func.function_name} ${func.is_service_file ? '<span class="badge service-badge" style="background:#f39c12;color:#fff;padding:2px 6px;border-radius:12px;margin-left:8px;font-size:11px;">SERVICE</span>' : ''} <small>(${func.function_type})</small></h5>
                         <p>${func.ai_summary || 'Özet henüz oluşturulmadı'}</p>
                         <div class="function-meta">
                             Satırlar: ${func.start_line}-${func.end_line}
@@ -1753,18 +1767,7 @@ async function generateAISummary() {
         return;
     }
 
-    const oldText = summaryArea.value;
-    const trimmedExisting = (oldText || '').trim();
-    const hasExistingSummary =
-        trimmedExisting.length > 0 &&
-        trimmedExisting !== 'AI Yükleniyor... Lütfen bekleyin...';
-
-    if (hasExistingSummary) {
-        const shouldOverwrite = confirm('Bu fonksiyon için mevcut bir özet var. AI ile yeniden oluşturup mevcut özeti değiştirmek istiyor musunuz?');
-        if (!shouldOverwrite) {
-            return;
-        }
-    }
+    // Always request AI summary (force overwrite) regardless of existing summary
 
     // Show progress UI
     const progressDiv = document.getElementById('uploadProgress');
@@ -1841,7 +1844,8 @@ async function generateAISummary() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     extra_criteria: extraCriteria,
-                    extra_question: extraQuestion
+                    extra_question: extraQuestion,
+                    force: true
                 })
             })
         );
@@ -2235,7 +2239,7 @@ function filterFiles() {
         return (`${d.file_name} ${d.file_path} ${d.document_type || ''}`).toLowerCase().includes(query);
     });
 
-    if (filteredSources.length === 0 && filteredDocs.length === 0) {
+        if (filteredSources.length === 0 && filteredDocs.length === 0) {
         const empty = document.createElement('p');
         empty.style.cssText = 'color:#666; padding:10px;';
         empty.textContent = 'Bu filtreye uyan dosya bulunamadı.';
@@ -2244,6 +2248,11 @@ function filterFiles() {
     }
 
     if (filteredSources.length > 0) {
+        // Bring files containing @Service to the top
+        filteredSources.sort((a, b) => {
+            if ((a.is_service ? 1 : 0) === (b.is_service ? 1 : 0)) return 0;
+            return (a.is_service ? -1 : 1);
+        });
         const header = document.createElement('h4');
         header.style.cssText = 'margin: 0 0 10px 0; color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 6px;';
         header.textContent = `📄 Kaynak Dosyalar (${filteredSources.length})`;
@@ -2259,6 +2268,13 @@ function filterFiles() {
             const nameEl = document.createElement('h4');
             nameEl.style.margin = '0 0 2px 0';
             nameEl.textContent = file.file_name;
+            if (file.is_service) {
+                const badge = document.createElement('span');
+                badge.className = 'badge service-badge';
+                badge.style.cssText = 'background:#f39c12;color:#fff;padding:2px 6px;border-radius:12px;margin-left:8px;font-size:11px;';
+                badge.textContent = 'SERVICE';
+                nameEl.appendChild(badge);
+            }
             const pathEl = document.createElement('p');
             pathEl.style.cssText = 'font-size:12px; color:#666; margin:2px 0;';
             pathEl.textContent = file.file_path;

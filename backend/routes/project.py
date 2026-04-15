@@ -819,7 +819,7 @@ def get_project_files(project_id):
     """Get all source files and documents in project"""
     try:
         source_rows = db.execute_query(
-            'SELECT id, file_name, file_path, language, NULL as document_type, \'source\' as entry_type FROM source_files WHERE project_id = ?',
+            "SELECT id, file_name, file_path, language, NULL as document_type, 'source' as entry_type, CASE WHEN content LIKE '%@Service%' THEN 1 ELSE 0 END as is_service FROM source_files WHERE project_id = ?",
             (project_id,)
         )
         doc_rows = db.execute_query(

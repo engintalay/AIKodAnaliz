@@ -111,6 +111,10 @@ class LMStudioClient:
                     "role": "system",
                     "content": "Yanıt dili zorunlu olarak Türkçe olmalı. İngilizce veya başka dil kullanma."
                 },
+                {
+                    "role": "system",
+                    "content": "Olabildiğince detaylı ve açıklayıcı ol. Teknik detaylara girmekten çekinme. Kodun ne yaptığını, nasıl çalıştığını, neden öyle yapıldığını anlat. Eğer kodda belirsizlikler varsa, mümkün olan en iyi tahminini yaparak bunları da açıklamaya çalış. Eğer kodun amacı veya işlevi hakkında kesin bir fikrin yoksa, bunu açıkça belirt ve olası senaryoları sıralayarak açıklamaya çalış. Kodun hangi problemleri çözmeye çalıştığını, hangi ihtiyaçlara hizmet ettiğini, hangi durumlarda kullanışlı olabileceğini anlat. Kodun güçlü ve zayıf yönlerini, potansiyel riskleri veya yan etkileri varsa bunları da açıklamaya çalış. Kodun nasıl geliştirilebileceği veya iyileştirilebileceği konusunda önerilerin varsa bunları da paylaş. Kodun genel bağlamını, kullanım senaryolarını ve teknik detaylarını mümkün olan en iyi şekilde açıklamaya çalış.  "
+                },
                 {"role": "user", "content": prompt}
             ],
             "temperature": temperature,
@@ -229,13 +233,13 @@ Code:
 ```{dependency_context}
 {extra_instructions}
 
-En fazla 200 kelimeyle şunları açıkla:
+Kelime sınırı olmaksızın şunları açıkla:
 1. What the function does
 2. Input parameters and their purpose
 3. Return value/output
 4. Any side effects or important notes
 
-Eğer "Ek soru" verildiyse, özetin sonunda "Ek Soru Yanıtı:" başlığı ile kısa cevap ver.
+Eğer "Ek soru" verildiyse, özetin sonunda "Ek Soru Yanıtı:" başlığı ile uzun ve detaylı cevap ver.
 
 Summary:"""
         
