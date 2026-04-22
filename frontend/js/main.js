@@ -393,7 +393,8 @@ async function startBulkAiAnalysis() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     extra_criteria: extraCriteria,
-                    extra_question: extraQuestion
+                    extra_question: extraQuestion,
+                    force: true
                 })
             })
         );
@@ -1767,7 +1768,17 @@ async function generateAISummary() {
         return;
     }
 
-    // Always request AI summary (force overwrite) regardless of existing summary
+    const oldText = summaryArea.value;
+    const trimmedExisting = (oldText || '').trim();
+    const hasExistingSummary = trimmedExisting.length > 0 && trimmedExisting !== 'AI Yükleniyor... Lütfen bekleyin...';
+
+    // If summary exists, ask user if they want to regenerate
+    if (hasExistingSummary) {
+        const confirmOverwrite = confirm('Bu fonksiyon için mevcut bir AI özeti var. Tekrar oluşturmak istiyor musunuz?');
+        if (!confirmOverwrite) {
+            return;
+        }
+    }
 
     // Show progress UI
     const progressDiv = document.getElementById('uploadProgress');
@@ -1845,7 +1856,7 @@ async function generateAISummary() {
                 body: JSON.stringify({
                     extra_criteria: extraCriteria,
                     extra_question: extraQuestion,
-                    force: true
+                    force: hasExistingSummary
                 })
             })
         );

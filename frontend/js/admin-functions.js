@@ -426,7 +426,7 @@ function analyzeAllMissingFiles() {
             `Toplu Dosya Analizi: ${target.projectName} / ${target.fileName}`,
             () => fetch(
                 `${API_URL}/analysis/file/${target.fileId}?missing_only=true&task_id=${encodeURIComponent(taskId)}`,
-                { method: 'POST' }
+                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }) }
             )
         );
     });
@@ -483,7 +483,7 @@ function reanalyzeErrorSummary(functionId) {
         () => fetch(`${API_URL}/analysis/errors/reanalyze?task_id=${encodeURIComponent(taskId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ function_ids: [functionId] })
+            body: JSON.stringify({ function_ids: [functionId], force: true })
         })
     );
 }
@@ -497,7 +497,7 @@ function reanalyzeAllErrorSummaries() {
         () => fetch(`${API_URL}/analysis/errors/reanalyze?task_id=${encodeURIComponent(taskId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({})
+            body: JSON.stringify({ force: true })
         })
     );
 }
@@ -521,7 +521,9 @@ function analyzeMissingFunctions(projectId, fileName, fileId) {
             taskId,
             `Dosya Analizi: ${fileName}`,
             () => fetch(`${API_URL}/analysis/file/${fileId}?missing_only=true&task_id=${encodeURIComponent(taskId)}`, {
-                method: 'POST'
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ force: true })
             })
         );
     }
@@ -551,7 +553,9 @@ function analyzeSingleFunction(functionId) {
         taskId,
         `Fonksiyon Analizi: #${functionId}`,
         () => fetch(`${API_URL}/analysis/function/${functionId}/ai-summary?task_id=${encodeURIComponent(taskId)}`, {
-            method: 'POST'
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force: true })
         })
     );
 }
