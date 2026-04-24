@@ -1956,7 +1956,7 @@ def get_recent_ai_files():
             WHERE f.ai_summary IS NOT NULL AND f.ai_summary != '' 
             AND f.ai_summary NOT LIKE 'Error:%'
             AND f.ai_summary NOT LIKE '⚠️%'
-            ORDER BY f.id DESC
+            ORDER BY COALESCE(f.updated_at, f.created_at) DESC, f.id DESC
             LIMIT ?
         ''', (limit,))
         
