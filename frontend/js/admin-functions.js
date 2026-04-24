@@ -46,9 +46,17 @@ function renderAnalysisMonitorTarget(monitorId, statsId, listId, emptyId) {
     const list = document.getElementById(listId);
     const stats = document.getElementById(statsId);
     const empty = emptyId ? document.getElementById(emptyId) : null;
-    if (!monitor || !list || !stats) return;
+    
+    console.log(`[DEBUG] renderAnalysisMonitorTarget: ${monitorId}`, { monitor: !!monitor, list: !!list, stats: !!stats, empty: !!empty });
+    
+    if (!monitor || !list || !stats) {
+        console.log('[DEBUG] renderAnalysisMonitorTarget: Elements not found, returning');
+        return;
+    }
 
     const jobs = Array.from(analysisJobs.values());
+    console.log(`[DEBUG] renderAnalysisMonitorTarget: ${monitorId}, jobs count =`, jobs.length);
+    
     if (jobs.length === 0) {
         monitor.style.display = 'none';
         list.innerHTML = '';
@@ -151,6 +159,7 @@ function formatDuration(seconds) {
 }
 
 function renderAnalysisMonitor() {
+    console.log('[DEBUG] renderAnalysisMonitor called, analysisJobs size =', analysisJobs.size);
     renderAnalysisMonitorTarget('analysisMonitor', 'analysisGlobalStats', 'analysisTaskList');
     renderAnalysisMonitorTarget('globalAiJobsMonitor', 'globalAiJobsStats', 'globalAiJobsList', 'globalAiJobsEmpty');
     const queueLabel = document.getElementById('aiQueueLimitLabel');
@@ -158,18 +167,24 @@ function renderAnalysisMonitor() {
 }
 
 function removeAnalysisJob(taskId) {
+    console.log('[DEBUG] removeAnalysisJob called for', taskId);
     const job = analysisJobs.get(taskId);
     if (job && job.pollTimer) {
         clearInterval(job.pollTimer);
     }
     analysisJobs.delete(taskId);
+    console.log('[DEBUG] removeAnalysisJob: analysisJobs size after delete =', analysisJobs.size);
     renderAnalysisMonitor();
     processGlobalAiQueue();
 }
 
 function pollAnalysisTask(taskId) {
     const job = analysisJobs.get(taskId);
-    if (!job) return;
+    if (!job) {
+        console.log('[DEBUG] pollAnalysisTask: job not found for', taskId);
+        return;
+    }
+    console.log('[DEBUG] pollAnalysisTask: polling', taskId);
 
     const tick = async () => {
         try {
@@ -244,10 +259,12 @@ function pollAnalysisTask(taskId) {
 }
 
 function processGlobalAiQueue() {
+    console.log('[DEBUG] processGlobalAiQueue: active =', globalAiQueue.active, 'pending =', globalAiQueue.pending.length, 'maxConcurrent =', globalAiQueue.maxConcurrent);
     // Self-heal: if there are queued jobs in the map but missing from pending queue,
     // enqueue them so previously stuck jobs can start.
     if (globalAiQueue.pending.length === 0) {
         const queuedJobs = Array.from(analysisJobs.values()).filter(job => job.status === 'queued');
+        console.log('[DEBUG] processGlobalAiQueue: self-heal found', queuedJobs.length, 'queued jobs');
         if (queuedJobs.length > 0) {
             queuedJobs.forEach(job => {
                 if (!globalAiQueue.pending.some(p => p.taskId === job.taskId)) {
@@ -259,11 +276,13 @@ function processGlobalAiQueue() {
 
     while (globalAiQueue.active < globalAiQueue.maxConcurrent && globalAiQueue.pending.length > 0) {
         const nextJob = globalAiQueue.pending.shift();
+        console.log('[DEBUG] processGlobalAiQueue: starting job', nextJob.taskId);
         globalAiQueue.active += 1;
         nextJob.status = 'started';
         nextJob.current_step = 'İstek başlatıldı, backend görevi oluşturuluyor...';
         renderAnalysisMonitor();
 
+        console.log('[DEBUG] processGlobalAiQueue: calling requestFactory for', nextJob.taskId);
         const requestPromise = nextJob.requestFactory();
         nextJob.requestPromise = requestPromise;
         nextJob.resolveStarted(requestPromise);
@@ -314,6 +333,7 @@ function processGlobalAiQueue() {
 }
 
 function startTrackedAnalysis(taskId, label, requestFactory, options = {}) {
+    console.log('[DEBUG] startTrackedAnalysis called:', taskId, label);
     let resolveStarted;
     const startedPromise = new Promise((resolve) => {
         resolveStarted = resolve;
@@ -352,10 +372,16 @@ function startTrackedAnalysis(taskId, label, requestFactory, options = {}) {
     analysisJobs.set(taskId, job);
     globalAiQueue.pending.push(job);
 
+    console.log('[DEBUG] startTrackedAnalysis: Added job', taskId, 'analysisJobs size =', analysisJobs.size);
+    
     renderAnalysisMonitor();
     processGlobalAiQueue();
     return startedPromise;
 }
+
+// Export startTrackedAnalysis to window for use in main.js
+window.startTrackedAnalysis = startTrackedAnalysis;
+window.pollAnalysisTask = pollAnalysisTask;
 
 function loadReport() {
     Promise.all([
@@ -419,8 +445,10 @@ function analyzeAllMissingFiles() {
 
     globalAiQueue.succeeded = 0;
     globalAiQueue.failed = 0;
+    console.log('[DEBUG] analyzeAllMissingFiles: Starting loop for', targets.length, 'targets');
     targets.forEach((target) => {
         const taskId = `ai-file-${target.fileId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        console.log('[DEBUG] analyzeAllMissingFiles: Calling startTrackedAnalysis for', target.fileName);
         startTrackedAnalysis(
             taskId,
             `Toplu Dosya Analizi: ${target.projectName} / ${target.fileName}`,
@@ -430,11 +458,24 @@ function analyzeAllMissingFiles() {
             )
         );
     });
+    console.log('[DEBUG] analyzeAllMissingFiles: After loop, analysisJobs size =', analysisJobs.size);
 
     showSuccess(
         'Toplu Analiz Başlatıldı',
         `${targets.length} dosya global kuyruğa alındı. Aynı anda en fazla ${globalAiQueue.maxConcurrent} AI işi başlatılacak.`
     );
+
+    // Debug: Log job count
+    console.log('[DEBUG] analyzeAllMissingFiles: analysisJobs size =', analysisJobs.size);
+    console.log('[DEBUG] analyzeAllMissingFiles: globalAiQueue.pending size =', globalAiQueue.pending.length);
+
+    // Switch to AI Jobs section to show the running jobs
+    if (typeof showAiJobs === 'function') {
+        console.log('[DEBUG] Calling showAiJobs()');
+        showAiJobs();
+    } else {
+        console.log('[DEBUG] showAiJobs not found!');
+    }
 }
 
 function clearErrorSummary(functionId) {

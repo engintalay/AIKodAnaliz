@@ -3,13 +3,14 @@ from backend.database import db
 from backend.analyzers.advanced_analyzer import AdvancedCodeAnalyzer
 from backend.lmstudio_client import LMStudioClient
 from backend.progress_tracker import progress_tracker
-from backend.logger import logger, log_analysis, log_ai_call, log_error, log_audit
+from backend.logger import logger, log_analysis, log_ai_call, log_error, log_audit, log_file_analysis_start, log_file_analysis_complete
 from backend.permission_manager import get_user_from_session
 import json
 import uuid
 import re
 import threading
 import math
+import time
 
 CALL_NAME_PATTERN = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(')
 QUALIFIED_CALL_PATTERN = re.compile(r'(\w+)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(')  # receiver.method()
@@ -70,7 +71,7 @@ def _load_ai_runtime_settings():
 
 
 def _accumulate_ai_metrics(task_id, call_stats):
-    """Accumulate AI token/time stats into progress tracker metrics."""
+    """Accumulate AI token/time stats into progress tracker metrics (task + global)."""
     if not task_id or not call_stats:
         return
 
@@ -96,6 +97,9 @@ def _accumulate_ai_metrics(task_id, call_stats):
         ai_total_tokens=prev_total + total_tokens,
         ai_total_duration_seconds=round(prev_duration + duration_seconds, 3),
     )
+    
+    # Update global AI statistics
+    progress_tracker.update_global_ai_stats(prompt_tokens, completion_tokens, duration_seconds)
 
 
 def _prepare_function_code_for_ai(func):
@@ -275,6 +279,9 @@ def analyze_single_file(project_id, file_id):
         progress_tracker.start_task(task_id, total_steps=100)
         progress_tracker.update(task_id, progress=10, step=f'Analiz başlatılıyor: {file_name}', detail='')
 
+        # Log file analysis start
+        log_file_analysis_start(project_id, file_id, file_name, language)
+
         # Remove previous functions for this file only (don't touch the rest of the project)
         old_func_ids = db.execute_query('SELECT id FROM functions WHERE file_id = ?', (file_id,))
         for fr in (old_func_ids or []):
@@ -318,6 +325,9 @@ def analyze_single_file(project_id, file_id):
 
         progress_tracker.complete(task_id, success=True, message=f'{len(functions)} fonksiyon çıkarıldı')
         log_analysis(project_id, f"Single file analyzed: {file_name}", functions_found=len(functions))
+        
+        # Log file analysis complete
+        log_file_analysis_complete(project_id, file_id, file_name, len(functions), language)
 
         return jsonify({
             'task_id': task_id,
@@ -394,6 +404,9 @@ def analyze_project(project_id):
                     detail=f'Dosya işleniyor: {file_name}'
                 )
             
+            # Log file analysis start
+            log_file_analysis_start(project_id, file_id, file_name, language)
+            
             # Analyze file. Unsupported languages should not abort the whole project analysis.
             try:
                 result = analyzer.analyze(file_name, content, language)
@@ -425,6 +438,10 @@ def analyze_project(project_id):
             log_analysis(project_id, f"Analyzed {file_name}", 
                         functions_found=len(result.get('functions', [])),
                         language=language)
+            
+            # Log file analysis complete
+            log_file_analysis_complete(project_id, file_id, file_name, len(result.get('functions', [])), language)
+            
             if task_id:
                 progress_tracker.update(
                     task_id,
@@ -762,6 +779,30 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
                 )
         return func['ai_summary'], processed
     
+    # If this is a class, analyze all its methods first, then generate class summary
+    if func.get('function_type') == 'class':
+        class_summary = _generate_class_summary(func, client, task_id, temperature, top_p, max_tokens, extra_criteria, extra_question)
+        if class_summary:
+            db.execute_update(
+                'UPDATE functions SET ai_summary = ? WHERE id = ?',
+                (class_summary, function_id)
+            )
+            processed += 1
+            if task_id:
+                progress_tracker.set_metrics(
+                    task_id,
+                    total_functions=max(total_deps, 1),
+                    completed_functions=processed,
+                    active_thread=threading.current_thread().name,
+                )
+                progress = int((processed / max(total_deps, 1)) * 100)
+                progress_tracker.update(
+                    task_id,
+                    progress=progress,
+                    detail=f"✓ Class özet tamamlandı: {func['function_name']}"
+                )
+            return class_summary, processed
+    
     # Get called functions (dependencies)
     called_rows = db.execute_query(
         '''SELECT f2.id, f2.function_name, f2.class_name, f2.ai_summary
@@ -903,6 +944,156 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
     
     logger.info(f"AI summary generated and saved for function {function_id} ({qualified_func_name})")
     return summary, processed
+
+
+def _generate_class_summary(class_func, client, task_id, temperature, top_p, max_tokens, extra_criteria, extra_question):
+    """Generate AI summary for a class by analyzing all its methods first, then summarizing the class behavior.
+    
+    Args:
+        class_func: Class function record from database
+        client: LMStudioClient instance
+        task_id: Optional task ID for progress tracking
+        temperature: Model temperature
+        top_p: Top-p sampling
+        max_tokens: Max tokens in response
+        extra_criteria: Extra analysis criteria
+        extra_question: Extra question to ask AI
+    
+    Returns:
+        str: Generated class summary
+    """
+    class_id = class_func['id']
+    class_name = class_func['function_name']
+    file_id = class_func['file_id']
+    project_id = class_func['project_id']
+    
+    logger.info(f"Generating class summary for {class_name} (ID: {class_id})")
+    
+    if task_id:
+        progress_tracker.update(
+            task_id,
+            step=f"Class analizi başlatılıyor: {class_name}",
+            detail=f"🔄 {class_name} class'ının tüm metotları analiz ediliyor"
+        )
+    
+    # Get all methods in this class
+    methods_query = db.execute_query(
+        '''SELECT f.id, f.function_name, f.signature, f.start_line, f.end_line, s.content
+           FROM functions f
+           JOIN source_files s ON f.file_id = s.id
+           WHERE f.project_id = ? AND f.file_id = ? AND f.class_name = ?
+             AND f.function_type IN ('function', 'method')
+           ORDER BY f.start_line''',
+        (project_id, file_id, class_name)
+    )
+    
+    methods = [dict(row) for row in methods_query]
+    
+    if not methods:
+        logger.warning(f"No methods found for class {class_name}")
+        return f"⚠️ Class {class_name} için metot bulunamadı."
+    
+    # First, analyze all methods (generate summaries for each)
+    method_summaries = []
+    for method in methods:
+        method_id = method['id']
+        method_name = method['function_name']
+        
+        # Check if method already has summary
+        method_row = db.execute_query(
+            'SELECT ai_summary FROM functions WHERE id = ?',
+            (method_id,)
+        )
+        existing_summary = method_row[0]['ai_summary'] if method_row else None
+        
+        if existing_summary and existing_summary.strip() and not existing_summary.startswith('⚠️'):
+            # Use existing summary
+            method_summaries.append({
+                'name': method_name,
+                'summary': existing_summary
+            })
+            logger.debug(f"Using existing summary for method {method_name}")
+        else:
+            # Generate summary for this method
+            method_code = method.get('content', '')
+            if method_code:
+                lines = method_code.split('\n')
+                start = max(0, method.get('start_line', 1) - 1)
+                end = min(len(lines), method.get('end_line', len(lines)))
+                method_code = '\n'.join(lines[start:end])
+            
+            # Generate method summary
+            method_summary = client.analyze_function(
+                method_code,
+                method.get('signature', ''),
+                [],
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
+                extra_criteria=extra_criteria,
+                extra_question=extra_question
+            )
+            
+            if method_summary and not _is_ai_error_response(method_summary):
+                db.execute_update(
+                    'UPDATE functions SET ai_summary = ? WHERE id = ?',
+                    (method_summary, method_id)
+                )
+                method_summaries.append({
+                    'name': method_name,
+                    'summary': method_summary
+                })
+                logger.info(f"Generated summary for method {method_name}")
+            else:
+                method_summaries.append({
+                    'name': method_name,
+                    'summary': '⚠️ Metot özeti oluşturulamadı'
+                })
+    
+    # Now generate class summary based on all method summaries
+    class_code = class_func.get('content', '')
+    lines = class_code.split('\n') if class_code else []
+    start = max(0, class_func.get('start_line', 1) - 1)
+    end = min(len(lines), class_func.get('end_line', len(lines)))
+    class_code_snippet = '\n'.join(lines[start:end]) if lines else ''
+    
+    # Build method list for class context
+    method_list = '\n'.join([
+        f"- {m['name']}: {m['summary'][:200]}..." if len(m['summary']) > 200 else f"- {m['name']}: {m['summary']}"
+        for m in method_summaries
+    ])
+    
+    class_context = f"""Class Name: {class_name}
+Class Code Preview:
+{class_code_snippet[:500] if class_code_snippet else 'No code available'}
+
+Methods in this class:
+{method_list}
+
+Based on the method summaries above, provide a brief summary of what this class does, its main purpose, and how the methods work together."""
+
+    class_summary = client.analyze_function(
+        class_context,
+        f"class {class_name}",
+        [],
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+        extra_criteria=extra_criteria,
+        extra_question=extra_question
+    )
+    
+    if task_id:
+        progress_tracker.update(
+            task_id,
+            step=f"Class özet tamamlandı: {class_name}",
+            detail=f"✓ {class_name} class'ı analiz edildi ({len(method_summaries)} metot)"
+        )
+    
+    if class_summary and not _is_ai_error_response(class_summary):
+        return class_summary
+    
+    return f"⚠️ Class {class_name} için özet oluşturulamadı."
 
 
 @bp.route('/function/<int:function_id>/ai-summary', methods=['POST'])
@@ -1711,5 +1902,57 @@ def get_dependencies(project_id):
         )
         dependencies = [dict(row) for row in rows]
         return jsonify(dependencies), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/global-ai-stats', methods=['GET'])
+def get_global_ai_stats():
+    """Get global AI statistics across all tasks"""
+    try:
+        stats = progress_tracker.get_global_ai_stats()
+        return jsonify(stats), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/active-tasks', methods=['GET'])
+def get_active_tasks():
+    """Get list of all active/running tasks"""
+    try:
+        tasks = progress_tracker.get_all_progress()
+        active_tasks = []
+        for task_id, task_data in tasks.items():
+            if task_data.get('status') == 'started':
+                active_tasks.append({
+                    'task_id': task_id,
+                    'progress': task_data.get('progress', 0),
+                    'current_step': task_data.get('current_step', ''),
+                    'details': task_data.get('details', []),
+                    'metrics': task_data.get('metrics', {}),
+                    'started_at': task_data.get('started_at', ''),
+                    'updated_at': task_data.get('updated_at', '')
+                })
+        return jsonify({'total': len(active_tasks), 'tasks': active_tasks}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/task/<task_id>/cancel', methods=['POST'])
+def cancel_task(task_id):
+    """Cancel a running task"""
+    try:
+        task = progress_tracker.get_progress(task_id)
+        if not task:
+            return jsonify({'error': 'Task not found'}), 404
+        
+        if task.get('status') != 'started':
+            return jsonify({'error': 'Task is not running'}), 400
+        
+        # Mark task as cancelled
+        progress_tracker.complete(task_id, success=False, message='İptal edildi')
+        logger.info(f"Task {task_id} cancelled by user")
+        
+        return jsonify({'message': 'Task cancelled', 'task_id': task_id}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500

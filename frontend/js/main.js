@@ -385,7 +385,9 @@ async function startBulkAiAnalysis() {
         const taskId = 'bulk_ai_' + Date.now();
         const extraCriteria = (document.getElementById('bulkAiExtraCriteria')?.value || '').trim();
         const extraQuestion = (document.getElementById('bulkAiExtraQuestion')?.value || '').trim();
-        const response = await startTrackedAnalysis(
+        
+        // Call startTrackedAnalysis from admin-functions.js
+        const response = await window.startTrackedAnalysis(
             taskId,
             `Toplu AI Ozeti: Proje #${currentProjectId}`,
             () => fetch(`${API_URL}/analysis/project/${currentProjectId}/bulk-ai-summary?task_id=${taskId}`, {
@@ -824,13 +826,94 @@ function showSettings() {
 function showReport() {
     showSection('reportSection');
     loadReport();
-}
-
-function showAiJobs() {
-    showSection('aiJobsSection');
+    // Render analysis monitor to show active AI jobs
     if (typeof renderAnalysisMonitor === 'function') {
         renderAnalysisMonitor();
     }
+}
+
+function showAiJobs() {
+    console.log('[DEBUG] showAiJobs called');
+    console.log('[DEBUG] showAiJobs: analysisJobs defined =', typeof analysisJobs !== 'undefined');
+    console.log('[DEBUG] showAiJobs: renderAnalysisMonitor defined =', typeof renderAnalysisMonitor !== 'undefined');
+    console.log('[DEBUG] showAiJobs: window.pollAnalysisTask defined =', typeof window.pollAnalysisTask !== 'undefined');
+    showSection('aiJobsSection');
+    
+    // Ensure analysisJobs is available
+    if (typeof analysisJobs === 'undefined') {
+        console.log('[DEBUG] showAiJobs: analysisJobs not defined yet');
+        return;
+    }
+    
+    console.log('[DEBUG] showAiJobs: analysisJobs initial size =', analysisJobs.size);
+    
+    // Fetch active tasks from backend and populate analysisJobs
+    fetch(`${API_URL}/analysis/active-tasks`)
+        .then(r => r.json())
+        .then(data => {
+            console.log('[DEBUG] showAiJobs: active tasks from backend:', data);
+            if (data.tasks && data.tasks.length > 0) {
+                data.tasks.forEach(task => {
+                    if (!analysisJobs.has(task.task_id)) {
+                        const job = {
+                            taskId: task.task_id,
+                            label: task.task_id,
+                            status: task.status || 'started',
+                            progress: task.progress || 0,
+                            current_step: task.current_step || 'Analiz ediliyor...',
+                            metrics: task.metrics || {},
+                            createdAt: task.started_at ? new Date(task.started_at).getTime() : Date.now(),
+                            retentionMs: 45000,
+                            notFoundCount: 0,
+                            errorCount: 0,
+                            pollTimer: null,
+                        };
+                        analysisJobs.set(task.task_id, job);
+                        // Start polling for this job
+                        if (typeof window.pollAnalysisTask === 'function') {
+                            window.pollAnalysisTask(task.task_id);
+                        }
+                    }
+                });
+            }
+            console.log('[DEBUG] showAiJobs: analysisJobs size after fetch =', analysisJobs.size);
+            if (typeof renderAnalysisMonitor === 'function') {
+                console.log('[DEBUG] showAiJobs: calling renderAnalysisMonitor');
+                renderAnalysisMonitor();
+            }
+        })
+        .catch(err => {
+            console.error('[DEBUG] showAiJobs: error fetching active tasks:', err);
+            if (typeof renderAnalysisMonitor === 'function') {
+                renderAnalysisMonitor();
+            }
+        });
+    
+    // Also fetch global AI stats
+    fetch(`${API_URL}/analysis/global-ai-stats`)
+        .then(r => r.json())
+        .then(stats => {
+            const statsEl = document.getElementById('globalAiJobsStats');
+            if (statsEl) {
+                statsEl.innerHTML = `
+                    <strong>Toplam AI Çağrısı:</strong> ${stats.total_ai_calls || 0} |
+                    <strong>Toplam Token:</strong> ${stats.total_ai_prompt_tokens || 0} + ${stats.total_ai_completion_tokens || 0} |
+                    <strong>Toplam Süre:</strong> ${formatDuration(stats.total_ai_duration_seconds || 0)} |
+                    <strong>Ort. Süre:</strong> ${formatDuration(stats.total_avg_duration_seconds || 0)} |
+                    <strong>Son Çağrı:</strong> ${stats.last_ai_call ? new Date(stats.last_ai_call).toLocaleTimeString('tr-TR') : '-'}
+                `;
+            }
+        })
+        .catch(err => console.error('Global AI stats error:', err));
+}
+
+function formatDuration(seconds) {
+    if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
+    const value = Number(seconds);
+    if (value < 60) return `${value.toFixed(1)} sn`;
+    const minutes = Math.floor(value / 60);
+    const remaining = Math.round(value % 60);
+    return `${minutes} dk ${remaining} sn`;
 }
 
 // ============================================
@@ -1459,11 +1542,15 @@ async function loadFunctions() {
                 clsDiv.style.borderLeft = '2px solid #3498db';
                 clsDiv.style.paddingLeft = '10px';
 
+                // Check if class has AI summary
+                const classHasSummary = funcs.some(f => f.ai_summary && f.ai_summary.trim() && !f.ai_summary.startsWith('⚠️') && !f.ai_summary.startsWith('Error:'));
+                const classColor = classHasSummary ? '#27ae60' : '#e74c3c';
+
                 // Allow class collapsing
                 const clsHeader = document.createElement('h4');
                 clsHeader.className = 'class-header';
-                clsHeader.style.cssText = 'color: #2980b9; margin: 10px 0 5px 0; cursor: pointer; user-select: none; display: flex; align-items: center;';
-                clsHeader.innerHTML = `<span style="margin-right: 5px;">▶</span> 🏷️ ${clsName}`;
+                clsHeader.style.cssText = `color: ${classColor}; margin: 10px 0 5px 0; cursor: pointer; user-select: none; display: flex; align-items: center;`;
+                clsHeader.innerHTML = `<span style="margin-right: 5px;">${classHasSummary ? '✅' : '❌'}</span> 🏷️ ${clsName}`;
 
                 const clsContent = document.createElement('div');
                 clsContent.className = 'class-content';
@@ -1489,11 +1576,15 @@ async function loadFunctions() {
                     return a.is_service_file ? -1 : 1;
                 });
 
+                // Check if any function in this class has summary
+                const classHasAnySummary = funcs.some(f => f.ai_summary && f.ai_summary.trim() && !f.ai_summary.startsWith('⚠️') && !f.ai_summary.startsWith('Error:'));
+
                 funcs.forEach(func => {
                     const called = Array.isArray(func.called_functions) ? func.called_functions : [];
                     const calledBy = Array.isArray(func.called_by_functions) ? func.called_by_functions : [];
                     const estimatedTokens = Number(func.ai_estimated_input_tokens || 0);
                     const codeMode = func.ai_code_mode || 'full';
+                    const hasSummary = func.ai_summary && func.ai_summary.trim() && !func.ai_summary.startsWith('⚠️') && !func.ai_summary.startsWith('Error:');
 
                     const item = document.createElement('div');
                     item.className = 'function-item searchable-item';
@@ -1504,10 +1595,14 @@ async function loadFunctions() {
                     item.dataset.called = JSON.stringify(called);
                     item.dataset.calledBy = JSON.stringify(calledBy);
 
+                    // Color based on analysis status
+                    const summaryColor = hasSummary ? '#27ae60' : '#e74c3c';
+                    const summaryIcon = hasSummary ? '✅' : '❌';
+
                     // Minimal HTML - dependencies lazy-loaded when class opens
                     item.innerHTML = `
-                        <h5>${func.function_name} ${func.is_service_file ? '<span class="badge service-badge" style="background:#f39c12;color:#fff;padding:2px 6px;border-radius:12px;margin-left:8px;font-size:11px;">SERVICE</span>' : ''} <small>(${func.function_type})</small></h5>
-                        <p>${func.ai_summary || 'Özet henüz oluşturulmadı'}</p>
+                        <h5 style="color: ${summaryColor};">${summaryIcon} ${func.function_name} ${func.is_service_file ? '<span class="badge service-badge" style="background:#f39c12;color:#fff;padding:2px 6px;border-radius:12px;margin-left:8px;font-size:11px;">SERVICE</span>' : ''} <small>(${func.function_type})</small></h5>
+                        <p style="color: #666;">${func.ai_summary || 'Özet henüz oluşturulmadı'}</p>
                         <div class="function-meta">
                             Satırlar: ${func.start_line}-${func.end_line}
                             <br/><small>Dosya: ${func.file_path || 'Bilinmiyor'}</small>
