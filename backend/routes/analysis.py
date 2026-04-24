@@ -1945,7 +1945,6 @@ def get_recent_ai_files():
         limit = request.args.get('limit', 20, type=int)
         
         # Get files with AI summaries, ordered by most recent
-        # Show functions/classes that have AI summary OR are in files that have analyzed functions
         result = db.execute_query('''
             SELECT f.id, f.function_name, f.class_name, f.ai_summary, 
                    sf.file_name, p.name as project_name,
@@ -1960,66 +1959,13 @@ def get_recent_ai_files():
             LIMIT ?
         ''', (limit,))
         
-        # If we don't have enough results, also get classes from files that have analyzed functions
-        if len(result) < limit:
-            additional_needed = limit - len(result)
-            existing_ids = [row[0] for row in result] if result else []
-            placeholders = ','.join(['?'] * len(existing_ids)) if existing_ids else 'NULL'
-            
-            if existing_ids:
-                result2 = db.execute_query(f'''
-                    SELECT f.id, f.function_name, f.class_name, f.ai_summary, 
-                           sf.file_name, p.name as project_name,
-                           0 as summary_length,
-                           COALESCE(f.updated_at, f.created_at) as analyzed_at
-                    FROM functions f
-                    JOIN source_files sf ON f.file_id = sf.id
-                    JOIN projects p ON sf.project_id = p.id
-                    WHERE f.class_name IS NOT NULL AND f.class_name != ''
-                    AND f.function_type = 'class'
-                    AND f.id NOT IN ({placeholders})
-                    AND EXISTS (
-                        SELECT 1 FROM functions f2 
-                        WHERE f2.file_id = f.file_id 
-                        AND f2.ai_summary IS NOT NULL 
-                        AND f2.ai_summary != ''
-                        AND f2.ai_summary NOT LIKE 'Error:%'
-                    )
-                    ORDER BY f.id DESC
-                    LIMIT ?
-                ', (*existing_ids, additional_needed))
-            else:
-                result2 = db.execute_query('''
-                    SELECT f.id, f.function_name, f.class_name, f.ai_summary, 
-                           sf.file_name, p.name as project_name,
-                           0 as summary_length,
-                           COALESCE(f.updated_at, f.created_at) as analyzed_at
-                    FROM functions f
-                    JOIN source_files sf ON f.file_id = sf.id
-                    JOIN projects p ON sf.project_id = p.id
-                    WHERE f.class_name IS NOT NULL AND f.class_name != ''
-                    AND f.function_type = 'class'
-                    AND EXISTS (
-                        SELECT 1 FROM functions f2 
-                        WHERE f2.file_id = f.file_id 
-                        AND f2.ai_summary IS NOT NULL 
-                        AND f2.ai_summary != ''
-                        AND f2.ai_summary NOT LIKE 'Error:%'
-                    )
-                    ORDER BY f.id DESC
-                    LIMIT ?
-                ''', (additional_needed,))
-            
-            if result2:
-                result = result + result2
-        
         files = []
         for row in result:
             files.append({
                 'function_id': row[0],
                 'function_name': row[1],
                 'class_name': row[2],
-                'ai_summary': row[3][:200] + '...' if row[3] and len(row[3]) > 200 else row[3] if row[3] else '(Sınıf metotları analiz edilmiş)',
+                'ai_summary': row[3][:200] + '...' if row[3] and len(row[3]) > 200 else row[3],
                 'file_name': row[4],
                 'project_name': row[5],
                 'summary_length': row[6] or 0,
