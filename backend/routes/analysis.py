@@ -1955,6 +1955,7 @@ def get_recent_ai_files():
             JOIN projects p ON sf.project_id = p.id
             WHERE f.ai_summary IS NOT NULL AND f.ai_summary != '' 
             AND f.ai_summary NOT LIKE 'Error:%'
+            AND f.ai_summary NOT LIKE '⚠️%'
             ORDER BY f.id DESC
             LIMIT ?
         ''', (limit,))
