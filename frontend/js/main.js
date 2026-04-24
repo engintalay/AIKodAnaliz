@@ -918,16 +918,21 @@ function showAiJobs() {
                 return;
             }
             
-            container.innerHTML = data.files.map(file => `
+            container.innerHTML = data.files.map(file => {
+                const date = file.analyzed_at ? new Date(file.analyzed_at).toLocaleString('tr-TR') : '-';
+                return `
                 <div onclick="showFunctionDetails(${file.function_id})" 
                      style="background:white; border:1px solid #e4ecf5; border-radius:4px; padding:10px; font-size:13px; cursor:pointer; transition:all 0.2s;"
                      onmouseover="this.style.borderColor='#3498db'; this.style.boxShadow='0 2px 8px rgba(52,152,219,0.2)';"
                      onmouseout="this.style.borderColor='#e4ecf5'; this.style.boxShadow='none';">
-                    <div style="font-weight:bold; color:#2c3e50;">${file.class_name ? file.class_name + '.' : ''}${file.function_name}</div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="font-weight:bold; color:#2c3e50;">${file.class_name ? file.class_name + '.' : ''}${file.function_name}</div>
+                        <div style="font-size:11px; color:#95a5a6;">${date}</div>
+                    </div>
                     <div style="color:#7f8c8d; font-size:12px; margin-top:4px;">📁 ${file.project_name} / ${file.file_name}</div>
                     <div style="color:#555; margin-top:6px; font-size:12px;">${file.ai_summary || '(özet yok)'}</div>
                 </div>
-            `).join('');
+            `}).join('');
         })
         .catch(err => console.error('Recent files error:', err));
 }

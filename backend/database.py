@@ -282,6 +282,12 @@ class Database:
             if 'ai_api_url' not in existing_columns:
                 cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_api_url TEXT')
             
+            # Migration: Add updated_at column to functions table if not exists
+            cursor.execute("PRAGMA table_info(functions)")
+            func_columns = {row[1] for row in cursor.fetchall()}
+            if 'updated_at' not in func_columns:
+                cursor.execute('ALTER TABLE functions ADD COLUMN updated_at TIMESTAMP')
+            
             # Create demo users if not exist
             cursor.execute("SELECT COUNT(*) FROM users WHERE username = ?", ("admin",))
             if cursor.fetchone()[0] == 0:

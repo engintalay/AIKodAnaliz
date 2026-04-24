@@ -784,7 +784,7 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
         class_summary = _generate_class_summary(func, client, task_id, temperature, top_p, max_tokens, extra_criteria, extra_question)
         if class_summary:
             db.execute_update(
-                'UPDATE functions SET ai_summary = ? WHERE id = ?',
+                'UPDATE functions SET ai_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                 (class_summary, function_id)
             )
             processed += 1
@@ -917,7 +917,7 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
 
     # Save only valid summaries
     db.execute_update(
-        'UPDATE functions SET ai_summary = ? WHERE id = ?',
+        'UPDATE functions SET ai_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
         (summary, function_id)
     )
     
@@ -1948,7 +1948,8 @@ def get_recent_ai_files():
         result = db.execute_query('''
             SELECT f.id, f.function_name, f.class_name, f.ai_summary, 
                    sf.file_name, p.name as project_name,
-                   LENGTH(f.ai_summary) as summary_length
+                   LENGTH(f.ai_summary) as summary_length,
+                   COALESCE(f.updated_at, f.created_at) as analyzed_at
             FROM functions f
             JOIN source_files sf ON f.file_id = sf.id
             JOIN projects p ON sf.project_id = p.id
@@ -1967,7 +1968,8 @@ def get_recent_ai_files():
                 'ai_summary': row[3][:200] + '...' if row[3] and len(row[3]) > 200 else row[3],
                 'file_name': row[4],
                 'project_name': row[5],
-                'summary_length': row[6] or 0
+                'summary_length': row[6] or 0,
+                'analyzed_at': row[7]
             })
         
         return jsonify({'total': len(files), 'files': files}), 200
