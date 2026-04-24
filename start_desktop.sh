@@ -48,6 +48,11 @@ fi
 # Activate virtual environment
 source venv/bin/activate
 
+# .env dosyası varsa oku
+if [ -f ".env" ]; then
+    source <(grep -v '^#' .env | grep -v '^\s*$' | sed 's/^/export /')
+fi
+
 # Install/update requirements
 python -m pip install --disable-pip-version-check -r requirements.txt
 
