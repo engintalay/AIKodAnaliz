@@ -3,10 +3,41 @@ setlocal EnableDelayedExpansion
 
 REM AIKodAnaliz Windows startup script
 
+REM Parse arguments
+set "PULL_UPDATES="
+echo %* | findstr /C:"--pull" >nul
+if %ERRORLEVEL%==0 set "PULL_UPDATES=1"
+echo %* | findstr /C:"-p" >nul
+if %ERRORLEVEL%==0 set "PULL_UPDATES=1"
+
 echo [INFO] Starting AIKodAnaliz...
 
 REM Move to script directory
 cd /d "%~dp0"
+
+REM Git pull if requested
+if defined PULL_UPDATES (
+    echo [INFO] Checking git remote...
+    for /f "delims=" %%i in ('git rev-parse HEAD') do set LOCAL=%%i
+    for /f "delims=" %%i in ('git rev-parse origin/main') do set REMOTE=%%i
+    if not "!LOCAL!"=="!REMOTE!" (
+        echo [INFO] New version available! Local: !LOCAL!, Remote: !REMOTE!
+        set /p confirm="Update now? (Y/n): "
+        if "!confirm!"=="" set confirm=Y
+        if "!confirm!"=="Y" goto do_pull
+        if "!confirm!"=="y" goto do_pull
+        echo [INFO] Update skipped.
+        goto skip_pull
+        :do_pull
+        echo [INFO] Pulling updates...
+        git pull origin main
+        echo [INFO] Installing dependencies...
+        pip install -r requirements.txt
+        :skip_pull
+    ) else (
+        echo [INFO] Version is up to date.
+    )
+)
 
 REM Find Python executable
 set "PYTHON_CMD="
