@@ -40,8 +40,14 @@ def main():
         font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
         app.setFont(font)
 
+        # Get server URL from environment or use default
+        import os
+        flask_host = os.getenv('FLASK_HOST', 'localhost')
+        flask_port = os.getenv('FLASK_PORT', '5000')
+        server_url = f"http://{flask_host}:{flask_port}"
+        
         # API client (URL may be overridden in login dialog)
-        client = ApiClient("http://localhost:5000")
+        client = ApiClient(server_url)
 
         # Show login dialog
         dlg = LoginDialog(client)

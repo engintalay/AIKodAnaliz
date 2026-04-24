@@ -95,9 +95,14 @@ class LoginDialog(QDialog):
         srv_label.setStyleSheet(f"color: {COLOR_TEXT_SECONDARY}; font-size: 12px;")
         card_layout.addWidget(srv_label)
 
-        self.server_edit = QLineEdit("http://localhost:5000")
+        import os
+        flask_host = os.getenv('FLASK_HOST', 'localhost')
+        flask_port = os.getenv('FLASK_PORT', '5000')
+        default_server = f"http://{flask_host}:{flask_port}"
+        
+        self.server_edit = QLineEdit(default_server)
         self.server_edit.setObjectName("loginServerField")
-        self.server_edit.setPlaceholderText("http://localhost:5000")
+        self.server_edit.setPlaceholderText(default_server)
         self.server_edit.setMinimumHeight(52)
         card_layout.addWidget(self.server_edit)
 
