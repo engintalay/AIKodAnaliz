@@ -1,4 +1,5 @@
 """Login dialog for AIKodAnaliz Desktop App."""
+import os
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -111,7 +112,8 @@ class LoginDialog(QDialog):
         user_label.setStyleSheet(f"color: {COLOR_TEXT_SECONDARY}; font-size: 12px;")
         card_layout.addWidget(user_label)
 
-        self.username_edit = QLineEdit()
+        default_username = os.getenv('DEFAULT_USERNAME', '')
+        self.username_edit = QLineEdit(default_username)
         self.username_edit.setObjectName("loginField")
         self.username_edit.setPlaceholderText("kullanıcı adı")
         self.username_edit.setMinimumHeight(54)
@@ -123,7 +125,8 @@ class LoginDialog(QDialog):
         pass_label.setStyleSheet(f"color: {COLOR_TEXT_SECONDARY}; font-size: 12px;")
         card_layout.addWidget(pass_label)
 
-        self.password_edit = QLineEdit()
+        default_password = os.getenv('DEFAULT_PASSWORD', '')
+        self.password_edit = QLineEdit(default_password)
         self.password_edit.setObjectName("loginField")
         self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_edit.setPlaceholderText("••••••••")
