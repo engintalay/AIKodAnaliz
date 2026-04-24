@@ -1036,7 +1036,7 @@ def _generate_class_summary(class_func, client, task_id, temperature, top_p, max
             
             if method_summary and not _is_ai_error_response(method_summary):
                 db.execute_update(
-                    'UPDATE functions SET ai_summary = ? WHERE id = ?',
+                    'UPDATE functions SET ai_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                     (method_summary, method_id)
                 )
                 method_summaries.append({
