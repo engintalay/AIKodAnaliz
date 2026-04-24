@@ -905,6 +905,28 @@ function showAiJobs() {
             }
         })
         .catch(err => console.error('Global AI stats error:', err));
+    
+    // Fetch recent AI files
+    fetch(`${API_URL}/analysis/recent-files?limit=20`)
+        .then(r => r.json())
+        .then(data => {
+            const container = document.getElementById('recentAiFilesList');
+            if (!container) return;
+            
+            if (!data.files || data.files.length === 0) {
+                container.innerHTML = '<div style="color:#7f8c8d; padding:12px;">Henüz işlenmiş dosya yok.</div>';
+                return;
+            }
+            
+            container.innerHTML = data.files.map(file => `
+                <div style="background:white; border:1px solid #e4ecf5; border-radius:4px; padding:10px; font-size:13px;">
+                    <div style="font-weight:bold; color:#2c3e50;">${file.class_name ? file.class_name + '.' : ''}${file.function_name}</div>
+                    <div style="color:#7f8c8d; font-size:12px; margin-top:4px;">📁 ${file.project_name} / ${file.file_name}</div>
+                    <div style="color:#555; margin-top:6px; font-size:12px;">${file.ai_summary || '(özet yok)'}</div>
+                </div>
+            `).join('');
+        })
+        .catch(err => console.error('Recent files error:', err));
 }
 
 function formatDuration(seconds) {

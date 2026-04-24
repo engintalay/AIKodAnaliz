@@ -1938,6 +1938,43 @@ def get_active_tasks():
         return jsonify({'error': str(e)}), 500
 
 
+@bp.route('/recent-files', methods=['GET'])
+def get_recent_ai_files():
+    """Get list of recently analyzed files"""
+    try:
+        limit = request.args.get('limit', 20, type=int)
+        
+        # Get files with AI summaries, ordered by most recent
+        result = db.execute_query('''
+            SELECT f.id, f.function_name, f.class_name, f.ai_summary, 
+                   sf.file_name, p.name as project_name,
+                   LENGTH(f.ai_summary) as summary_length
+            FROM functions f
+            JOIN source_files sf ON f.file_id = sf.id
+            JOIN projects p ON sf.project_id = p.id
+            WHERE f.ai_summary IS NOT NULL AND f.ai_summary != '' 
+            AND f.ai_summary NOT LIKE 'Error:%'
+            ORDER BY f.id DESC
+            LIMIT ?
+        ''', (limit,))
+        
+        files = []
+        for row in result:
+            files.append({
+                'function_id': row[0],
+                'function_name': row[1],
+                'class_name': row[2],
+                'ai_summary': row[3][:200] + '...' if row[3] and len(row[3]) > 200 else row[3],
+                'file_name': row[4],
+                'project_name': row[5],
+                'summary_length': row[6] or 0
+            })
+        
+        return jsonify({'total': len(files), 'files': files}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @bp.route('/task/<task_id>/cancel', methods=['POST'])
 def cancel_task(task_id):
     """Cancel a running task"""
