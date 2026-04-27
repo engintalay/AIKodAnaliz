@@ -7,7 +7,8 @@
 - [✅] **DZT-4:** Eğer AI Özet  Al düğmesine basılır ise ve mevcutta bir özet zaten mevcut ise değiştirilmek istenip istenmediği sorularak analiz oluşturulması sağlanmalıdır. 
 - [❌] **DZT-5:** Projeye sonradan eklenen dosyaların düzgün bir şekilde görüntülenmesi, SQL ve kodların fonksiyonlar altına eklenmesi, documanlarında ise ayrı bir alanda gösterilmesi gerekmektei. Dokümanlar için vektörel arama yapılabilmesi ve sonuçların doküman özelinde gösterilmesinin sağlanmalıdır.
 - [✅] **DZT-6:** Fonksiyonlar ayrı ayrı analiz ediliyor. Tüm classın tekrar analiz edilmesi gerekir mi? Class içindeki fonksiyonların toptan analizi bekli olabilir ama gereksiz gibi duruyor. 
-- [❌] **DZT-7:**
+- [❌] **DZT-7:** Export ederken fonksiyon bağları taşınmışyor. Tekrar analiz yap dendiğinde de AI yorumları siliniyor. 
+
 
 ## ✨ Geliştirmeler (GELIS)
 - [✅] **GELIS1:** Input box'ların düzeltilmesi. Görsel olarak daha uyumlu modern bir tarza çevrilmesi.
