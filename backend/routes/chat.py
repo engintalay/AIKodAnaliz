@@ -13,7 +13,13 @@ bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 # Context retrieval helpers
 # ------------------------------------------------------------------
 
-def _build_context(project_id: int, project_name: str, query: str, function_ids: list[int] | None = None) -> tuple[str, str, list]:
+def _build_context(
+    project_id: int,
+    project_name: str,
+    query: str,
+    function_ids: list[int] | None = None,
+    selected_docs: list[dict] | None = None,
+) -> tuple[str, str, list]:
     """Return (system_prompt, context_block, refs) for the LLM.
     Uses RagIndex for hybrid embedding + FTS5 + LIKE search.
     Also searches doc_chunks (GELIS8) for relevant document passages.
@@ -51,10 +57,52 @@ def _build_context(project_id: int, project_name: str, query: str, function_ids:
     doc_hits = RagIndex.search_doc_chunks(project_id, query, limit=5)
     doc_block = ''
     doc_parts = []
+
+    # If user explicitly selected documents/chunks from RAG results, prioritize them.
+    selected_doc_parts = []
+    for item in (selected_docs or [])[:12]:
+        try:
+            file_name = (item.get('file_name') or '').strip()
+            chunk_index = int(item.get('chunk_index', 0) or 0)
+            if not file_name:
+                continue
+            rows = db.execute_query(
+                '''SELECT file_name, chunk_index, content
+                   FROM doc_chunks
+                   WHERE project_id = ? AND file_name = ? AND chunk_index = ?
+                   LIMIT 1''',
+                (project_id, file_name, chunk_index)
+            )
+            if rows:
+                r = rows[0]
+                selected_doc_parts.append(f"[{r[0]}#{r[1]}]\n{r[2]}")
+                continue
+
+            # Fallback: if chunk not found, use project_documents extracted_text.
+            doc_rows = db.execute_query(
+                '''SELECT file_name, extracted_text
+                   FROM project_documents
+                   WHERE project_id = ? AND file_name = ?
+                   LIMIT 1''',
+                (project_id, file_name)
+            )
+            if doc_rows:
+                dr = doc_rows[0]
+                excerpt = (dr[1] or '')[:1400]
+                if excerpt:
+                    selected_doc_parts.append(f"[{dr[0]}#0]\n{excerpt}")
+        except Exception:
+            continue
+
+    if selected_doc_parts:
+        doc_parts.extend(selected_doc_parts)
+
     if doc_hits:
         for hit in doc_hits:
             if hit.get('score', 0.0) > 0.30:
-                doc_parts.append(f"[{hit['file_name']}#{hit['chunk_index']}]\n{hit['content']}")
+                formatted = f"[{hit['file_name']}#{hit['chunk_index']}]\n{hit['content']}"
+                if formatted not in doc_parts:
+                    doc_parts.append(formatted)
 
     if not doc_parts:
         fallback_hits = RagIndex.search_doc_chunks_fallback(project_id, query, limit=3)
@@ -100,6 +148,7 @@ def chat_with_project(project_id):
     user_message = (data.get('message') or '').strip()
     history = data.get('history', [])  # list of {role, content}
     context_function_ids = data.get('context_function_ids') or None
+    context_documents = data.get('context_documents') or None
     max_tokens = data.get('max_tokens') or None
     if max_tokens:
         try:
@@ -116,7 +165,13 @@ def chat_with_project(project_id):
         return jsonify({'error': 'Proje bulunamadı'}), 404
     project_name = dict(proj_rows[0])['name']
 
-    system_prompt, _, refs = _build_context(project_id, project_name, user_message, function_ids=context_function_ids)
+    system_prompt, _, refs = _build_context(
+        project_id,
+        project_name,
+        user_message,
+        function_ids=context_function_ids,
+        selected_docs=context_documents,
+    )
 
     # Build message list for LLM
     messages = [dict(h) for h in history if h.get('role') in ('user', 'assistant')]

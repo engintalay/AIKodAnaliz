@@ -427,7 +427,21 @@ let chatStreaming = false;
 let ragSearchResults = [];   // latest RAG search results
 let ragSearchBestScore = 0;   // best score from last RAG search (0-1)
 let ragSelectedFunctionIds = new Set();
+let ragSelectedDocumentKeys = new Set();
 let chatExpanded = false;
+
+function _docSelectionKey(fileName, chunkIndex) {
+    return JSON.stringify([String(fileName || ''), Number(chunkIndex || 0)]);
+}
+
+function _docSelectionFromKey(key) {
+    try {
+        const [fileName, chunkIndex] = JSON.parse(key);
+        return { file_name: String(fileName || ''), chunk_index: Number(chunkIndex || 0) };
+    } catch {
+        return null;
+    }
+}
 
 function initChatTab() {
     // Scroll to bottom on tab switch
@@ -611,6 +625,7 @@ function runRagSearch() {
 
     // Clear previous selection when a new search is run
     ragSelectedFunctionIds.clear();
+    ragSelectedDocumentKeys.clear();
 
     fetch(`${API_URL}/rag/project/${currentProjectId}/search?q=${encodeURIComponent(query)}`)
         .then(res => res.json())
@@ -632,6 +647,7 @@ function clearRagSearchResults() {
     ragSearchResults = [];
     ragSearchBestScore = 0;
     ragSelectedFunctionIds.clear();
+    ragSelectedDocumentKeys.clear();
     const resultsContainer = document.getElementById('ragSearchResults');
     const resultsList = document.getElementById('ragSearchResultsList');
     if (resultsContainer) resultsContainer.style.display = 'none';
@@ -640,13 +656,18 @@ function clearRagSearchResults() {
 
 function clearRagSelection() {
     ragSelectedFunctionIds.clear();
+    ragSelectedDocumentKeys.clear();
     renderRagSearchResults();
 }
 
 function selectAllRagResults() {
     ragSearchResults.forEach(r => {
-        if (r && r.id) {
+        const isDoc = (r && (r.result_type || 'function') === 'document');
+        if (r && r.id && !isDoc) {
             ragSelectedFunctionIds.add(r.id);
+        }
+        if (r && isDoc) {
+            ragSelectedDocumentKeys.add(_docSelectionKey(r.file_name || '', r.doc_chunk_index || 0));
         }
     });
     renderRagSearchResults();
@@ -657,6 +678,16 @@ function toggleRagSelection(functionId) {
         ragSelectedFunctionIds.delete(functionId);
     } else {
         ragSelectedFunctionIds.add(functionId);
+    }
+    renderRagSearchResults();
+}
+
+function toggleRagDocSelection(fileName, chunkIndex) {
+    const key = _docSelectionKey(fileName, chunkIndex);
+    if (ragSelectedDocumentKeys.has(key)) {
+        ragSelectedDocumentKeys.delete(key);
+    } else {
+        ragSelectedDocumentKeys.add(key);
     }
     renderRagSearchResults();
 }
@@ -677,14 +708,19 @@ function renderRagSearchResults() {
         '<div style="color:#c0392b; margin-bottom:8px; font-size:13px;">Bu arama için yeterli bağlam bulunamadı. Lütfen daha genel ya da farklı bir arama yapın.</div>' :
         '') +
         ragSearchResults.map(r => {
+            const isDoc = (r.result_type || 'function') === 'document';
             const qualified = r.class_name ? `${r.class_name}.${r.function_name}` : r.function_name;
-            const selected = ragSelectedFunctionIds.has(r.id);
+            const selected = !!r.id && ragSelectedFunctionIds.has(r.id);
+            const docSelected = isDoc && ragSelectedDocumentKeys.has(_docSelectionKey(r.file_name || '', r.doc_chunk_index || 0));
             const score = r.score != null ? ` (score: ${Number(r.score).toFixed(3)})` : '';
+            const actionBtn = isDoc
+                ? `<button class="btn btn-sm" onclick='toggleRagDocSelection(${JSON.stringify(r.file_name || '')}, ${Number(r.doc_chunk_index || 0)})'>${docSelected ? '✓ Seçili Dok.' : 'Dokümanı Seç'}</button>`
+                : `<button class="btn btn-sm" onclick="toggleRagSelection(${r.id})">${selected ? '✓ Seçili' : 'Seç'}</button>`;
             return `
                 <div class="rag-result-item">
                     <div class="rag-result-meta">
                         <div><strong>${qualified}</strong>${score}</div>
-                        <button class="btn btn-sm" onclick="toggleRagSelection(${r.id})">${selected ? '✓ Seçili' : 'Seç'}</button>
+                        ${actionBtn}
                     </div>
                     <p style="margin:4px 0 0 0;" title="${r.file_name || ''}">Dosya: ${r.file_name || 'bilinmiyor'}</p>
                     ${r.ai_summary ? `<p style="margin:4px 0 0 0; color:#555;">Özet: ${r.ai_summary}</p>` : ''}
@@ -694,8 +730,8 @@ function renderRagSearchResults() {
 }
 
 function askAiWithRagSelection() {
-    if (!ragSelectedFunctionIds.size) {
-        showError('Seçim Yok', 'Önce bir veya daha fazla RAG sonucu seçin.');
+    if (!ragSelectedFunctionIds.size && !ragSelectedDocumentKeys.size) {
+        showError('Seçim Yok', 'Önce en az bir fonksiyon veya doküman sonucu seçin.');
         return;
     }
 
@@ -708,10 +744,22 @@ function askAiWithRagSelection() {
         return r.class_name ? `${r.class_name}.${r.function_name}` : r.function_name;
     }).filter(Boolean);
 
+    const selectedDocs = Array.from(ragSelectedDocumentKeys)
+        .map(_docSelectionFromKey)
+        .filter(Boolean)
+        .map(d => d.file_name);
+
     if (input && !input.value.trim()) {
-        input.value = selectedNames.length > 0
-            ? `Bu fonksiyonlar hakkında ne söyleyebilirsin? ${selectedNames.join(', ')}`
-            : 'Bu seçilen fonksiyonlar hakkında ne söyleyebilirsin?';
+        const parts = [];
+        if (selectedNames.length > 0) {
+            parts.push(`fonksiyonlar: ${selectedNames.join(', ')}`);
+        }
+        if (selectedDocs.length > 0) {
+            parts.push(`dokümanlar: ${selectedDocs.join(', ')}`);
+        }
+        input.value = parts.length > 0
+            ? `Bu seçilen kaynaklara göre açıkla: ${parts.join(' | ')}`
+            : 'Bu seçilen kaynaklar hakkında ne söyleyebilirsin?';
     }
 
     // Send message with selection context
@@ -827,6 +875,11 @@ async function sendChatMessage() {
         const payload = { message: text, history: historySlice };
         if (ragSelectedFunctionIds.size > 0) {
             payload.context_function_ids = Array.from(ragSelectedFunctionIds);
+        }
+        if (ragSelectedDocumentKeys.size > 0) {
+            payload.context_documents = Array.from(ragSelectedDocumentKeys)
+                .map(_docSelectionFromKey)
+                .filter(Boolean);
         }
 
         const response = await fetch(`${API_URL}/chat/project/${currentProjectId}`, {

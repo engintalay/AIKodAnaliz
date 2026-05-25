@@ -428,11 +428,21 @@ class RagIndex:
                     'Ç': 'c', 'Ğ': 'g', 'İ': 'i', 'Ö': 'o', 'Ş': 's', 'Ü': 'u',
                     '_': ' ', '-': ' ', '.': ' ', '/': ' ', '\\': ' ',
                 })
-                return _re.sub(r'\s+', ' ', v.translate(table)).strip()
+                # Remove punctuation (including quotes) and normalize whitespace.
+                return _re.sub(r'\s+', ' ', _re.sub(r'[^\w\s]+', ' ', v.translate(table))).strip()
 
             q = _norm_text((query or '').strip())
             if not q:
                 return []
+
+            # Optional exact phrase extraction from quoted query.
+            exact_phrases = []
+            for m in _re.finditer(r'"([^"]{2,})"', query or ''):
+                p = _norm_text(m.group(1))
+                if p:
+                    exact_phrases.append(p)
+            if not exact_phrases and ' ' in q and len(q) >= 6:
+                exact_phrases.append(q)
 
             stop = {
                 'bir', 'ile', 'icin', 'için', 'olan', 'ne', 'bu', 've', 'ya', 'da',
@@ -465,6 +475,11 @@ class RagIndex:
                 lc_file = _norm_text(file_name)
 
                 score = 0.0
+                for phrase in exact_phrases:
+                    if phrase in lc_content:
+                        score += 20.0
+                    if phrase in lc_file:
+                        score += 30.0
                 if q and q in lc_content:
                     score += 3.0
                 if q and q in lc_file:
@@ -500,6 +515,12 @@ class RagIndex:
                     lc_text = _norm_text(text)
                     lc_file = _norm_text(file_name)
                     score = 0.0
+
+                    for phrase in exact_phrases:
+                        if phrase in lc_text:
+                            score += 20.0
+                        if phrase in lc_file:
+                            score += 30.0
 
                     if q and q in lc_text:
                         score += 3.0

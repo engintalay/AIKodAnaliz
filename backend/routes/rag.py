@@ -32,7 +32,54 @@ def search_project(project_id):
     if not query:
         return jsonify({'error': 'Sorgu boş olamaz'}), 400
 
-    results = RagIndex.search(project_id, query, limit=20)
+    function_results = RagIndex.search(project_id, query, limit=15)
+    for item in function_results:
+        item['result_type'] = 'function'
+
+    # Document retrieval: combine embedding and lexical fallback, then dedupe.
+    doc_results_map = {}
+
+    def _add_doc_hit(hit: dict, score_scale: float = 1.0):
+        file_name = hit.get('file_name') or ''
+        chunk_index = int(hit.get('chunk_index', 0) or 0)
+        raw_score = float(hit.get('score') or 0.0) * score_scale
+        if raw_score <= 0:
+            return
+
+        excerpt = (hit.get('content') or '').strip()
+        if len(excerpt) > 260:
+            excerpt = excerpt[:260].rstrip() + '...'
+
+        key = (file_name, chunk_index)
+        existing = doc_results_map.get(key)
+        payload = {
+            'id': None,
+            'function_name': f"Doküman: {file_name or 'bilinmiyor'}",
+            'class_name': None,
+            'package_name': None,
+            'ai_summary': excerpt,
+            'signature': None,
+            'file_name': file_name,
+            'doc_chunk_index': chunk_index,
+            'score': round(raw_score, 4),
+            'result_type': 'document',
+        }
+        if not existing or payload['score'] > existing['score']:
+            doc_results_map[key] = payload
+
+    # Embedding hits (0-1 scale), keep moderate threshold.
+    for hit in RagIndex.search_doc_chunks(project_id, query, limit=10):
+        if float(hit.get('score') or 0.0) >= 0.15:
+            _add_doc_hit(hit, score_scale=1.0)
+
+    # Lexical fallback always contributes (highly useful for exact phrase matches).
+    for hit in RagIndex.search_doc_chunks_fallback(project_id, query, limit=10):
+        _add_doc_hit(hit, score_scale=1.0)
+
+    doc_results = sorted(doc_results_map.values(), key=lambda x: x['score'], reverse=True)[:8]
+
+    results = sorted(function_results + doc_results, key=lambda x: float(x.get('score') or 0.0), reverse=True)[:20]
+
     best_score = 0.0
     if results:
         best_score = max(0.0, max((r.get('score') or 0.0) for r in results))
