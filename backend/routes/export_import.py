@@ -103,8 +103,20 @@ def export_project(project_id):
                             f[key] = f[key].isoformat()
                 
                 zf.writestr('source_files.json', json.dumps(files_list, ensure_ascii=False, indent=2))
+
+                # 3. Export function call links (caller -> callee)
+                function_calls = db.execute_query(
+                    'SELECT * FROM function_calls WHERE project_id = ?',
+                    (project_id,)
+                )
+                function_calls_list = [dict(fc) for fc in function_calls]
+                for fc in function_calls_list:
+                    for key in fc:
+                        if hasattr(fc[key], 'isoformat'):
+                            fc[key] = fc[key].isoformat()
+                zf.writestr('function_calls.json', json.dumps(function_calls_list, ensure_ascii=False, indent=2))
                 
-                # 3. Export project files (uploads)
+                # 4. Export project files (uploads)
                 if os.path.isdir(project_dir):
                     for root, dirs, files in os.walk(project_dir):
                         for file in files:
@@ -112,7 +124,7 @@ def export_project(project_id):
                             arcname = os.path.join('files', os.path.relpath(file_path, project_dir))
                             zf.write(file_path, arcname)
                 
-                # 4. Export RAG index data
+                # 5. Export RAG index data
                 embedding_rows = []
                 if _table_exists('function_embeddings'):
                     embedding_rows = db.execute_query(
@@ -319,6 +331,45 @@ def import_project():
             for i, old_id in enumerate(inserted_old_function_ids):
                 if old_id is not None and i < len(new_function_ids_in_order):
                     function_id_map[old_id] = new_function_ids_in_order[i]
+
+        # Import function call links with mapped function IDs
+        function_calls_path = os.path.join(extract_dir, 'function_calls.json')
+        if os.path.exists(function_calls_path) and _table_exists('function_calls'):
+            with open(function_calls_path, 'r', encoding='utf-8') as f:
+                function_calls = json.load(f)
+            call_cols = _table_columns('function_calls')
+
+            for call in function_calls:
+                old_caller_id = call.get('caller_function_id')
+                old_callee_id = call.get('callee_function_id')
+                new_caller_id = function_id_map.get(old_caller_id)
+                new_callee_id = function_id_map.get(old_callee_id)
+
+                if not new_caller_id or not new_callee_id:
+                    continue
+
+                insert_cols = []
+                insert_vals = []
+
+                if 'project_id' in call_cols:
+                    insert_cols.append('project_id')
+                    insert_vals.append(new_project_id)
+                if 'caller_function_id' in call_cols:
+                    insert_cols.append('caller_function_id')
+                    insert_vals.append(new_caller_id)
+                if 'callee_function_id' in call_cols:
+                    insert_cols.append('callee_function_id')
+                    insert_vals.append(new_callee_id)
+                if 'call_type' in call_cols:
+                    insert_cols.append('call_type')
+                    insert_vals.append(call.get('call_type'))
+
+                if insert_cols:
+                    placeholders = ','.join(['?'] * len(insert_cols))
+                    db.execute_update(
+                        f"INSERT INTO function_calls ({','.join(insert_cols)}) VALUES ({placeholders})",
+                        tuple(insert_vals)
+                    )
         
         # Copy project files
         files_src = os.path.join(extract_dir, 'files')

@@ -349,6 +349,16 @@ def analyze_project(project_id):
     task_id = request.args.get('task_id')
     try:
         logger.info(f"Starting analysis for project {project_id}")
+
+        def _summary_key(file_path, file_name, class_name, function_name, signature, function_type):
+            """Build stable key for restoring summaries after re-analysis."""
+            return (
+                (file_path or file_name or '').strip(),
+                (class_name or '').strip(),
+                (function_name or '').strip(),
+                (signature or '').strip(),
+                (function_type or '').strip(),
+            )
         
         if task_id:
             progress_tracker.start_task(task_id, total_steps=100)
@@ -359,15 +369,36 @@ def analyze_project(project_id):
                 detail=f'Proje {project_id} için analiz başlatıldı'
             )
         
+        # Snapshot existing summaries and restore by stable key after re-analysis.
+        previous_summaries = {}
+        summary_rows = db.execute_query(
+            '''SELECT f.function_name, f.function_type, f.signature, f.class_name, f.ai_summary,
+                      s.file_path, s.file_name
+               FROM functions f
+               JOIN source_files s ON f.file_id = s.id
+               WHERE f.project_id = ? AND f.ai_summary IS NOT NULL AND TRIM(f.ai_summary) != ''',
+            (project_id,)
+        )
+        for row in summary_rows:
+            r = dict(row)
+            key = _summary_key(
+                r.get('file_path'),
+                r.get('file_name'),
+                r.get('class_name'),
+                r.get('function_name'),
+                r.get('signature'),
+                r.get('function_type')
+            )
+            previous_summaries[key] = r.get('ai_summary')
+
         # Clear previous analysis data (allow re-analysis)
-        # Note: This will clear AI summaries. If re-analyzing, user should save important summaries.
         db.execute_update('DELETE FROM function_calls WHERE project_id = ?', (project_id,))
         db.execute_update('DELETE FROM entry_points WHERE project_id = ?', (project_id,))
         db.execute_update('DELETE FROM functions WHERE project_id = ?', (project_id,))
         
         # Get all files in project
         rows = db.execute_query(
-            'SELECT id, content, language, file_name FROM source_files WHERE project_id = ?',
+            'SELECT id, content, language, file_name, file_path FROM source_files WHERE project_id = ?',
             (project_id,)
         )
         
@@ -393,6 +424,7 @@ def analyze_project(project_id):
             content = row[1]
             language = row[2]
             file_name = row[3]
+            file_path = row[4] if len(row) > 4 else None
             
             logger.debug(f"[Project {project_id}] Analyzing file {idx+1}/{len(rows)}: {file_name}")
             if task_id:
@@ -464,6 +496,23 @@ def analyze_project(project_id):
                     json.dumps(func['parameters']), func.get('return_type', ''),
                     func.get('class_name'), func.get('package_name'))
                 )
+
+                restored_summary = previous_summaries.get(
+                    _summary_key(
+                        file_path,
+                        file_name,
+                        func.get('class_name'),
+                        func.get('name'),
+                        func.get('signature'),
+                        func.get('type')
+                    )
+                )
+                if restored_summary:
+                    db.execute_update(
+                        'UPDATE functions SET ai_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        (restored_summary, func_id)
+                    )
+
                 all_functions.append(func_id)
                 logger.debug(f"[Project {project_id}] Stored function: {func['name']} (ID: {func_id})")
                 
