@@ -2,18 +2,18 @@
 setlocal EnableDelayedExpansion
 
 REM AIKodAnaliz Windows startup script
-
-REM Parse arguments
-set "PULL_UPDATES="
-echo %* | findstr /C:"--pull" >nul
-if %ERRORLEVEL%==0 set "PULL_UPDATES=1"
-echo %* | findstr /C:"-p" >nul
-if %ERRORLEVEL%==0 set "PULL_UPDATES=1"
-
 echo [INFO] Starting AIKodAnaliz...
 
 REM Move to script directory
 cd /d "%~dp0"
+
+REM Parse arguments
+set "PULL_UPDATES="
+set "ARGS=%*"
+if defined ARGS (
+    echo %ARGS% | findstr /C:"--pull" >nul && set "PULL_UPDATES=1"
+    echo %ARGS% | findstr /C:"-p" >nul && set "PULL_UPDATES=1"
+)
 
 REM Git pull if requested
 if defined PULL_UPDATES (
@@ -21,19 +21,17 @@ if defined PULL_UPDATES (
     for /f "delims=" %%i in ('git rev-parse HEAD') do set LOCAL=%%i
     for /f "delims=" %%i in ('git rev-parse origin/main') do set REMOTE=%%i
     if not "!LOCAL!"=="!REMOTE!" (
-        echo [INFO] New version available! Local: !LOCAL!, Remote: !REMOTE!
+        echo [INFO] New version available!
         set /p confirm="Update now? (Y/n): "
-        if "!confirm!"=="" set confirm=Y
-        if "!confirm!"=="Y" goto do_pull
-        if "!confirm!"=="y" goto do_pull
-        echo [INFO] Update skipped.
-        goto skip_pull
-        :do_pull
-        echo [INFO] Pulling updates...
-        git pull origin main
-        echo [INFO] Installing dependencies...
-        pip install -r requirements.txt
-        :skip_pull
+        if /i "!confirm!"=="" set confirm=Y
+        if /i "!confirm!"=="Y" (
+            echo [INFO] Pulling updates...
+            git pull origin main
+            echo [INFO] Installing dependencies...
+            pip install -r requirements.txt
+        ) else (
+            echo [INFO] Update skipped.
+        )
     ) else (
         echo [INFO] Version is up to date.
     )
@@ -43,31 +41,24 @@ REM Find Python executable
 set "PYTHON_CMD="
 echo [INFO] Searching for Python...
 
-REM Try py launcher first
 where py >nul 2>nul
 if %ERRORLEVEL%==0 (
-    echo [INFO] Found py launcher
     set "PYTHON_CMD=py -3"
     goto :python_found
 )
 
-REM Try python with full path check (Windows Store Python)
 python --version >nul 2>nul
 if %ERRORLEVEL%==0 (
-    echo [INFO] Found python command
     set "PYTHON_CMD=python"
     goto :python_found
 )
 
-REM Try python3
 python3 --version >nul 2>nul
 if %ERRORLEVEL%==0 (
-    echo [INFO] Found python3 command
     set "PYTHON_CMD=python3"
     goto :python_found
 )
 
-REM Python not found
 echo [ERROR] Python not found!
 echo [ERROR] Please install Python 3.8+ from https://www.python.org/downloads/
 echo [ERROR] Make sure to check "Add Python to PATH" during installation
@@ -82,7 +73,7 @@ REM Create virtual environment if missing
 if not exist "venv\Scripts\activate.bat" (
     echo [INFO] Creating virtual environment...
     %PYTHON_CMD% -m venv venv
-    if %ERRORLEVEL% neq 0 (
+    if !ERRORLEVEL! neq 0 (
         echo [ERROR] Failed to create virtual environment.
         pause
         exit /b 1
@@ -98,7 +89,6 @@ if %ERRORLEVEL% neq 0 (
 )
 
 REM Disable proxy environment variables
-echo [INFO] Disabling proxy settings...
 set HTTP_PROXY=
 set HTTPS_PROXY=
 set ALL_PROXY=
