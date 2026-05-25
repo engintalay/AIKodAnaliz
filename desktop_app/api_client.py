@@ -207,6 +207,8 @@ class ApiClient:
                             if payload_str == "[DONE]":
                                 yield "done", ""
                                 return
+                            if current_event == "data":
+                                payload_str = payload_str.replace("\\n", "\n")
                             yield current_event, payload_str
                         current_event = "data"
                         data_lines = []

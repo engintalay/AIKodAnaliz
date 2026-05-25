@@ -427,12 +427,177 @@ let chatStreaming = false;
 let ragSearchResults = [];   // latest RAG search results
 let ragSearchBestScore = 0;   // best score from last RAG search (0-1)
 let ragSelectedFunctionIds = new Set();
+let chatExpanded = false;
 
 function initChatTab() {
     // Scroll to bottom on tab switch
     const msgs = document.getElementById('chatMessages');
     if (msgs) msgs.scrollTop = msgs.scrollHeight;
+    _updateChatLayoutButtons();
 }
+
+function _normalizeMarkdownForParagraphs(text) {
+    const normalized = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = normalized.split('\n');
+    const output = [];
+    const paragraph = [];
+    let inCodeBlock = false;
+
+    const flushParagraph = () => {
+        if (paragraph.length) {
+            output.push(paragraph.map(x => x.trim()).filter(Boolean).join(' '));
+            paragraph.length = 0;
+        }
+    };
+
+    for (const line of lines) {
+        const stripped = line.trim();
+
+        if (stripped.startsWith('```')) {
+            flushParagraph();
+            output.push(line);
+            inCodeBlock = !inCodeBlock;
+            continue;
+        }
+
+        if (inCodeBlock) {
+            output.push(line);
+            continue;
+        }
+
+        const isOrderedList = /^\d+\.\s/.test(stripped);
+        const isMarkdownBlock =
+            stripped.startsWith('#') ||
+            stripped.startsWith('>') ||
+            stripped.startsWith('- ') ||
+            stripped.startsWith('* ') ||
+            stripped.startsWith('+ ') ||
+            stripped.startsWith('|') ||
+            stripped.startsWith('---') ||
+            isOrderedList;
+
+        if (!stripped) {
+            flushParagraph();
+            output.push('');
+            continue;
+        }
+
+        if (isMarkdownBlock) {
+            flushParagraph();
+            output.push(line);
+            continue;
+        }
+
+        paragraph.push(line);
+    }
+
+    flushParagraph();
+    return output.join('\n');
+}
+
+function _stripAssistantMeta(text) {
+    let cleaned = String(text || '');
+    cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    cleaned = cleaned.replace(/<\|channel\|>\s*(assistant|final)\b/gi, '');
+    cleaned = cleaned.replace(/<\|channel\|>\s*(thought|analysis)\b[\s\S]*?(?=<\|channel\|>\s*final\b|$)/gi, '');
+    cleaned = cleaned.replace(/<\|[^>]+\|>/g, '');
+    return cleaned.trim();
+}
+
+function _improveAssistantStructure(text) {
+    let cleaned = String(text || '');
+    // Headings that got glued to previous sentence.
+    cleaned = cleaned.replace(/([^\n])\s*(#{1,6}\s+)/g, '$1\n\n$2');
+    // Bullet markers that are inline in the same sentence.
+    cleaned = cleaned.replace(/\s+\*\s+(?=\*\*|[A-Za-z0-9ÇĞİÖŞÜçğıöşü])/g, '\n- ');
+    // Numeric sections merged into text.
+    cleaned = cleaned.replace(/([^\n])\s+(\d+\.\s+\*\*)/g, '$1\n\n$2');
+    // Broken separator patterns.
+    cleaned = cleaned.replace(/:---+/g, ':\n\n---\n');
+    // Keep blank lines controlled for markdown parser.
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+    return cleaned.trim();
+}
+
+function _escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function _renderAssistantMarkdown(el, text) {
+    if (!el) return;
+
+    const sanitized = _improveAssistantStructure(_stripAssistantMeta(text));
+    const normalized = _normalizeMarkdownForParagraphs(sanitized);
+    try {
+        if (typeof marked !== 'undefined') {
+            el.innerHTML = marked.parse(normalized);
+            return;
+        }
+    } catch (mdErr) {
+        console.warn('Markdown render error:', mdErr);
+    }
+
+    const paragraphs = normalized
+        .split(/\n\s*\n/g)
+        .map(p => p.trim())
+        .filter(Boolean);
+    el.innerHTML = paragraphs.map(p => `<p>${_escapeHtml(p)}</p>`).join('');
+}
+
+function _getChatContainer() {
+    return document.getElementById('chatContainer');
+}
+
+function _updateChatLayoutButtons() {
+    const expandBtn = document.getElementById('chatExpandBtn');
+    const fullscreenBtn = document.getElementById('chatFullscreenBtn');
+    const container = _getChatContainer();
+
+    if (expandBtn) {
+        expandBtn.textContent = chatExpanded ? '↩ Normal Görünüm' : '⤢ Sohbeti Genişlet';
+    }
+
+    if (fullscreenBtn) {
+        const isContainerFullscreen = !!container && document.fullscreenElement === container;
+        fullscreenBtn.textContent = isContainerFullscreen ? '🗗 Tam Ekrandan Çık' : '🖥 Tam Ekran';
+    }
+}
+
+function toggleChatExpanded() {
+    const container = _getChatContainer();
+    if (!container) return;
+
+    chatExpanded = !chatExpanded;
+    container.classList.toggle('chat-expanded', chatExpanded);
+
+    const msgs = document.getElementById('chatMessages');
+    if (msgs) msgs.scrollTop = msgs.scrollHeight;
+    _updateChatLayoutButtons();
+}
+
+async function toggleChatFullscreen() {
+    const container = _getChatContainer();
+    if (!container) return;
+
+    try {
+        if (document.fullscreenElement === container) {
+            await document.exitFullscreen();
+        } else {
+            await container.requestFullscreen();
+        }
+    } catch (err) {
+        console.warn('Fullscreen unsupported or blocked:', err);
+    }
+
+    _updateChatLayoutButtons();
+}
+
+document.addEventListener('fullscreenchange', _updateChatLayoutButtons);
 
 function runRagSearch() {
     const input = document.getElementById('ragSearchInput');
@@ -736,11 +901,7 @@ async function sendChatMessage() {
             replyBubble.classList.remove('chat-cursor');
             // Render Markdown after stream completes
             if (replyText) {
-                try {
-                    if (typeof marked !== 'undefined') {
-                        replyBubble.innerHTML = marked.parse(replyText);
-                    }
-                } catch (mdErr) { /* keep textContent */ }
+                _renderAssistantMarkdown(replyBubble, replyText);
             }
 
             // Render reference function chips
@@ -2480,11 +2641,11 @@ async function addFileToProject() {
     // Validate file type
     const fileName = file.name.toLowerCase();
     const validExtensions = ['.zip', '.war', '.jar', '.java', '.sql', '.py', '.js', '.ts', '.php',
-                             '.pdf', '.doc', '.docx', '.txt', '.md'];
+                             '.pdf', '.doc', '.docx', '.txt', '.md', '.xlsx', '.xls'];
     const isValid = validExtensions.some(ext => fileName.endsWith(ext));
     
     if (!isValid) {
-        showError('Geçersiz Dosya Tipi', `Desteklenmeyen dosya tipi: ${file.name}\n\nDesteklenen: ZIP, WAR, JAR, Java, Python, JavaScript, SQL, PDF, DOC, DOCX, TXT, MD`);
+        showError('Geçersiz Dosya Tipi', `Desteklenmeyen dosya tipi: ${file.name}\n\nDesteklenen: ZIP, WAR, JAR, Java, Python, JavaScript, SQL, PDF, DOC, DOCX, TXT, MD, XLSX, XLS`);
         return;
     }
     

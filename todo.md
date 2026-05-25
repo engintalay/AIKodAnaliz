@@ -8,7 +8,7 @@
 - [❌] **DZT-5:** Projeye sonradan eklenen dosyaların düzgün bir şekilde görüntülenmesi, SQL ve kodların fonksiyonlar altına eklenmesi, documanlarında ise ayrı bir alanda gösterilmesi gerekmektei. Dokümanlar için vektörel arama yapılabilmesi ve sonuçların doküman özelinde gösterilmesinin sağlanmalıdır.
 - [✅] **DZT-6:** Fonksiyonlar ayrı ayrı analiz ediliyor. Tüm classın tekrar analiz edilmesi gerekir mi? Class içindeki fonksiyonların toptan analizi bekli olabilir ama gereksiz gibi duruyor. 
 - [✅] **DZT-7:** Export ederken fonksiyon bağları taşınmışyor. Tekrar analiz yap dendiğinde de AI yorumları siliniyor. 
-- [❌] **DZT-8:** Sohbet alanının daha okunaklı hale getirilmesi. AI cevabının formatlamasını düzeltilmesi. Paragraf paragraf gösterilmesinin sağlanması. Tüm ekranı kaplayacak şekilde seçeneklerin sunulması.
+- [✅] **DZT-8:** Sohbet alanının daha okunaklı hale getirilmesi. AI cevabının formatlamasını düzeltilmesi. Paragraf paragraf gösterilmesinin sağlanması. Tüm ekranı kaplayacak şekilde seçeneklerin sunulması.
 
 ## ✨ Geliştirmeler (GELIS)
 - [✅] **GELIS1:** Input box'ların düzeltilmesi. Görsel olarak daha uyumlu modern bir tarza çevrilmesi.

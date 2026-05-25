@@ -1,7 +1,7 @@
 """GELIS8: Add files to an existing project.
 
-Code files  (zip, war, java, sql, py, …) → source_files table + Tree-Sitter analysis + FTS5 update
-Document files (pdf, docx, txt)          → doc_chunks table + background embedding
+Code files  (zip, war, java, sql, py, …)    → source_files table + Tree-Sitter analysis + FTS5 update
+Document files (pdf, docx, txt, xlsx, xls)  → doc_chunks table + background embedding
 """
 import os
 import uuid
@@ -37,7 +37,7 @@ CODE_EXTENSIONS = {
 
 ARCHIVE_EXTENSIONS = {'zip', 'war'}
 
-DOC_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt', 'md'}
+DOC_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt', 'md', 'xlsx', 'xls'}
 
 SKIP_BINARY_EXTENSIONS = {
     'jar', 'class', 'exe', 'dll', 'so', 'dylib',
@@ -105,6 +105,54 @@ def _extract_text_docx(path: str) -> str:
         return ''
 
 
+def _extract_text_excel(path: str) -> str:
+    """Extract readable text from Excel files (.xlsx/.xls)."""
+    ext = _ext(path)
+
+    if ext == 'xlsx':
+        try:
+            import openpyxl
+
+            wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+            parts = []
+            for sheet in wb.worksheets:
+                parts.append(f"[Sayfa] {sheet.title}")
+                for row in sheet.iter_rows(values_only=True):
+                    values = [str(v).strip() for v in row if v is not None and str(v).strip()]
+                    if values:
+                        parts.append("\t".join(values))
+            return "\n".join(parts)
+        except Exception as e:
+            logger.warning(f"XLSX extraction failed {path}: {e}")
+            return ''
+
+    if ext == 'xls':
+        try:
+            import xlrd
+
+            wb = xlrd.open_workbook(path)
+            parts = []
+            for sheet in wb.sheets():
+                parts.append(f"[Sayfa] {sheet.name}")
+                for r in range(sheet.nrows):
+                    values = []
+                    for c in range(sheet.ncols):
+                        val = sheet.cell_value(r, c)
+                        if val is None:
+                            continue
+                        sval = str(val).strip()
+                        if sval:
+                            values.append(sval)
+                    if values:
+                        parts.append("\t".join(values))
+            return "\n".join(parts)
+        except Exception as e:
+            logger.warning(f"XLS extraction failed {path}: {e}")
+            return ''
+
+    return ''
+
+
 def _chunk_text(text: str, size: int = 800, overlap: int = 100) -> list[str]:
     """Split text into overlapping chunks of ~size chars."""
     text = text.strip()
@@ -170,6 +218,8 @@ def _process_doc_file(project_id: int, path: str, file_name: str) -> int:
         text = _extract_text_pdf(path)
     elif ext in ('docx',):
         text = _extract_text_docx(path)
+    elif ext in ('xlsx', 'xls'):
+        text = _extract_text_excel(path)
     else:
         try:
             with open(path, 'r', encoding='utf-8', errors='ignore') as f:

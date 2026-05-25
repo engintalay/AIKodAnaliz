@@ -444,13 +444,15 @@ def add_files_to_project(project_id):
                 # Cleanup
                 shutil.rmtree(temp_extract_dir, ignore_errors=True)
                 
-            elif file_lower.endswith(('.pdf', '.doc', '.docx', '.txt', '.md')):
+            elif file_lower.endswith(('.pdf', '.doc', '.docx', '.txt', '.md', '.xlsx', '.xls')):
                 # Document files for RAG
                 progress_tracker.update(task_id, progress=30, step='Doküman işleniyor...', detail='RAG analizine hazırlanıyor')
                 
                 document_type = 'pdf' if file_lower.endswith('.pdf') else \
                                'docx' if file_lower.endswith('.docx') else \
                                'doc' if file_lower.endswith('.doc') else \
+                               'xlsx' if file_lower.endswith('.xlsx') else \
+                               'xls' if file_lower.endswith('.xls') else \
                                'text'
                 
                 # Save document file
@@ -476,6 +478,35 @@ def add_files_to_project(project_id):
                     elif file_lower.endswith('.md'):
                         with open(doc_path, 'r', encoding='utf-8', errors='ignore') as f:
                             extracted_text = f.read()
+                    elif file_lower.endswith('.xlsx'):
+                        import openpyxl
+                        wb = openpyxl.load_workbook(doc_path, data_only=True, read_only=True)
+                        parts = []
+                        for sheet in wb.worksheets:
+                            parts.append(f"[Sayfa] {sheet.title}")
+                            for row in sheet.iter_rows(values_only=True):
+                                vals = [str(v).strip() for v in row if v is not None and str(v).strip()]
+                                if vals:
+                                    parts.append("\t".join(vals))
+                        extracted_text = "\n".join(parts)
+                    elif file_lower.endswith('.xls'):
+                        import xlrd
+                        wb = xlrd.open_workbook(doc_path)
+                        parts = []
+                        for sheet in wb.sheets():
+                            parts.append(f"[Sayfa] {sheet.name}")
+                            for r in range(sheet.nrows):
+                                vals = []
+                                for c in range(sheet.ncols):
+                                    cell_val = sheet.cell_value(r, c)
+                                    if cell_val is None:
+                                        continue
+                                    sval = str(cell_val).strip()
+                                    if sval:
+                                        vals.append(sval)
+                                if vals:
+                                    parts.append("\t".join(vals))
+                        extracted_text = "\n".join(parts)
                 except Exception as e:
                     logger.warning(f"Failed to extract text from {file.filename}: {e}")
                     extracted_text = f"Document: {file.filename}"
@@ -489,6 +520,27 @@ def add_files_to_project(project_id):
                     (project_id, file.filename, os.path.relpath(doc_path, UPLOAD_DIR), 
                      document_type, document_type, file_size, extracted_text, 'documents')
                 )
+
+                # Also store document chunks for RAG retrieval and start async embeddings.
+                try:
+                    from backend.routes.project_files import _chunk_text, _embed_doc_chunks_async
+
+                    chunks = _chunk_text(extracted_text)
+                    if chunks:
+                        db.execute_update(
+                            'DELETE FROM doc_chunks WHERE project_id = ? AND file_name = ?',
+                            (project_id, file.filename)
+                        )
+                        for idx, chunk in enumerate(chunks):
+                            db.execute_insert(
+                                '''INSERT INTO doc_chunks (project_id, file_name, chunk_index, content)
+                                   VALUES (?, ?, ?, ?)''',
+                                (project_id, file.filename, idx, chunk)
+                            )
+                        _embed_doc_chunks_async(project_id, file.filename, chunks)
+                except Exception as chunk_err:
+                    logger.warning(f"Failed to create doc chunks for {file.filename}: {chunk_err}")
+
                 added_documents = 1
                 logger.debug(f"[Project {project_id}] Added document: {file.filename} (ID: {doc_id})")
                 
@@ -538,7 +590,7 @@ def add_files_to_project(project_id):
                 processed_files = 1
                 added_single_file_id = file_id
             else:
-                return jsonify({'error': f'Unsupported file type: {file.filename}'}), 400
+                return jsonify({'error': f'Desteklenmeyen dosya tipi: {file.filename}'}), 400
             
             progress_tracker.update(task_id, progress=90, step='Temizlik yapılıyor...', detail='Geçici dosyalar temizleniyor')
             progress_tracker.complete(

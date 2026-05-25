@@ -46,6 +46,7 @@ class MainWindow(QMainWindow):
         self._export_thread: ExportThread | None = None
         self._import_thread: ImportThread | None = None
         self._drag_pos: QPoint | None = None
+        self._chat_focus_mode: bool = False
 
         self.setWindowTitle("AIKodAnaliz – Çoklu Proje Asistanı")
         self.setMinimumSize(900, 650)
@@ -70,7 +71,8 @@ class MainWindow(QMainWindow):
         root.setSpacing(0)
 
         # Title bar
-        root.addWidget(self._make_title_bar())
+        self._title_bar = self._make_title_bar()
+        root.addWidget(self._title_bar)
 
         # Body: splitter (sidebar | chat)
         body = QWidget()
@@ -78,7 +80,8 @@ class MainWindow(QMainWindow):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
 
-        body_layout.addWidget(self._make_sidebar(), 0)
+        self._sidebar = self._make_sidebar()
+        body_layout.addWidget(self._sidebar, 0)
         body_layout.addWidget(self._make_chat_panel(), 1)
 
         root.addWidget(body)
@@ -309,6 +312,27 @@ class MainWindow(QMainWindow):
         self._refs_bar.hide()
         outer.addWidget(self._refs_bar)
 
+        # Readability / layout options
+        options_row = QHBoxLayout()
+        options_row.setSpacing(8)
+
+        self._chat_focus_btn = QPushButton("⤢ Sohbeti Genişlet")
+        self._chat_focus_btn.setObjectName("chatFocusButton")
+        self._chat_focus_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._chat_focus_btn.setToolTip("Kenar çubuğunu gizleyip sohbet alanını genişlet")
+        self._chat_focus_btn.clicked.connect(self._toggle_chat_focus_mode)
+        options_row.addWidget(self._chat_focus_btn)
+
+        self._full_screen_btn = QPushButton("🖥 Tam Ekran")
+        self._full_screen_btn.setObjectName("fullScreenButton")
+        self._full_screen_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._full_screen_btn.setToolTip("Pencereyi tam ekran yap")
+        self._full_screen_btn.clicked.connect(self._toggle_window_fullscreen)
+        options_row.addWidget(self._full_screen_btn)
+
+        options_row.addStretch()
+        outer.addLayout(options_row)
+
         # Input row
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -361,6 +385,35 @@ class MainWindow(QMainWindow):
                 self._send_message()
                 return True
         return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key.Key_Escape:
+            if self.isFullScreen():
+                self.showNormal()
+                self._full_screen_btn.setText("🖥 Tam Ekran")
+                event.accept()
+                return
+            if self._chat_focus_mode:
+                self._toggle_chat_focus_mode()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def _toggle_chat_focus_mode(self):
+        self._chat_focus_mode = not self._chat_focus_mode
+        self._sidebar.setVisible(not self._chat_focus_mode)
+        if self._chat_focus_mode:
+            self._chat_focus_btn.setText("↩ Kenar Çubuğunu Göster")
+        else:
+            self._chat_focus_btn.setText("⤢ Sohbeti Genişlet")
+
+    def _toggle_window_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+            self._full_screen_btn.setText("🖥 Tam Ekran")
+        else:
+            self.showFullScreen()
+            self._full_screen_btn.setText("🗗 Tam Ekrandan Çık")
 
     # ==================================================================
     # Project loading

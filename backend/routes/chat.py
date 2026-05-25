@@ -59,6 +59,8 @@ def _build_context(project_id: int, project_name: str, query: str, function_ids:
     system_prompt = (
         f"Sen '{project_name}' projesinin AI kod asistanısın. "
         "YALNIZCA Türkçe yanıt ver. "
+        "Kesinlikle iç düşünce, plan, analiz adımları veya kanal/meta etiketleri (ör. think, thought, analysis, final) yazma. "
+        "Sadece kullanıcıya gösterilecek nihai yanıtı üret. "
         "Aşağıdaki proje fonksiyonlarından yola çıkarak soruyu yanıtla. "
         "Olabildiğince detaylı ve açıklayıcı ol. Teknik detaylara girmekten çekinme. Kodun ne yaptığını, nasıl çalıştığını, neden öyle yapıldığını anlat. Eğer kodda belirsizlikler varsa, mümkün olan en iyi tahminini yaparak bunları da açıklamaya çalış. Eğer kodun amacı veya işlevi hakkında kesin bir fikrin yoksa, bunu açıkça belirt ve olası senaryoları sıralayarak açıklamaya çalış. Kodun hangi problemleri çözmeye çalıştığını, hangi ihtiyaçlara hizmet ettiğini, hangi durumlarda kullanışlı olabileceğini anlat. Kodun güçlü ve zayıf yönlerini, potansiyel riskleri veya yan etkileri varsa bunları da açıklamaya çalış. Kodun nasıl geliştirilebileceği veya iyileştirilebileceği konusunda önerilerin varsa bunları da paylaş. Kodun genel bağlamını, kullanım senaryolarını ve teknik detaylarını mümkün olan en iyi şekilde açıklamaya çalış. "
         "Eğer soruyla ilgili fonksiyon bulunamazsa bunu açıkça belirt. "
@@ -125,23 +127,82 @@ def chat_with_project(project_id):
             # Send reference functions list first so the frontend can display links
             yield f"event:refs\ndata:{refs_json}\n\n"
 
-            buffer = ''
-            think_stripped = False   # True once we've dealt with any think block
-            in_think = False         # Currently inside <think>...</think>
+            in_think = False
+            in_reasoning_channel = False
+
+            def _strip_think_blocks(text: str) -> str:
+                nonlocal in_think
+                if not text:
+                    return ''
+
+                out = text
+
+                if in_think:
+                    end_idx = out.find('</think>')
+                    if end_idx == -1:
+                        return ''
+                    out = out[end_idx + len('</think>'):]
+                    in_think = False
+
+                while True:
+                    start_idx = out.find('<think>')
+                    if start_idx == -1:
+                        break
+                    end_idx = out.find('</think>', start_idx)
+                    if end_idx == -1:
+                        out = out[:start_idx]
+                        in_think = True
+                        break
+                    out = out[:start_idx] + out[end_idx + len('</think>'):]
+
+                return out
+
+            def _strip_reasoning_channel(text: str) -> str:
+                nonlocal in_reasoning_channel
+                if not text:
+                    return ''
+
+                out = text
+
+                # Remove isolated metadata channel markers if they appear inline.
+                out = _re.sub(r'<\|channel\|>\s*(?:assistant|final)\b', '', out, flags=_re.IGNORECASE)
+
+                if in_reasoning_channel:
+                    final_match = _re.search(r'<\|channel\|>\s*final\b', out, flags=_re.IGNORECASE)
+                    if not final_match:
+                        return ''
+                    out = out[final_match.end():]
+                    in_reasoning_channel = False
+
+                while True:
+                    thought_match = _re.search(r'<\|channel\|>\s*(?:thought|analysis)\b', out, flags=_re.IGNORECASE)
+                    if not thought_match:
+                        break
+
+                    prefix = out[:thought_match.start()]
+                    rest = out[thought_match.end():]
+                    final_match = _re.search(r'<\|channel\|>\s*final\b', rest, flags=_re.IGNORECASE)
+
+                    if final_match:
+                        out = prefix + rest[final_match.end():]
+                        continue
+
+                    out = prefix
+                    in_reasoning_channel = True
+                    break
+
+                # Remove any remaining serialized metadata tokens.
+                out = _re.sub(r'<\|[^>]+\|>', '', out)
+                return out
 
             for chunk in client.chat_stream(messages, system_prompt=system_prompt, max_tokens=max_tokens):
-                # Her chunk için <think> bloklarını temizle
-                cleaned_chunk = _re.sub(r'<think>.*?</think>', '', chunk, flags=_re.DOTALL)
-                escaped = cleaned_chunk.replace('\n', '\n')
-                if escaped:
-                    yield f"data:{escaped}\n\n"
-
-            # Flush any remaining buffer after stream ends
-            if buffer and not in_think:
-                cleaned = _re.sub(r'<think>.*?</think>', '', buffer, flags=_re.DOTALL).lstrip('\n')
-                if cleaned:
-                    escaped = cleaned.replace('\n', '\\n')
-                    yield f"data:{escaped}\n\n"
+                cleaned_chunk = _strip_think_blocks(chunk)
+                cleaned_chunk = _strip_reasoning_channel(cleaned_chunk)
+                if cleaned_chunk:
+                    # SSE data lines must be single-line; keep newlines as escaped literals.
+                    escaped = cleaned_chunk.replace('\n', '\\n')
+                    if escaped:
+                        yield f"data:{escaped}\n\n"
 
             yield "data:[DONE]\n\n"
 

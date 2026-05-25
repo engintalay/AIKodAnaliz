@@ -8,7 +8,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>AIKodAnaliz - Kod Analiz Aracı</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260310_11">
+    <link rel="stylesheet" href="/static/css/style.css?v=20260525_01">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
 
@@ -228,11 +228,11 @@
                             <p style="color: #666; margin-bottom: 15px; font-size:13px;">
                                 <b>Kod dosyaları</b> (ZIP, WAR, Java, SQL, Python, …) → analiz edilir, fonksiyonlar
                                 eklenir.<br>
-                                <b>Dokümanlar</b> (PDF, DOCX, TXT) → RAG analizine dahil edilir, sohbette kullanılır.
+                                <b>Dokümanlar</b> (PDF, DOCX, TXT, XLSX, XLS) → RAG analizine dahil edilir, sohbette kullanılır.
                             </p>
                             <div style="margin-bottom:12px;">
                                 <input type="file" id="addFileInput" multiple
-                                    accept=".zip,.war,.java,.sql,.py,.js,.ts,.php,.xml,.json,.pdf,.docx,.txt,.md"
+                                    accept=".zip,.war,.java,.sql,.py,.js,.ts,.php,.xml,.json,.pdf,.docx,.txt,.md,.xlsx,.xls"
                                     style="display:none;" onchange="addFileToProject()">
                                 <button class="btn btn-primary"
                                     onclick="document.getElementById('addFileInput').click()"
@@ -249,11 +249,17 @@
 
                     <!-- Chat Tab -->
                     <div class="tab-content" id="chatTab" style="display:none;">
-                        <div class="chat-container">
+                        <div class="chat-container" id="chatContainer">
                             <div class="chat-toolbar">
                                 <span style="font-weight:600; color:#333;">🤖 AI Kod Asistanı</span>
-                                <button class="btn btn-secondary btn-sm" onclick="clearChatHistory()"
-                                    style="padding:4px 12px; font-size:12px;">🗑️ Konuşmayı Sıfırla</button>
+                                <div class="chat-toolbar-actions">
+                                    <button id="chatExpandBtn" class="btn btn-secondary btn-sm" onclick="toggleChatExpanded()"
+                                        style="padding:4px 12px; font-size:12px;">⤢ Sohbeti Genişlet</button>
+                                    <button id="chatFullscreenBtn" class="btn btn-secondary btn-sm" onclick="toggleChatFullscreen()"
+                                        style="padding:4px 12px; font-size:12px;">🖥 Tam Ekran</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="clearChatHistory()"
+                                        style="padding:4px 12px; font-size:12px;">🗑️ Konuşmayı Sıfırla</button>
+                                </div>
                             </div>
 
                             <!-- RAG Search (GELIS11) -->
@@ -340,10 +346,10 @@
                         <div style="background: white; padding: 20px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px;">
                             <h3 style="margin-top: 0; color: #333;">📁 Proje'ye Yeni Dosya Ekle</h3>
                             <p style="color: #666; margin-bottom: 15px;">
-                                Desteklenen dosyalar: ZIP, WAR, JAR, Java, Python, JavaScript, SQL dosyaları ve dokümanlar (PDF, DOC, DOCX, TXT, MD)
+                                Desteklenen dosyalar: ZIP, WAR, JAR, Java, Python, JavaScript, SQL dosyaları ve dokümanlar (PDF, DOC, DOCX, TXT, MD, XLSX, XLS)
                             </p>
                             <div style="display: flex; gap: 10px; align-items: center;">
-                                <input type="file" id="addFileInput" style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                                <input type="file" id="addFileInput" accept=".zip,.war,.jar,.java,.sql,.py,.js,.ts,.php,.pdf,.doc,.docx,.txt,.md,.xlsx,.xls" style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px; background: white;">
                                 <button class="btn btn-primary" onclick="addFileToProject()" style="white-space: nowrap;">
                                     ➕ Dosya Ekle
                                 </button>
@@ -879,7 +885,7 @@
     <script src="/static/lib/cytoscape.umd.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="/static/js/main.js?v=20260424_04"></script>
+    <script src="/static/js/main.js?v=20260525_04"></script>
     <script src="/static/js/admin-functions.js?v=20260424_04"></script>
 </body>
 

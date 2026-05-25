@@ -4,8 +4,7 @@ import re
 
 import markdown as md_lib
 
-from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSignal, QThread
-from PyQt6.QtGui import QTextOption, QFont
+from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextBrowser,
     QScrollArea, QFrame, QSizePolicy,
@@ -20,15 +19,104 @@ def _now_str() -> str:
 
 def _md_to_html(text: str) -> str:
     """Convert markdown text to HTML string (body only)."""
-    extensions = ["fenced_code", "tables", "nl2br", "sane_lists"]
+    extensions = ["fenced_code", "tables", "sane_lists"]
     try:
         converter = md_lib.Markdown(extensions=extensions)
-        html = converter.convert(text)
+        cleaned = _improve_assistant_structure(_strip_assistant_meta(text))
+        html = converter.convert(_normalize_markdown_for_paragraphs(cleaned))
         return html
     except Exception:
         # Fallback: plain text with line breaks
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return f"<pre style='white-space:pre-wrap'>{safe}</pre>"
+
+
+def _normalize_markdown_for_paragraphs(text: str) -> str:
+    """Normalize plain streamed text into paragraph-friendly markdown.
+
+    Keeps fenced code blocks and markdown block syntax intact while joining
+    wrapped plain lines into real paragraphs.
+    """
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = normalized.split("\n")
+    output: list[str] = []
+    paragraph: list[str] = []
+    in_code_block = False
+
+    def flush_paragraph():
+        if paragraph:
+            output.append(" ".join(part.strip() for part in paragraph if part.strip()))
+            paragraph.clear()
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            flush_paragraph()
+            output.append(line)
+            in_code_block = not in_code_block
+            continue
+
+        if in_code_block:
+            output.append(line)
+            continue
+
+        is_ordered_list = ". " in stripped and stripped.split(". ", 1)[0].isdigit()
+        is_markdown_block = (
+            stripped.startswith("#")
+            or stripped.startswith(">")
+            or stripped.startswith("- ")
+            or stripped.startswith("* ")
+            or stripped.startswith("+ ")
+            or stripped.startswith("|")
+            or is_ordered_list
+            or stripped.startswith("---")
+        )
+
+        if not stripped:
+            flush_paragraph()
+            output.append("")
+            continue
+
+        if is_markdown_block:
+            flush_paragraph()
+            output.append(line)
+            continue
+
+        paragraph.append(line)
+
+    flush_paragraph()
+    return "\n".join(output)
+
+
+def _improve_assistant_structure(text: str) -> str:
+    """Insert markdown-friendly breaks for flattened assistant output."""
+    cleaned = text or ""
+    cleaned = re.sub(r"([^\n])\s*(#{1,6}\s+)", r"\1\n\n\2", cleaned)
+    cleaned = re.sub(r"\s+\*\s+(?=\*\*|[A-Za-z0-9ÇĞİÖŞÜçğıöşü])", "\n- ", cleaned)
+    cleaned = re.sub(r"([^\n])\s+(\d+\.\s+\*\*)", r"\1\n\n\2", cleaned)
+    cleaned = re.sub(r":---+", ":\n\n---\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _strip_assistant_meta(text: str) -> str:
+    """Strip leaked internal reasoning/channel metadata from assistant text."""
+    cleaned = text or ""
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<\|channel\|>\s*(assistant|final)\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"<\|channel\|>\s*(thought|analysis)\b[\s\S]*?(?=<\|channel\|>\s*final\b|$)",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"<\|[^>]+\|>", "", cleaned)
+    cleaned = re.sub(r"(?im)^\s*here'?s a thinking process.*$", "", cleaned)
+    cleaned = re.sub(r"(?im)^\s*(analyze the request|structure the answer|draft content|final review)\s*:\s*", "", cleaned)
+    cleaned = re.sub(r"(?im)^\s*\d+\.\s*\*\*(analyze the request|structure the answer|draft content|final review).*?$", "", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 class _AdaptiveTextBrowser(QTextBrowser):

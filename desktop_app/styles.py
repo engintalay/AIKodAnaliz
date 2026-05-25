@@ -304,6 +304,21 @@ QMainWindow {{
     color: {C_RED};
 }}
 
+#chatFocusButton, #fullScreenButton {{
+    background-color: transparent;
+    border: 1px solid {C_BORDER};
+    border-radius: 7px;
+    padding: 5px 10px;
+    color: {C_TEXT_SECONDARY};
+    font-size: 11px;
+}}
+
+#chatFocusButton:hover, #fullScreenButton:hover {{
+    border-color: {C_ACCENT};
+    color: {C_TEXT};
+    background-color: {C_CARD};
+}}
+
 #exportButton, #importButton {{
     background-color: transparent;
     border: 1px solid {C_BORDER};
