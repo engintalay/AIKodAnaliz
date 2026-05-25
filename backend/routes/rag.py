@@ -50,18 +50,20 @@ def build_project_index(project_id):
     data = request.get_json(silent=True) or {}
     rebuild_embeddings = data.get('embeddings', True)
     rebuild_fts = data.get('fts', True)
+    force_rebuild = data.get('force_rebuild', False)
 
     fts_count = 0
     if rebuild_fts:
         fts_count = RagIndex.build_fts(project_id)
 
     if rebuild_embeddings:
-        RagIndex.build_embeddings_async(project_id)
+        RagIndex.build_embeddings_async(project_id, force_rebuild=force_rebuild)
 
     return jsonify({
         'message': 'İndeks oluşturma başlatıldı',
         'fts_indexed': fts_count,
         'embeddings': 'arka planda çalışıyor' if rebuild_embeddings else 'atlandı',
+        'embedding_mode': 'full' if force_rebuild else 'incremental',
     }), 202
 
 
@@ -99,7 +101,7 @@ def rebuild_all():
 
     projects = db.execute_query('SELECT id FROM projects')
     for proj in projects:
-        RagIndex.build_embeddings_async(proj[0])
+        RagIndex.build_embeddings_async(proj[0], force_rebuild=False)
 
     return jsonify({
         'message': f'Tüm projeler için FTS5 yeniden oluşturuldu ({fts_count} fonksiyon). Embedding arka planda çalışıyor.',

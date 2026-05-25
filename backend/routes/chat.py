@@ -45,16 +45,24 @@ def _build_context(project_id: int, project_name: str, query: str, function_ids:
 
     context_block = '\n'.join(context_lines) if context_lines else 'İlgili fonksiyon bulunamadı.'
 
-    # Also search doc_chunks for relevant document passages (GELIS8)
-    doc_hits = RagIndex.search_doc_chunks(project_id, query, limit=3)
+    # Search doc_chunks for relevant document passages (GELIS8).
+    # First try embedding-based retrieval, then fall back to lexical retrieval
+    # when embeddings are not ready or confidence is low.
+    doc_hits = RagIndex.search_doc_chunks(project_id, query, limit=5)
     doc_block = ''
+    doc_parts = []
     if doc_hits:
-        doc_parts = []
         for hit in doc_hits:
-            if hit['score'] > 0.35:   # Only include reasonably relevant chunks
+            if hit.get('score', 0.0) > 0.30:
                 doc_parts.append(f"[{hit['file_name']}#{hit['chunk_index']}]\n{hit['content']}")
-        if doc_parts:
-            doc_block = '\n\n'.join(doc_parts)
+
+    if not doc_parts:
+        fallback_hits = RagIndex.search_doc_chunks_fallback(project_id, query, limit=3)
+        for hit in fallback_hits:
+            doc_parts.append(f"[{hit['file_name']}#{hit['chunk_index']}]\n{hit['content']}")
+
+    if doc_parts:
+        doc_block = '\n\n'.join(doc_parts[:3])
 
     system_prompt = (
         f"Sen '{project_name}' projesinin AI kod asistanısın. "
@@ -62,6 +70,7 @@ def _build_context(project_id: int, project_name: str, query: str, function_ids:
         "Kesinlikle iç düşünce, plan, analiz adımları veya kanal/meta etiketleri (ör. think, thought, analysis, final) yazma. "
         "Sadece kullanıcıya gösterilecek nihai yanıtı üret. "
         "Aşağıdaki proje fonksiyonlarından yola çıkarak soruyu yanıtla. "
+        "Proje dokümanlarında soru ile ilgili açık bilgi varsa cevabı öncelikle doküman içeriğine dayandır. "
         "Olabildiğince detaylı ve açıklayıcı ol. Teknik detaylara girmekten çekinme. Kodun ne yaptığını, nasıl çalıştığını, neden öyle yapıldığını anlat. Eğer kodda belirsizlikler varsa, mümkün olan en iyi tahminini yaparak bunları da açıklamaya çalış. Eğer kodun amacı veya işlevi hakkında kesin bir fikrin yoksa, bunu açıkça belirt ve olası senaryoları sıralayarak açıklamaya çalış. Kodun hangi problemleri çözmeye çalıştığını, hangi ihtiyaçlara hizmet ettiğini, hangi durumlarda kullanışlı olabileceğini anlat. Kodun güçlü ve zayıf yönlerini, potansiyel riskleri veya yan etkileri varsa bunları da açıklamaya çalış. Kodun nasıl geliştirilebileceği veya iyileştirilebileceği konusunda önerilerin varsa bunları da paylaş. Kodun genel bağlamını, kullanım senaryolarını ve teknik detaylarını mümkün olan en iyi şekilde açıklamaya çalış. "
         "Eğer soruyla ilgili fonksiyon bulunamazsa bunu açıkça belirt. "
         "Kod snippet'i verirken Markdown kullan.\n\n"

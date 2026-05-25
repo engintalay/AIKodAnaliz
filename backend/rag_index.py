@@ -135,8 +135,17 @@ class RagIndex:
     # ----------------------------------------------------------------
 
     @classmethod
-    def build_embeddings_async(cls, project_id: int, user_id: int = None):
-        """Start embedding generation in a background thread."""
+    def build_embeddings_async(
+        cls,
+        project_id: int,
+        user_id: int = None,
+        force_rebuild: bool = False,
+    ):
+        """Start embedding generation in a background thread.
+
+        Default behavior is incremental: only missing/stale embeddings are built.
+        Set force_rebuild=True to rebuild all function embeddings for the project.
+        """
         key = project_id
         with cls._lock:
             if cls._build_progress.get(key, {}).get('status') == 'running':
@@ -151,13 +160,35 @@ class RagIndex:
                 session.trust_env = False
 
                 # Get functions that have ai_summary (most informative)
-                rows = db.execute_query(
-                    '''SELECT f.id, f.function_name, f.class_name, f.ai_summary, f.signature
-                       FROM functions f
-                       WHERE f.project_id = ?
-                         AND f.ai_summary IS NOT NULL AND f.ai_summary != ""''',
-                    (project_id,)
-                )
+                # Incremental mode: only select rows whose embedding is missing or stale.
+                if force_rebuild:
+                    rows = db.execute_query(
+                        '''SELECT f.id, f.function_name, f.class_name, f.ai_summary, f.signature
+                           FROM functions f
+                           WHERE f.project_id = ?
+                             AND f.ai_summary IS NOT NULL AND f.ai_summary != ""''',
+                        (project_id,)
+                    )
+                else:
+                    rows = db.execute_query(
+                        '''SELECT f.id, f.function_name, f.class_name, f.ai_summary, f.signature
+                           FROM functions f
+                           LEFT JOIN function_embeddings fe ON fe.function_id = f.id
+                           WHERE f.project_id = ?
+                             AND f.ai_summary IS NOT NULL AND f.ai_summary != ""
+                             AND (
+                                 fe.function_id IS NULL
+                                 OR fe.embedding IS NULL
+                                 OR fe.model_name IS NULL
+                                 OR fe.model_name != ?
+                                 OR (
+                                     f.updated_at IS NOT NULL
+                                     AND fe.indexed_at IS NOT NULL
+                                     AND datetime(f.updated_at) > datetime(fe.indexed_at)
+                                 )
+                             )''',
+                        (project_id, EMBEDDING_MODEL)
+                    )
                 total = len(rows)
                 with cls._lock:
                     cls._build_progress[project_id]['total'] = total
@@ -379,6 +410,119 @@ class RagIndex:
             return scored[:limit]
         except Exception as e:
             logger.warning(f"Doc chunk search error: {e}")
+            return []
+
+    @classmethod
+    def search_doc_chunks_fallback(cls, project_id: int, query: str, limit: int = 5) -> list:
+        """Lexical fallback for document retrieval when embeddings are missing.
+
+        Returns list of dicts: {file_name, chunk_index, content, score}
+        """
+        import re as _re
+
+        try:
+            def _norm_text(value: str) -> str:
+                v = (value or '').lower()
+                table = str.maketrans({
+                    'ç': 'c', 'ğ': 'g', 'ı': 'i', 'ö': 'o', 'ş': 's', 'ü': 'u',
+                    'Ç': 'c', 'Ğ': 'g', 'İ': 'i', 'Ö': 'o', 'Ş': 's', 'Ü': 'u',
+                    '_': ' ', '-': ' ', '.': ' ', '/': ' ', '\\': ' ',
+                })
+                return _re.sub(r'\s+', ' ', v.translate(table)).strip()
+
+            q = _norm_text((query or '').strip())
+            if not q:
+                return []
+
+            stop = {
+                'bir', 'ile', 'icin', 'için', 'olan', 'ne', 'bu', 've', 'ya', 'da',
+                'the', 'and', 'for', 'how', 'what', 'which', 'is', 'are', 'can',
+                'yapıyor', 'nedir', 'calisiyor', 'çalışıyor', 'nasıl', 'hangi'
+            }
+            raw_tokens = _re.split(r'[^\w]+', q)
+            tokens = []
+            seen = set()
+            for t in raw_tokens:
+                tc = t.strip().lower()
+                if len(tc) < 2 or tc in stop or tc in seen:
+                    continue
+                seen.add(tc)
+                tokens.append(tc)
+            tokens = tokens[:8]
+
+            # Prefer doc_chunks if present.
+            rows = db.execute_query(
+                'SELECT file_name, chunk_index, content FROM doc_chunks WHERE project_id = ?',
+                (project_id,)
+            )
+
+            scored = []
+            for row in rows or []:
+                file_name = row[0] or ''
+                chunk_index = row[1] if row[1] is not None else 0
+                content = row[2] or ''
+                lc_content = _norm_text(content)
+                lc_file = _norm_text(file_name)
+
+                score = 0.0
+                if q and q in lc_content:
+                    score += 3.0
+                if q and q in lc_file:
+                    score += 6.0
+
+                for tok in tokens:
+                    if tok in lc_content:
+                        score += 1.0
+                    if tok in lc_file:
+                        score += 3.0
+
+                if score > 0:
+                    scored.append({
+                        'file_name': file_name,
+                        'chunk_index': int(chunk_index),
+                        'content': content,
+                        'score': round(score, 4),
+                    })
+
+            # If there are no chunks (legacy rows), fall back to project_documents.extracted_text.
+            if not scored:
+                doc_rows = db.execute_query(
+                    '''SELECT file_name, extracted_text
+                       FROM project_documents
+                       WHERE project_id = ?
+                         AND extracted_text IS NOT NULL
+                         AND TRIM(extracted_text) <> ""''',
+                    (project_id,)
+                )
+                for row in doc_rows or []:
+                    file_name = row[0] or ''
+                    text = row[1] or ''
+                    lc_text = _norm_text(text)
+                    lc_file = _norm_text(file_name)
+                    score = 0.0
+
+                    if q and q in lc_text:
+                        score += 3.0
+                    if q and q in lc_file:
+                        score += 6.0
+                    for tok in tokens:
+                        if tok in lc_text:
+                            score += 1.0
+                        if tok in lc_file:
+                            score += 3.0
+
+                    if score > 0:
+                        scored.append({
+                            'file_name': file_name,
+                            'chunk_index': 0,
+                            'content': text[:1600],
+                            'score': round(score, 4),
+                        })
+
+            scored.sort(key=lambda x: x['score'], reverse=True)
+            return scored[:limit]
+        except Exception as e:
+            logger.warning(f"Doc chunk fallback search error: {e}")
             return []
 
     @staticmethod
