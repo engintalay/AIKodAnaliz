@@ -38,7 +38,7 @@
 - [✅] **GELIS16:** Sohbet alan düzeltmeleri
 - [✅] **GELIS17:** Tüm projeler üzerinden soru sorulabilen bir masa üstü uygulaması hazırlanması.
 - [✅] **GELIS18:** Projelerin teker teker ya da topluca export edilebilmesi ve export edilen projenin import edilebilmesi sağlanmalı. Amaç burada daha önce analizi yapılmış bir projeyi başka bir yere taşıyabilmek. 
-
+- [❌] **GELIS19:** llama.cpp için destek ekle.
 
 Referanslar
 [❌] [✅]
