@@ -35,7 +35,7 @@
 - [✅] **GELIS13:** Proje yüklendikten sonra, Dosyalar bölümünde filtreleme olsun.
 - [✅] **GELIS14:** Projeler ekranında Proje kutusuna basıncada proje açılsın, sadece aç düğmesinme basılmak zorunda kalmasın.
 - [✅] **GELIS15:** Tüm modeller için think'in kapatılması.
-- [❌] **GELIS16:** Sohbet alan düzeltmeleri
+- [✅] **GELIS16:** Sohbet alan düzeltmeleri
 - [✅] **GELIS17:** Tüm projeler üzerinden soru sorulabilen bir masa üstü uygulaması hazırlanması.
 - [✅] **GELIS18:** Projelerin teker teker ya da topluca export edilebilmesi ve export edilen projenin import edilebilmesi sağlanmalı. Amaç burada daha önce analizi yapılmış bir projeyi başka bir yere taşıyabilmek. 
 
