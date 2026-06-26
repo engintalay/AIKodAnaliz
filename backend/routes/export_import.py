@@ -445,6 +445,12 @@ def import_project():
                 if 'content' in doc_chunk_cols:
                     insert_cols.append('content')
                     insert_vals.append(dc.get('content'))
+                if 'page_start' in doc_chunk_cols:
+                    insert_cols.append('page_start')
+                    insert_vals.append(dc.get('page_start'))
+                if 'page_end' in doc_chunk_cols:
+                    insert_cols.append('page_end')
+                    insert_vals.append(dc.get('page_end'))
 
                 if insert_cols:
                     placeholders = ','.join(['?'] * len(insert_cols))

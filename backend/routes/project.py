@@ -523,9 +523,9 @@ def add_files_to_project(project_id):
 
                 # Also store document chunks for RAG retrieval and start async embeddings.
                 try:
-                    from backend.routes.project_files import _chunk_text, _embed_doc_chunks_async
+                    from backend.routes.project_files import _build_document_chunks, _embed_doc_chunks_async
 
-                    chunks = _chunk_text(extracted_text)
+                    _, chunks = _build_document_chunks(doc_path, file.filename, document_type, fallback_text=extracted_text)
                     if chunks:
                         db.execute_update(
                             'DELETE FROM doc_chunks WHERE project_id = ? AND file_name = ?',
@@ -533,9 +533,9 @@ def add_files_to_project(project_id):
                         )
                         for idx, chunk in enumerate(chunks):
                             db.execute_insert(
-                                '''INSERT INTO doc_chunks (project_id, file_name, chunk_index, content)
-                                   VALUES (?, ?, ?, ?)''',
-                                (project_id, file.filename, idx, chunk)
+                                '''INSERT INTO doc_chunks (project_id, file_name, chunk_index, content, page_start, page_end)
+                                   VALUES (?, ?, ?, ?, ?, ?)''',
+                                (project_id, file.filename, idx, chunk['content'], chunk.get('page_start'), chunk.get('page_end'))
                             )
                         _embed_doc_chunks_async(project_id, file.filename, chunks)
                 except Exception as chunk_err:

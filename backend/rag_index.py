@@ -394,7 +394,9 @@ class RagIndex:
                 return []
 
             stored = db.execute_query(
-                'SELECT file_name, chunk_index, content, embedding FROM doc_chunks WHERE project_id = ? AND embedding IS NOT NULL',
+                '''SELECT file_name, chunk_index, content, embedding, page_start, page_end
+                   FROM doc_chunks
+                   WHERE project_id = ? AND embedding IS NOT NULL''',
                 (project_id,)
             )
             scored = []
@@ -402,7 +404,14 @@ class RagIndex:
                 try:
                     vec = json.loads(row[3])
                     sim = cosine_similarity(query_vec, vec)
-                    scored.append({'file_name': row[0], 'chunk_index': row[1], 'content': row[2], 'score': sim})
+                    scored.append({
+                        'file_name': row[0],
+                        'chunk_index': row[1],
+                        'content': row[2],
+                        'score': sim,
+                        'page_start': row[4],
+                        'page_end': row[5],
+                    })
                 except Exception:
                     pass
 
@@ -462,7 +471,7 @@ class RagIndex:
 
             # Prefer doc_chunks if present.
             rows = db.execute_query(
-                'SELECT file_name, chunk_index, content FROM doc_chunks WHERE project_id = ?',
+                'SELECT file_name, chunk_index, content, page_start, page_end FROM doc_chunks WHERE project_id = ?',
                 (project_id,)
             )
 
@@ -471,6 +480,8 @@ class RagIndex:
                 file_name = row[0] or ''
                 chunk_index = row[1] if row[1] is not None else 0
                 content = row[2] or ''
+                page_start = row[3]
+                page_end = row[4]
                 lc_content = _norm_text(content)
                 lc_file = _norm_text(file_name)
 
@@ -497,6 +508,8 @@ class RagIndex:
                         'chunk_index': int(chunk_index),
                         'content': content,
                         'score': round(score, 4),
+                        'page_start': page_start,
+                        'page_end': page_end,
                     })
 
             # If there are no chunks (legacy rows), fall back to project_documents.extracted_text.

@@ -963,8 +963,16 @@ async function sendChatMessage() {
                 refsEl.className = 'chat-refs';
                 refsEl.innerHTML = '<span class="chat-refs-label">📎 Kaynaklar:</span> ' +
                     refs.map(r => {
-                        const shortName = r.name.split('.').pop();
-                        return `<span class="chat-ref-chip" onclick="viewFunctionFromChat(${r.id})" title="${r.name}\n${r.file}">${shortName}</span>`;
+                        const refType = r.type || 'function';
+                        if (refType === 'document') {
+                            const label = r.name || r.file || 'Doküman';
+                            const shortName = label.split('/').pop();
+                            const location = r.location || `chunk ${Number(r.chunk_index || 0)}`;
+                            return `<span class="chat-ref-chip" title="${_escapeHtml(label)}\n${_escapeHtml(location)}">📄 ${_escapeHtml(shortName)} (${_escapeHtml(location)})</span>`;
+                        }
+
+                        const shortName = (r.name || '').split('.').pop();
+                        return `<span class="chat-ref-chip" onclick="viewFunctionFromChat(${r.id})" title="${_escapeHtml(r.name || '')}\n${_escapeHtml(r.file || '')}">${_escapeHtml(shortName)}</span>`;
                     }).join('');
                 msgs.appendChild(refsEl);
                 msgs.scrollTop = msgs.scrollHeight;
@@ -2544,10 +2552,56 @@ async function loadFiles() {
         allDocuments = data.documents || [];
 
         filterFiles();
+        updateDocumentsRagStatus();
         return;
 
     } catch (error) {
         console.error('Dosyalar yükleme hatası:', error);
+        updateDocumentsRagStatus(true);
+    }
+}
+
+async function updateDocumentsRagStatus(isError = false) {
+    const statusEl = document.getElementById('docsRagStatus');
+    if (!statusEl) return;
+
+    if (!currentProjectId) {
+        statusEl.textContent = 'Doküman RAG durumu için önce bir proje seçin.';
+        return;
+    }
+
+    if (isError) {
+        statusEl.textContent = 'Doküman RAG durumu alınamadı.';
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/projects/${currentProjectId}/docs`);
+        if (!response.ok) {
+            statusEl.textContent = 'Doküman RAG durumu alınamadı.';
+            return;
+        }
+
+        const docs = await response.json();
+        if (!docs || docs.length === 0) {
+            statusEl.textContent = 'Henüz RAG’e alınmış doküman yok.';
+            return;
+        }
+
+        const totalDocs = docs.length;
+        const totalChunks = docs.reduce((sum, item) => sum + (Number(item.chunk_count) || 0), 0);
+        const embeddedChunks = docs.reduce((sum, item) => sum + (Number(item.embedded_count) || 0), 0);
+        const latestAddedAt = docs
+            .map(item => item.added_at)
+            .filter(Boolean)
+            .sort()
+            .slice(-1)[0];
+        const lastText = latestAddedAt ? new Date(latestAddedAt).toLocaleString('tr-TR') : '-';
+        const coverage = totalChunks > 0 ? Math.round((embeddedChunks / totalChunks) * 100) : 0;
+
+        statusEl.textContent = `Toplam ${totalDocs} doküman | ${totalChunks} chunk | ${embeddedChunks} embedding | Kapsama ${coverage}% | Son eklenme: ${lastText}`;
+    } catch (error) {
+        statusEl.textContent = 'Doküman RAG durumu alınamadı.';
     }
 }
 
@@ -2779,6 +2833,48 @@ async function addFileToProject() {
         console.error('Dosya ekleme hatası:', error);
         progressDiv.style.display = 'none';
         showError('Dosya Ekleme Hatası', error.message || 'Bilinmeyen bir hata oluştu');
+    }
+}
+
+async function rebuildDocumentsRag() {
+    if (!currentProjectId) {
+        showError('Proje Seçilmedi', 'Önce bir proje seçin.');
+        return;
+    }
+
+    const ok = confirm('Mevcut doküman kayıtları tekrar chunklanıp RAG indeksine alınacak. Devam edilsin mi?');
+    if (!ok) return;
+
+    const btn = document.getElementById('rebuildDocsRagBtn');
+    const originalText = btn ? btn.textContent : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Yenileniyor...';
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/projects/${currentProjectId}/docs/rebuild-rag`, {
+            method: 'POST',
+        });
+        const result = await response.json().catch(() => ({}));
+
+        if (response.ok) {
+            const processed = result.documents_processed || 0;
+            const chunks = result.chunks_created || 0;
+            const skipped = result.documents_skipped || 0;
+            showSuccess('Doküman RAG Yenileme', `${processed} doküman işlendi, ${chunks} chunk oluşturuldu, ${skipped} doküman atlandı`);
+            loadFiles();
+            updateDocumentsRagStatus();
+        } else {
+            showError('Doküman RAG Yenileme Hatası', result.error || `HTTP ${response.status}`);
+        }
+    } catch (error) {
+        showError('Doküman RAG Yenileme Hatası', error.message || 'Bilinmeyen hata');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = originalText || '♻ Dokümanları RAG’e Yeniden Al';
+        }
     }
 }
 

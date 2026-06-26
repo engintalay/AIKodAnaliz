@@ -1,5 +1,6 @@
 """AI Chat routes – per-project conversational assistant."""
 import json
+import re
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 from backend.database import db
 from backend.lmstudio_client import LMStudioClient
@@ -12,6 +13,64 @@ bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 # ------------------------------------------------------------------
 # Context retrieval helpers
 # ------------------------------------------------------------------
+
+def _locate_doc_reference(project_id: int, file_name: str, chunk_index: int, chunk_content: str) -> str:
+    """Best-effort location text for document chunks (line/page/chunk)."""
+    try:
+        chunk_rows = db.execute_query(
+            '''SELECT page_start, page_end
+               FROM doc_chunks
+               WHERE project_id = ? AND file_name = ? AND chunk_index = ?
+               LIMIT 1''',
+            (project_id, file_name, chunk_index)
+        )
+        if chunk_rows:
+            page_start = chunk_rows[0][0]
+            page_end = chunk_rows[0][1]
+            if page_start is not None:
+                if page_end is not None and int(page_end) > int(page_start):
+                    return f'sayfa {page_start}-{page_end}'
+                return f'sayfa {page_start}'
+
+        rows = db.execute_query(
+            '''SELECT document_type, extracted_text
+               FROM project_documents
+               WHERE project_id = ? AND file_name = ?
+               LIMIT 1''',
+            (project_id, file_name)
+        )
+        if not rows:
+            return f'chunk {chunk_index}'
+
+        row = rows[0]
+        document_type = (row[0] or '').lower()
+        extracted_text = row[1] or ''
+        content = (chunk_content or '').strip()
+
+        if content and extracted_text:
+            # Use a stable prefix for matching to avoid full-chunk mismatches.
+            prefix = content[:160]
+            pos = extracted_text.find(prefix)
+            if pos >= 0:
+                if document_type in ('txt', 'md', 'text', 'doc', 'docx'):
+                    start_line = extracted_text.count('\n', 0, pos) + 1
+                    end_line = start_line + max(0, content.count('\n'))
+                    if end_line > start_line:
+                        return f'satır {start_line}-{end_line}'
+                    return f'satır {start_line}'
+
+                if document_type in ('xlsx', 'xls'):
+                    sheet_match = re.search(r'\[Sayfa\]\s*([^\n\r]+)', content)
+                    if sheet_match:
+                        return f'sayfa {sheet_match.group(1).strip()}'
+
+                if document_type == 'pdf':
+                    # PDF page mapping is not persisted; keep deterministic chunk fallback.
+                    return f'sayfa/chunk {chunk_index}'
+
+        return f'chunk {chunk_index}'
+    except Exception:
+        return f'chunk {chunk_index}'
 
 def _build_context(
     project_id: int,
@@ -57,6 +116,23 @@ def _build_context(
     doc_hits = RagIndex.search_doc_chunks(project_id, query, limit=5)
     doc_block = ''
     doc_parts = []
+    doc_refs = []
+    doc_ref_seen = set()
+
+    def _add_doc_ref(file_name: str, chunk_index: int, content: str):
+        key = (file_name or '', int(chunk_index or 0))
+        if not key[0] or key in doc_ref_seen:
+            return
+        doc_ref_seen.add(key)
+        location = _locate_doc_reference(project_id, key[0], key[1], content or '')
+        doc_refs.append({
+            'type': 'document',
+            'id': None,
+            'name': key[0],
+            'file': key[0],
+            'chunk_index': key[1],
+            'location': location,
+        })
 
     # If user explicitly selected documents/chunks from RAG results, prioritize them.
     selected_doc_parts = []
@@ -76,6 +152,7 @@ def _build_context(
             if rows:
                 r = rows[0]
                 selected_doc_parts.append(f"[{r[0]}#{r[1]}]\n{r[2]}")
+                _add_doc_ref(r[0], r[1], r[2])
                 continue
 
             # Fallback: if chunk not found, use project_documents extracted_text.
@@ -91,6 +168,7 @@ def _build_context(
                 excerpt = (dr[1] or '')[:1400]
                 if excerpt:
                     selected_doc_parts.append(f"[{dr[0]}#0]\n{excerpt}")
+                    _add_doc_ref(dr[0], 0, excerpt)
         except Exception:
             continue
 
@@ -103,11 +181,13 @@ def _build_context(
                 formatted = f"[{hit['file_name']}#{hit['chunk_index']}]\n{hit['content']}"
                 if formatted not in doc_parts:
                     doc_parts.append(formatted)
+                    _add_doc_ref(hit.get('file_name') or '', hit.get('chunk_index') or 0, hit.get('content') or '')
 
     if not doc_parts:
         fallback_hits = RagIndex.search_doc_chunks_fallback(project_id, query, limit=3)
         for hit in fallback_hits:
             doc_parts.append(f"[{hit['file_name']}#{hit['chunk_index']}]\n{hit['content']}")
+            _add_doc_ref(hit.get('file_name') or '', hit.get('chunk_index') or 0, hit.get('content') or '')
 
     if doc_parts:
         doc_block = '\n\n'.join(doc_parts[:3])
@@ -127,6 +207,7 @@ def _build_context(
         "==========================="
         + (("\n\n=== PROJE DOKÜMANLARI ===\n" + doc_block + "\n========================") if doc_block else '')
     )
+    refs.extend(doc_refs)
     return system_prompt, context_block, refs
 
 

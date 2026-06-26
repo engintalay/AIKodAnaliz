@@ -264,6 +264,23 @@ class Database:
                 )
             ''')
 
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS doc_chunks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    file_name TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    embedding TEXT,
+                    model_name TEXT,
+                    page_start INTEGER,
+                    page_end INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                    UNIQUE(project_id, file_name, chunk_index)
+                )
+            ''')
+
             # FTS5 for document search (GELIS8)
             cursor.execute('''
                 CREATE VIRTUAL TABLE IF NOT EXISTS fts_documents
@@ -287,6 +304,13 @@ class Database:
             func_columns = {row[1] for row in cursor.fetchall()}
             if 'updated_at' not in func_columns:
                 cursor.execute('ALTER TABLE functions ADD COLUMN updated_at TIMESTAMP')
+
+            cursor.execute("PRAGMA table_info(doc_chunks)")
+            doc_chunk_columns = {row[1] for row in cursor.fetchall()}
+            if 'page_start' not in doc_chunk_columns:
+                cursor.execute('ALTER TABLE doc_chunks ADD COLUMN page_start INTEGER')
+            if 'page_end' not in doc_chunk_columns:
+                cursor.execute('ALTER TABLE doc_chunks ADD COLUMN page_end INTEGER')
             
             # Create demo users if not exist
             cursor.execute("SELECT COUNT(*) FROM users WHERE username = ?", ("admin",))
