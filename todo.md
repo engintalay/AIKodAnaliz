@@ -39,6 +39,6 @@
 - [✅] **GELIS17:** Tüm projeler üzerinden soru sorulabilen bir masa üstü uygulaması hazırlanması.
 - [✅] **GELIS18:** Projelerin teker teker ya da topluca export edilebilmesi ve export edilen projenin import edilebilmesi sağlanmalı. Amaç burada daha önce analizi yapılmış bir projeyi başka bir yere taşıyabilmek. 
 - [✅] **GELIS19:** llama.cpp için destek ekle. (Provider seçimi, bağlantı testi, ayarlar katmanı, embedding-capability fallback, provider-genel dokümantasyon, env-driven provider default ve provider-neutral import katmanı eklendi; tam entegrasyon devam ediyor)
-
+- [❌] **GELIS20:** Sohbet alanında Kaynaklar arasındaki dokumanları mümkünse ilgili sayfalarını açacak şekilde linklerini güncelle.
 Referanslar
 [❌] [✅]
