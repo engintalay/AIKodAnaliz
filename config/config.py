@@ -20,10 +20,12 @@ FLASK_PORT = int(os.getenv('FLASK_PORT', '5000'))
 FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'true').lower() == 'true'
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-# ---- LM Studio ----
+# ---- Local AI provider defaults ----
+AI_PROVIDER = os.getenv('AI_PROVIDER', 'lmstudio').strip().lower()
 _lm_host = os.getenv('LMSTUDIO_HOST', 'localhost')
 _lm_port = os.getenv('LMSTUDIO_PORT', '1234')
-# LMSTUDIO_API_URL manuel belirtilmişse onu kullan; yoksa host+port'tan oluştur
+# LMSTUDIO_API_URL manuel belirtilmişse onu kullan; yoksa host+port'tan oluştur.
+# Backward compatibility için mevcut env adları korunur.
 LMSTUDIO_API_URL = os.getenv('LMSTUDIO_API_URL', f'http://{_lm_host}:{_lm_port}/v1')
 LMSTUDIO_DEFAULT_MODEL = os.getenv('LMSTUDIO_DEFAULT_MODEL', 'local-model')
 LMSTUDIO_MAX_TOKENS = int(os.getenv('LMSTUDIO_MAX_TOKENS', '1000'))

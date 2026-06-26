@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
+from backend.ai_client import LocalAIClient
 from backend.database import db
 from backend.analyzers.advanced_analyzer import AdvancedCodeAnalyzer
-from backend.lmstudio_client import LMStudioClient
 from backend.progress_tracker import progress_tracker
 from backend.logger import logger, log_analysis, log_ai_call, log_error, log_audit, log_file_analysis_start, log_file_analysis_complete
 from backend.permission_manager import get_user_from_session
@@ -39,7 +39,7 @@ def _is_ai_error_response(summary_text):
     text = str(summary_text).strip()
     return (
         text.startswith('Error:')
-        or 'LMStudio returned 400' in text
+        or 'returned 400' in text
         or text.startswith('⚠️ AI Analiz Hatası:')
     )
 
@@ -250,10 +250,10 @@ bp = Blueprint('analysis', __name__, url_prefix='/api/analysis')
 
 @bp.route('/test-connection', methods=['GET'])
 def test_lmstudio_connection():
-    """Test LMStudio connection"""
+    """Test active AI provider connection."""
     try:
         user = get_user_from_session()
-        client = LMStudioClient(user_id=user['id'] if user else None)
+        client = LocalAIClient(user_id=user['id'] if user else None)
         status = client.test_connection()
         return jsonify(status), 200 if status['status'] == 'connected' else 503
     except Exception as e:
@@ -773,7 +773,7 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
     
     Args:
         function_id: Function ID to analyze
-        client: LMStudioClient instance
+        client: LocalAIClient instance
         visited: Set of already processed function IDs (prevents infinite recursion)
         depth: Current recursion depth (limit to prevent stack overflow)
         task_id: Optional task ID for progress tracking
@@ -924,7 +924,7 @@ def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, t
         )
         progress_tracker.update(
             task_id,
-            step=f"LMStudio'ya gönderiliyor: {qualified_func_name}",
+            step=f"AI sunucusuna gönderiliyor: {qualified_func_name}",
             detail=(
                 f"🤖 AI özeti üretiliyor: {qualified_func_name} "
                 f"({len(dependency_summaries)} bağımlılık, kod modu: {code_mode})"
@@ -1000,7 +1000,7 @@ def _generate_class_summary(class_func, client, task_id, temperature, top_p, max
     
     Args:
         class_func: Class function record from database
-        client: LMStudioClient instance
+        client: LocalAIClient instance
         task_id: Optional task ID for progress tracking
         temperature: Model temperature
         top_p: Top-p sampling
@@ -1159,27 +1159,27 @@ def get_ai_summary(function_id):
                 task_id,
                 progress=5,
                 step='Bağlantı kontrol ediliyor...',
-                detail='LMStudio bağlantısı test ediliyor'
+                detail='AI sunucu bağlantısı test ediliyor'
             )
         
-        # Check LMStudio connection first
+        # Check provider connection first
         user = get_user_from_session()
-        client = LMStudioClient(user_id=user['id'] if user else None)
+        client = LocalAIClient(user_id=user['id'] if user else None)
         connection_status = client.test_connection()
         
         if connection_status['status'] != 'connected':
-            # LMStudio not available - return error immediately without timeout
+            # Provider not available - return error immediately without timeout
             summary = (
                 f"⚠️ AI Analiz Hatası: {connection_status['message']}\n\n"
-                f"LMStudio sunucusu çalışmıyor. Lütfen LMStudio'yu başlatmaya çalışın ({client.api_url})"
+                f"AI sunucusuna erişilemiyor. Lütfen sağlayıcıyı kontrol edin ({client.api_url})"
             )
-            log_ai_call(function_id, "LMStudio not connected", error=connection_status['message'])
+            log_ai_call(function_id, "AI provider not connected", error=connection_status['message'])
             
             if task_id:
                 progress_tracker.complete(
                     task_id,
                     success=False,
-                    message=f"LMStudio bağlantı hatası: {connection_status['message']}"
+                    message=f"AI bağlantı hatası: {connection_status['message']}"
                 )
             
             # Get function name for response
@@ -1201,7 +1201,7 @@ def get_ai_summary(function_id):
                 task_id,
                 progress=10,
                 step='Bağımlılıklar kontrol ediliyor...',
-                detail='✓ LMStudio bağlantısı başarılı'
+                detail='✓ AI sunucu bağlantısı başarılı'
             )
         
         # Count total dependencies to process
@@ -1376,20 +1376,20 @@ def bulk_generate_ai_summaries(project_id):
             task_id,
             progress=5,
             step='Bağlantı kontrol ediliyor...',
-            detail='LMStudio bağlantısı test ediliyor'
+            detail='AI sunucu bağlantısı test ediliyor'
         )
         
         user = get_user_from_session()
-        client = LMStudioClient(user_id=user['id'] if user else None)
+        client = LocalAIClient(user_id=user['id'] if user else None)
         connection_status = client.test_connection()
         
         if connection_status['status'] != 'connected':
             progress_tracker.complete(
                 task_id,
                 success=False,
-                message=f"LMStudio bağlantı hatası: {connection_status['message']}"
+                message=f"AI bağlantı hatası: {connection_status['message']}"
             )
-            return jsonify({'error': 'LMStudio is not connected'}), 503
+            return jsonify({'error': 'AI provider is not connected'}), 503
 
         settings = _load_ai_runtime_settings()
         payload = request.get_json(silent=True) or {}
@@ -1453,17 +1453,17 @@ def analyze_file_missing_functions(file_id):
                 detail=f'Toplam {total_funcs} fonksiyon analiz edilecek'
             )
         
-        # Create LMStudio client
+        # Create AI client
         user = get_user_from_session()
-        client = LMStudioClient(user_id=user['id'] if user else None)
+        client = LocalAIClient(user_id=user['id'] if user else None)
         connection_status = client.test_connection()
         
         if connection_status['status'] != 'connected':
             if task_id:
-                progress_tracker.complete(task_id, success=False, message=f"LMStudio bağlantı hatası: {connection_status['message']}")
+                progress_tracker.complete(task_id, success=False, message=f"AI bağlantı hatası: {connection_status['message']}")
             return jsonify({
                 'success': False,
-                'error': f"LMStudio bağlantı hatası: {connection_status['message']}"
+                'error': f"AI bağlantı hatası: {connection_status['message']}"
             }), 503
         
         settings = _load_ai_runtime_settings()
@@ -1647,11 +1647,11 @@ def reanalyze_error_summaries():
             progress_tracker.update(task_id, progress=5, step='Error özetleri yeniden analiz ediliyor...', detail=f'{total} fonksiyon işlenecek')
 
         user = get_user_from_session()
-        client = LMStudioClient(user_id=user['id'] if user else None)
+        client = LocalAIClient(user_id=user['id'] if user else None)
         connection_status = client.test_connection()
         if connection_status['status'] != 'connected':
             if task_id:
-                progress_tracker.complete(task_id, success=False, message=f"LMStudio bağlantı hatası: {connection_status['message']}")
+                progress_tracker.complete(task_id, success=False, message=f"AI bağlantı hatası: {connection_status['message']}")
             return jsonify({'success': False, 'error': connection_status['message']}), 503
 
         settings = _load_ai_runtime_settings()

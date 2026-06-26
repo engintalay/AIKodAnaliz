@@ -13,9 +13,10 @@ from config.config import (
 from backend.database import db
 
 class LMStudioClient:
-    """Client for LMStudio local AI"""
+    """Client for OpenAI-compatible local AI servers (LMStudio, llama.cpp)."""
     
     def __init__(self, user_id=None):
+        self.provider = 'lmstudio'
         self.api_url = LMSTUDIO_API_URL
         self.model = LMSTUDIO_DEFAULT_MODEL
         self.max_tokens = LMSTUDIO_MAX_TOKENS
@@ -40,6 +41,14 @@ class LMStudioClient:
             'total_tokens': 0,
         }
 
+    @property
+    def provider_display(self) -> str:
+        mapping = {
+            'lmstudio': 'LMStudio',
+            'llamacpp': 'llama.cpp',
+        }
+        return mapping.get((self.provider or '').lower(), self.provider or 'AI Server')
+
     def _load_runtime_settings(self, user_id=None):
         """Load dynamic AI settings from database with safe fallbacks."""
         try:
@@ -60,6 +69,8 @@ class LMStudioClient:
 
                 if name == 'api_url' and parsed:
                     self.api_url = str(parsed).strip().rstrip('/')
+                elif name == 'provider' and parsed:
+                    self.provider = str(parsed).strip().lower()
                 elif name == 'model_name' and parsed:
                     self.model = str(parsed).strip()
                 elif name == 'max_tokens':
@@ -93,7 +104,7 @@ class LMStudioClient:
             pass
 
     def _is_invalid_model_response(self, response) -> bool:
-        """Detect remote LMStudio invalid model errors from HTTP response."""
+        """Detect remote provider invalid model errors from HTTP response."""
         if response.status_code != 400:
             return False
         try:
@@ -150,7 +161,7 @@ class LMStudioClient:
         return response
 
     def list_models(self) -> list:
-        """Return model IDs from LMStudio /models endpoint."""
+        """Return model IDs from OpenAI-compatible /models endpoint."""
         response = self.session.get(f"{self.api_url}/models", timeout=10)
         response.raise_for_status()
         payload = response.json()
@@ -163,28 +174,32 @@ class LMStudioClient:
         return model_ids
     
     def test_connection(self) -> dict:
-        """Test connection to LMStudio"""
+        """Test connection to active provider endpoint."""
         try:
             response = self.session.get(f"{self.api_url}/models", timeout=5)
             if response.status_code == 200:
                 return {
                     'status': 'connected',
-                    'message': 'Successfully connected to LMStudio'
+                    'message': f'Successfully connected to {self.provider_display}',
+                    'provider': self.provider,
                 }
             else:
                 return {
                     'status': 'error',
-                    'message': f'LMStudio returned status {response.status_code}'
+                    'message': f'{self.provider_display} returned status {response.status_code}',
+                    'provider': self.provider,
                 }
         except requests.exceptions.ConnectionError:
             return {
                 'status': 'error',
-                'message': f'Cannot connect to LMStudio. Make sure it is running on {self.api_url}'
+                'message': f'Cannot connect to {self.provider_display}. Make sure it is running on {self.api_url}',
+                'provider': self.provider,
             }
         except Exception as e:
             return {
                 'status': 'error',
-                'message': str(e)
+                'message': str(e),
+                'provider': self.provider,
             }
     
     def analyze_function(self, code: str, signature: str, dependency_summaries: list = None, 
@@ -274,7 +289,7 @@ Summary:"""
                     detail = response.json()
                 except Exception:
                     detail = response.text
-                return f"Error: LMStudio returned {response.status_code} - {detail}"
+                return f"Error: {self.provider_display} returned {response.status_code} - {detail}"
         
         except requests.exceptions.Timeout:
             duration_seconds = round(time.perf_counter() - started_at, 3)
@@ -285,7 +300,7 @@ Summary:"""
                 'total_tokens': 0,
             }
             return (
-                f"Error: LMStudio request timed out after {self.request_timeout} seconds. "
+                f"Error: {self.provider_display} request timed out after {self.request_timeout} seconds. "
                 "Model yüklü ve hazır olduğundan emin olun."
             )
         except requests.exceptions.ConnectionError:
@@ -296,7 +311,7 @@ Summary:"""
                 'completion_tokens': 0,
                 'total_tokens': 0,
             }
-            return f"Error: Cannot connect to LMStudio at {self.api_url}. Make sure it's running."
+            return f"Error: Cannot connect to {self.provider_display} at {self.api_url}. Make sure it's running."
         except Exception as e:
             duration_seconds = round(time.perf_counter() - started_at, 3)
             self.last_call_stats = {
@@ -387,11 +402,11 @@ Suggestions:"""
                 data = response.json()
                 return data["choices"][0]["message"]["content"].strip()
             else:
-                return f"Error: LMStudio returned {response.status_code}"
+                return f"Error: {self.provider_display} returned {response.status_code}"
         except requests.exceptions.Timeout:
-            return "Error: LMStudio isteği zaman aşımına uğradı."
+            return f"Error: {self.provider_display} isteği zaman aşımına uğradı."
         except requests.exceptions.ConnectionError:
-            return f"Error: LMStudio bağlantısı kurulamadı ({self.api_url})."
+            return f"Error: {self.provider_display} bağlantısı kurulamadı ({self.api_url})."
         except Exception as e:
             return f"Error: {str(e)}"
 
@@ -445,15 +460,15 @@ Suggestions:"""
                     return
                 
                 if response.status_code != 200:
-                    yield f"\n\n⚠️ LMStudio hatası ({response.status_code}). Sunucuyu kontrol edin."
+                    yield f"\n\n⚠️ {self.provider_display} hatası ({response.status_code}). Sunucuyu kontrol edin."
                     return
 
                 yield from self._parse_sse_stream(response)
 
         except requests.exceptions.Timeout:
-            yield "\n\n⚠️ LMStudio isteği zaman aşımına uğradı. Model yüklü mü kontrol edin."
+            yield f"\n\n⚠️ {self.provider_display} isteği zaman aşımına uğradı. Model yüklü mü kontrol edin."
         except requests.exceptions.ConnectionError:
-            yield f"\n\n⚠️ LMStudio'ya bağlanılamadı ({self.api_url}). Sunucu çalışıyor mu?"
+            yield f"\n\n⚠️ {self.provider_display}'ya bağlanılamadı ({self.api_url}). Sunucu çalışıyor mu?"
         except Exception as e:
             yield f"\n\n⚠️ Hata: {str(e)}"
 

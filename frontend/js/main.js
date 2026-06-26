@@ -2216,7 +2216,7 @@ async function generateAISummary() {
             progressText.textContent = 'AI analiz başlatıldı...';
         }
         if (progressDetails) {
-            progressDetails.innerHTML = '<div class="progress-detail">• LMStudio bağlantısı kontrol ediliyor...</div>';
+            progressDetails.innerHTML = '<div class="progress-detail">• AI sunucu bağlantısı kontrol ediliyor...</div>';
         }
 
         aiPolling = setInterval(poll, 1500);
@@ -2915,6 +2915,7 @@ async function analyzeFileById(fileId, fileName, btn) {
 async function loadSettings() {
     try {
         const apiUrlInput = document.getElementById('apiUrl');
+        const providerSelect = document.getElementById('aiProvider');
         const queueLimitInput = document.getElementById('globalAiQueueLimit');
         let userApiUrl = '';
         let userPreferences = {};
@@ -2947,6 +2948,10 @@ async function loadSettings() {
         // Fallback to global api_url if user-specific value is empty
         if (apiUrlInput && !userApiUrl && settings.api_url !== undefined) {
             apiUrlInput.value = settings.api_url;
+        }
+
+        if (providerSelect) {
+            providerSelect.value = settings.provider || 'lmstudio';
         }
 
         // Load settings into form
@@ -3014,6 +3019,7 @@ async function loadSettings() {
 }
 
 async function saveLMSettings() {
+    const providerValue = (document.getElementById('aiProvider')?.value || 'lmstudio').trim();
     const apiUrlValue = document.getElementById('apiUrl').value.trim();
     const queueLimitValue = parseInt(document.getElementById('globalAiQueueLimit').value, 10);
     const tempValue = parseFloat(document.getElementById('temperature').value);
@@ -3025,6 +3031,7 @@ async function saveLMSettings() {
     const retryCountValue = parseInt(document.getElementById('retryCount').value);
 
     const settings = {
+        provider: { value: providerValue, type: 'string' },
         temperature: { value: tempValue, type: 'float' },
         top_p: { value: topPValue, type: 'float' },
         max_tokens: { value: maxTokensValue, type: 'integer' },
@@ -3040,7 +3047,7 @@ async function saveLMSettings() {
             throw new Error('Lütfen AI Sunucu URL’sini girin');
         }
 
-        const testResult = await testLMConnection(apiUrlValue);
+        const testResult = await testLMConnection(apiUrlValue, providerValue);
         if (testResult.status !== 'connected') {
             throw new Error(`Bağlantı testi başarısız: ${testResult.message || 'Bilinmeyen hata'}`);
         }
@@ -3104,11 +3111,14 @@ async function saveLMSettings() {
 }
 
 async function testLMConnection(apiUrl) {
+    const provider = (document.getElementById('aiProvider')?.value || 'lmstudio').trim();
+    const targetUrl = typeof apiUrl === 'string' ? apiUrl : (document.getElementById('apiUrl')?.value || '').trim();
+
     try {
-        const response = await fetch(`${API_URL}/ai-settings/lmstudio/test`, {
+        const response = await fetch(`${API_URL}/ai-settings/provider/test`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ api_url: apiUrl })
+            body: JSON.stringify({ api_url: targetUrl, provider })
         });
         const result = await response.json();
 

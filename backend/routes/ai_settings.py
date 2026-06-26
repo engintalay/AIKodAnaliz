@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify
+from backend.ai_client import LocalAIClient
 from backend.database import db
 from backend.permission_manager import get_user_from_session
 
@@ -56,21 +57,25 @@ def update_setting(setting_name):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/lmstudio/test', methods=['POST'])
-def test_lmstudio():
-    """Test LMStudio connection.
+@bp.route('/provider/test', methods=['POST'])
+def test_provider_connection():
+    """Test provider connection.
 
     Optional request JSON:
-    { "api_url": "http://..." }
+    { "api_url": "http://...", "provider": "lmstudio|llamacpp" }
 
     If an api_url is provided, test it without saving it to the DB.
     """
     try:
         data = request.get_json(silent=True) or {}
         api_url = (data.get('api_url') or '').strip().rstrip('/')
+        provider = (data.get('provider') or '').strip().lower()
 
-        from backend.lmstudio_client import LMStudioClient
         user = get_user_from_session()
-        client = LMStudioClient(user_id=user['id'] if user else None)
+        client = LocalAIClient(user_id=user['id'] if user else None)
+
+        if provider:
+            client.provider = provider
 
         if api_url:
             client.api_url = api_url

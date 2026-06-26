@@ -1,7 +1,7 @@
 import sqlite3
 import os
 from datetime import datetime
-from config.config import DATABASE_PATH
+from config.config import DATABASE_PATH, AI_PROVIDER, LMSTUDIO_API_URL
 
 class Database:
     def __init__(self):
@@ -344,7 +344,8 @@ class Database:
                 
                 # Initialize AI settings with default values
                 default_settings = [
-                    ('api_url', 'http://localhost:1234/v1', 'string'),
+                    ('provider', AI_PROVIDER or 'lmstudio', 'string'),
+                    ('api_url', LMSTUDIO_API_URL or 'http://localhost:1234/v1', 'string'),
                     ('temperature', '0.7', 'float'),
                     ('top_p', '0.9', 'float'),
                     ('max_tokens', '1000', 'integer'),
@@ -358,6 +359,17 @@ class Database:
                         INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)
                         VALUES (?, ?, ?)
                     ''', (setting_name, setting_value, data_type))
+
+            # Ensure provider setting exists for existing databases too.
+            cursor.execute('''
+                INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)
+                VALUES (?, ?, ?)
+            ''', ('provider', AI_PROVIDER or 'lmstudio', 'string'))
+
+            cursor.execute('''
+                INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)
+                VALUES (?, ?, ?)
+            ''', ('api_url', LMSTUDIO_API_URL or 'http://localhost:1234/v1', 'string'))
             
             conn.commit()
     

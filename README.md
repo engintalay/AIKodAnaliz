@@ -13,7 +13,7 @@ Eski projeyi yeni teknolojiye dönüştürmek için kapsamlı dokümantasyon sa�
 - ✅ **Tekrar Analiz**: Projeleri yeniden analiz edebilme (re-analysis)
 
 ### 🤖 Yapay Zeka
-- ✅ **LMStudio Entegrasyonu**: Lokal AI modeli desteği (localhost:1234)
+- ✅ **Lokal AI Provider Desteği**: LMStudio ve llama.cpp ile OpenAI-compatible entegrasyon
 - ✅ **Recursive AI Summary**: Alt fonksiyonların özetleriyle context-aware analiz
 - ✅ **Otomatik Bağımlılık Özeti**: Çağrılan fonksiyonlar önce özetlenir
 - ✅ **Türkçe Özet**: Tamamen Türkçe AI yanıtları (300s timeout)
@@ -45,7 +45,7 @@ Eski projeyi yeni teknolojiye dönüştürmek için kapsamlı dokümantasyon sa�
 
 ### Gereksinimler
 - **Python 3.8+** (Test edildi: Python 3.14.3)
-- **LMStudio** (http://localhost:1234) - Lokal AI modeli için
+- **Lokal AI Provider** - LMStudio veya llama.cpp tabanli OpenAI-compatible sunucu
 - **Git** (Git repository import için - opsiyonel)
 - **SQLite 3** (Python ile birlikte gelir)
 
@@ -92,12 +92,16 @@ Docker kullanmayı tercih ediyorsanız, detaylı bilgi için [DOCKER.md](DOCKER.
 docker-compose up -d
 ```
 
-### LMStudio Kurulumu
+### AI Provider Kurulumu
 
-1. **LMStudio İndir**: https://lmstudio.ai
-2. **Model Yükle**: Ayarlar → Models → İstediğiniz modeli indirin (örn: Mistral, Llama)
-3. **Server Başlat**: Local Server → Start Server (Port: 1234)
+1. **Provider Seçin**: LMStudio veya llama.cpp kullanın
+2. **Model Hazırlayın**: Sohbet modeli yükleyin veya başlatın
+3. **OpenAI-compatible Server Başlatın**: Varsayılan örnek adres `http://localhost:1234/v1`
 4. **Test Et**: AIKodAnaliz'de Ayarlar → Bağlantı Test
+
+Örnekler:
+- **LMStudio**: https://lmstudio.ai üzerinden model indirip Local Server başlatın
+- **llama.cpp**: OpenAI-compatible server modunda çalıştırın ve API URL'ini ayarlara girin
 
 **Sorun mu yaşıyorsunuz?** Proxy ayarlarınızı kontrol edin. Uygulama otomatik olarak proxy'yi bypass eder.
 
@@ -108,7 +112,7 @@ AIKodAnaliz/
 ├── backend/
 │   ├── app.py                      # Flask ana uygulaması
 │   ├── database.py                 # SQLite bağlantısı (WAL mode)
-│   ├── lmstudio_client.py          # AI entegrasyonu (proxy-free)
+│   ├── lmstudio_client.py          # OpenAI-compatible AI entegrasyonu (proxy-free)
 │   ├── logger.py                   # Merkezi logging sistemi
 │   ├── progress_tracker.py         # Real-time progress tracking
 │   ├── analyzers/
@@ -118,7 +122,7 @@ AIKodAnaliz/
 │       ├── project.py              # Proje yönetimi (upload/import/delete)
 │       ├── analysis.py             # Kod analizi (recursive AI summary)
 │       ├── user.py                 # Kullanıcı ve işaretler
-│       ├── ai_settings.py          # LMStudio ayarları
+│       ├── ai_settings.py          # AI provider ayarları
 │       └── diagram.py              # Diyagram verileri (entry points)
 ├── frontend/
 │   ├── index.html                  # Ana sayfa (modal, search, ESC support)
@@ -158,7 +162,7 @@ AIKodAnaliz/
 - `PUT /api/analysis/function/<id>/summary` - Manuel özet güncelle
 - `GET /api/analysis/project/<id>/functions` - Proje fonksiyonları
 - `GET /api/analysis/dependencies/<id>` - Fonksiyon bağlantıları
-- `GET /api/analysis/test-connection` - LMStudio bağlantı testi
+- `GET /api/analysis/test-connection` - AI provider bağlantı testi
 
 ### Kullanıcılar & İşaretler
 - `POST /api/users/register` - Yeni kullanıcı
@@ -170,18 +174,19 @@ AIKodAnaliz/
 ### AI Ayarları
 - `GET /api/ai-settings` - Tüm ayarlar
 - `PUT /api/ai-settings/<setting>` - Ayar güncelle (temperature, max_tokens, etc.)
-- `POST /api/ai-settings/lmstudio/test` - Bağlantı testi
+- `POST /api/ai-settings/provider/test` - Bağlantı testi
+- `POST /api/ai-settings/lmstudio/test` - Geriye uyumluluk için eski bağlantı testi route'u
 
 ### Diyagram
 - `GET /api/diagram/project/<id>` - Diyagram verileri (nodes/edges, entry points)
 - `POST /api/diagram/export/png` - PNG olarak dışa aktar
 
-## LMStudio Ayarı
+## AI Provider Ayarı
 
-1. LMStudio yükleyin: https://lmstudio.ai
-2. Bir model yükleyin
-3. Sunucu başlatın (varsayılan: http://localhost:1234)
-4. Ayarlar sekmesinden **Sıcaklık**, **Top P**, **Max Tokens** vb. yapılandırın
+1. Ayarlar ekranında provider seçin: `LMStudio` veya `llama.cpp`
+2. Bir sohbet modeli hazırlayın
+3. Sunucu URL'sini girin (örnek: `http://localhost:1234/v1`)
+4. Bağlantıyı test edin ve ardından **Sıcaklık**, **Top P**, **Max Tokens** vb. yapılandırın
 
 ## 💾 Veritabanı Şeması
 
@@ -193,7 +198,7 @@ AIKodAnaliz/
 - **entry_points**: Başlangıç noktaları (@Service, @Controller, main methods)
 - **user_marks**: Kullanıcı işaretleri/yorumları
 - **version_history**: Kod sürüm geçmişi
-- **ai_settings**: LMStudio yapılandırması (temperature, max_tokens, timeout)
+- **ai_settings**: AI provider yapılandırması (provider, api_url, temperature, max_tokens, timeout)
 
 ### SQLite Optimizasyonları
 - **WAL Mode**: Concurrent read/write desteği
@@ -233,7 +238,7 @@ AIKodAnaliz/
 User: "🤖 AI Özeti Al" butonuna basar
 
 Progress Tracking:
-├─ [0%] LMStudio bağlantısı kontrol ediliyor...
+├─ [0%] AI sunucu bağlantısı kontrol ediliyor...
 ├─ [10%] ✓ Bağlantı başarılı
 ├─ [15%] Toplam 3 fonksiyon özetlenecek
 │
@@ -355,7 +360,7 @@ open coverage_html/index.html  # Tarayıcıda aç
 ## Sorunlar & Destek
 
 Sorunlarla karşılaştığınızda;
-1. LMStudio'un çalıştığını kontrol edin
+1. AI provider sunucusunun çalıştığını kontrol edin
 2. Ayarlar > Bağlantı Test Et'i tıklayın
 3. Hata mesajını kontrol edin
 

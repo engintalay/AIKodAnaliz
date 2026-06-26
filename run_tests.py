@@ -117,7 +117,7 @@ def main():
         print("✅ TÜM TESTLER BAŞARILI")
         print("="*50)
         print("\n💡 Sonraki Adımlar:")
-        print("1. LMStudio'yu başlatın (http://localhost:1234)")
+        print("1. OpenAI-compatible AI provider'ı başlatın (örn. LMStudio veya llama.cpp) [http://localhost:1234/v1]")
         print("2. Uygulamayı başlatın: ./start.sh")
         print("3. Tarayıcıda açın: http://localhost:5000")
         

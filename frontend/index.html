@@ -435,7 +435,14 @@
                 <h2>Ayarlar</h2>
                 <div class="settings-container">
                     <div class="settings-group">
-                        <h3>LMStudio Ayarları</h3>
+                        <h3>AI Sunucu Ayarları</h3>
+                        <div class="setting-item">
+                            <label>Provider:</label>
+                            <select id="aiProvider">
+                                <option value="lmstudio">LMStudio</option>
+                                <option value="llamacpp">llama.cpp</option>
+                            </select>
+                        </div>
                         <div class="setting-item">
                             <label>API URL (Kullanıcıya Özel):</label>
                             <input type="text" id="apiUrl" placeholder="http://localhost:1234/v1">

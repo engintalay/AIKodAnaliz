@@ -3,7 +3,7 @@ import json
 import re
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 from backend.database import db
-from backend.lmstudio_client import LMStudioClient
+from backend.ai_client import LocalAIClient
 from backend.permission_manager import get_user_from_session, check_project_access
 from backend.logger import logger, log_audit
 from backend.rag_index import RagIndex
@@ -267,7 +267,7 @@ def chat_with_project(project_id):
         import re as _re
 
         try:
-            client = LMStudioClient(user_id=user['id'] if user else None)
+            client = LocalAIClient(user_id=user['id'] if user else None)
 
             # Send reference functions list first so the frontend can display links
             yield f"event:refs\ndata:{refs_json}\n\n"

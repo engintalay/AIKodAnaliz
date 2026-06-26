@@ -2,22 +2,122 @@
 
 Two-layer retrieval:
   1. FTS5  — Fast BM25-ranked full-text search (keyword-level)
-  2. Embedding (optional) — Cosine-similarity over stored float vectors
-                             generated via LMStudio /v1/embeddings
+    2. Embedding (optional) — Cosine-similarity over stored float vectors
+                                                         generated via OpenAI-compatible /v1/embeddings
 """
 import json
 import math
 import time
 import threading
+import re
 from typing import Optional
 
 from backend.database import db
 from backend.logger import logger
 from config.config import LMSTUDIO_API_URL
 
-# Embedding model to use (must be loaded in LMStudio)
+# Embedding model to use (must be available on active provider)
 EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
 EMBEDDING_DIM = 768          # nomic-embed-text-v1.5 output dim
+
+# Runtime cache for AI provider settings and embedding capability detection.
+_RUNTIME_SETTINGS_CACHE = {
+    'expires_at': 0.0,
+    'value': None,
+}
+_EMBEDDING_CAPABILITY_CACHE = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def _get_runtime_ai_settings() -> dict:
+    """Resolve provider + API URL from ai_settings with a short-lived cache."""
+    now = time.time()
+    with _CACHE_LOCK:
+        cached = _RUNTIME_SETTINGS_CACHE.get('value')
+        if cached and _RUNTIME_SETTINGS_CACHE.get('expires_at', 0) > now:
+            return dict(cached)
+
+    cfg = {
+        'provider': 'lmstudio',
+        'api_url': (LMSTUDIO_API_URL or 'http://localhost:1234/v1').rstrip('/'),
+    }
+    try:
+        rows = db.execute_query(
+            '''SELECT setting_name, setting_value
+               FROM ai_settings
+               WHERE setting_name IN ('provider', 'api_url')'''
+        )
+        for row in rows or []:
+            payload = dict(row)
+            name = payload.get('setting_name')
+            value = (payload.get('setting_value') or '').strip()
+            if name == 'provider' and value:
+                cfg['provider'] = value.lower()
+            elif name == 'api_url' and value:
+                cfg['api_url'] = value.rstrip('/')
+    except Exception as e:
+        logger.debug(f"Runtime AI settings fallback used: {e}")
+
+    with _CACHE_LOCK:
+        _RUNTIME_SETTINGS_CACHE['value'] = dict(cfg)
+        _RUNTIME_SETTINGS_CACHE['expires_at'] = now + 5.0
+    return cfg
+
+
+def _mark_embedding_capability(api_url: str, model: str, available: bool):
+    ttl = 300.0 if available else 180.0
+    with _CACHE_LOCK:
+        _EMBEDDING_CAPABILITY_CACHE[(api_url, model)] = {
+            'available': available,
+            'expires_at': time.time() + ttl,
+        }
+
+
+def _is_embedding_temporarily_disabled(api_url: str, model: str) -> bool:
+    with _CACHE_LOCK:
+        info = _EMBEDDING_CAPABILITY_CACHE.get((api_url, model))
+        if not info:
+            return False
+        if info.get('expires_at', 0) <= time.time():
+            return False
+        return not bool(info.get('available'))
+
+
+def _build_fts_match_query(raw_query: str) -> Optional[str]:
+    """Build a safe FTS5 MATCH expression from free-form user input.
+
+    Removes problematic symbols (e.g. '?', ':', operators) and emits
+    an AND-joined quoted token query to avoid FTS syntax errors.
+    """
+    q = (raw_query or '').strip()
+    if not q:
+        return None
+
+    parts = []
+    seen = set()
+
+    # Keep quoted phrases as phrase terms after sanitization.
+    for phrase in re.findall(r'"([^"]+)"', q):
+        clean_phrase = ' '.join(re.findall(r'\w+', phrase, flags=re.UNICODE)).strip()
+        if clean_phrase and clean_phrase not in seen:
+            seen.add(clean_phrase)
+            parts.append(f'"{clean_phrase}"')
+
+    # Remove phrases from the remaining query, then tokenize.
+    rest = re.sub(r'"[^"]+"', ' ', q)
+    for token in re.findall(r'\w+', rest, flags=re.UNICODE):
+        t = token.strip()
+        if len(t) < 2:
+            continue
+        if t in seen:
+            continue
+        seen.add(t)
+        parts.append(f'"{t}"')
+
+    if not parts:
+        return None
+
+    return ' AND '.join(parts[:10])
 
 # ------------------------------------------------------------------
 # Cosine similarity (pure-Python, no numpy dependency)
@@ -42,21 +142,36 @@ def cosine_similarity(a: list, b: list) -> float:
 # ------------------------------------------------------------------
 
 def _get_embedding(text: str, session=None) -> Optional[list]:
-    """Call LMStudio /v1/embeddings and return float list or None."""
+    """Call OpenAI-compatible /embeddings and return float list or None."""
     import requests
+    cfg = _get_runtime_ai_settings()
+    api_url = (cfg.get('api_url') or LMSTUDIO_API_URL or '').rstrip('/')
+
+    if _is_embedding_temporarily_disabled(api_url, EMBEDDING_MODEL):
+        return None
+
     sess = session or requests.Session()
     try:
         resp = sess.post(
-            f"{LMSTUDIO_API_URL}/embeddings",
+            f"{api_url}/embeddings",
             headers={"Content-Type": "application/json"},
             json={"model": EMBEDDING_MODEL, "input": text},
             timeout=30,
         )
         if resp.status_code == 200:
             data = resp.json()
+            _mark_embedding_capability(api_url, EMBEDDING_MODEL, True)
             return data["data"][0]["embedding"]
         else:
-            logger.warning(f"Embedding API returned {resp.status_code}: {resp.text[:120]}")
+            # Some provider setups do not expose /embeddings at all.
+            if resp.status_code in (400, 404, 405, 501):
+                _mark_embedding_capability(api_url, EMBEDDING_MODEL, False)
+                logger.info(
+                    f"Embeddings unavailable on {api_url} (status {resp.status_code}); "
+                    "semantic layer temporarily disabled, lexical fallback will be used."
+                )
+            else:
+                logger.warning(f"Embedding API returned {resp.status_code}: {resp.text[:120]}")
             return None
     except Exception as e:
         logger.warning(f"Embedding request failed: {e}")
@@ -314,18 +429,19 @@ class RagIndex:
                 (project_id,)
             )
             if fts_count and fts_count[0][0] > 0:
-                escaped = query.replace('"', '""')
-                fts_rows = db.execute_query(
-                    '''SELECT function_id, bm25(fts_functions) as score
-                       FROM fts_functions
-                       WHERE fts_functions MATCH ? AND function_id IN (
-                           SELECT id FROM functions WHERE project_id = ?
-                       )
-                       ORDER BY score LIMIT ?''',
-                    (escaped, project_id, limit * 2)
-                )
-                for row in fts_rows:
-                    fts_hits[row[0]] = row[1]
+                fts_query = _build_fts_match_query(query)
+                if fts_query:
+                    fts_rows = db.execute_query(
+                        '''SELECT function_id, bm25(fts_functions) as score
+                           FROM fts_functions
+                           WHERE fts_functions MATCH ? AND function_id IN (
+                               SELECT id FROM functions WHERE project_id = ?
+                           )
+                           ORDER BY score LIMIT ?''',
+                        (fts_query, project_id, limit * 2)
+                    )
+                    for row in fts_rows:
+                        fts_hits[row[0]] = row[1]
         except Exception as e:
             logger.warning(f"FTS5 search error: {e}")
 

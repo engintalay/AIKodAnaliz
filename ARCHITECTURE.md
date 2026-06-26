@@ -13,7 +13,7 @@
 │                   Backend (Flask Server)                     │
 │  ├── Project Management (upload, delete, list)             │
 │  ├── Code Analysis (detect functions, entry points)        │
-│  ├── AI Integration (LMStudio HTTP API)                   │
+│  ├── AI Integration (OpenAI-compatible local HTTP API)    │
 │  ├── User Management (multi-user with permissions)        │
 │  ├── Diagram Generation (node/edge data)                 │
 │  └── Settings Management (AI params, DB config)           │
@@ -68,7 +68,7 @@
 
 3. **lmstudio_client.py** - AI Integration
    - 150 satır
-   - HTTP requests to LMStudio API
+  - HTTP requests to OpenAI-compatible AI APIs
    - Prompt engineering
    - Error handling & timeouts
    - Token management
@@ -104,7 +104,8 @@
 4. **routes/ai_settings.py** - 80 satır
    - `GET /api/ai-settings` - Get all settings
    - `PUT /api/ai-settings/<setting>` - Update setting
-   - `POST /api/ai-settings/lmstudio/test` - Connection test
+  - `POST /api/ai-settings/provider/test` - Connection test
+  - `POST /api/ai-settings/lmstudio/test` - Legacy compatibility route
 
 5. **routes/diagram.py** - 60 satır
    - `GET /api/diagram/project/<id>` - Graph data (nodes/edges)

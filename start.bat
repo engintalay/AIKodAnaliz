@@ -117,7 +117,8 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":5000" ^| findstr "LISTENING
 REM Start backend server
 echo [INFO] Starting server...
 echo [INFO] Open in browser: http://localhost:5000
-echo [INFO] Make sure LMStudio is running at http://localhost:1234
+echo [INFO] Make sure an OpenAI-compatible AI provider is running at http://localhost:1234/v1
+echo [INFO] Supported examples: LMStudio, llama.cpp
 
 title AIKodAnaliz Backend
 cd backend

@@ -63,7 +63,8 @@ echo "🧹 ${PORT} portu kontrol ediliyor..."
 fuser -k ${PORT}/tcp 2>/dev/null || true
 
 echo "✅ Sunucu başlatılıyor: http://${HOST}:${PORT}"
-echo "⚠️  LMStudio'nun çalıştığından emin olun: http://${LMSTUDIO_HOST:-localhost}:${LMSTUDIO_PORT:-1234}"
+echo "⚠️  AI provider sunucusunun çalıştığından emin olun: http://${LMSTUDIO_HOST:-localhost}:${LMSTUDIO_PORT:-1234}/v1"
+echo "   Desteklenen örnekler: LMStudio, llama.cpp (OpenAI-compatible server)"
 echo ""
 
 cd backend

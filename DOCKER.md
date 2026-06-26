@@ -5,7 +5,7 @@
 ### Gereksinimler
 - Docker & Docker Compose
 - 4GB RAM
-- 10GB Disk (LMStudio modelleri için)
+- 10GB Disk (lokal AI model cache'i için)
 
 ### Kurulum
 
@@ -19,7 +19,7 @@ docker-compose up
 # 3. Tarayıcıda aç
 # http://localhost:5000
 
-# 4. LMStudio UI'na erişin
+# 4. Varsayılan LMStudio UI'na erişin
 # http://localhost:8000
 ```
 
@@ -47,15 +47,15 @@ python backend/app.py
 
 - **database**: SQLite veritabanı dosyaları
 - **uploads**: Yüklenen proje ZIP dosyaları
-- **lmstudio_models**: LM Studio modelleri cache
+- **lmstudio_models**: Varsayılan Docker örneğinde LMStudio model cache'i
 
 ## Network
 
-- `aikodanaliz-net`: AIKodAnaliz ↔ LMStudio iletişimi
+- `aikodanaliz-net`: AIKodAnaliz ↔ varsayılan AI provider iletişimi
 - Port mapping:
   - 5000: Flask web server
-  - 1234: LMStudio API
-  - 8000: LMStudio Web UI
+  - 1234: OpenAI-compatible AI API
+  - 8000: Varsayılan LMStudio Web UI
 
 ## Environment Variables
 
@@ -72,10 +72,14 @@ Production için öneriler:
 ```yaml
 # docker-compose.prod.yml
 - FLASK_ENV: production
-- LMSTUDIO_URL: https://lmstudio.example.com
+- LMSTUDIO_URL: https://ai-provider.example.com
 - DB_CONNECTION_TYPE: postgresql  # PostgreSQL kullan
 - DEBUG: "False"
 - WORKERS: 4
 ```
+
+## Provider Notu
+
+Mevcut `docker-compose.yml` örneği LMStudio servisi içerir. Uygulama tarafı ise hem `LMStudio` hem `llama.cpp` gibi OpenAI-compatible sunucularla çalışabilir. `llama.cpp` kullanacaksanız provider'ı Ayarlar ekranından seçip uygun `api_url` girmeniz yeterlidir.
 
 ---
