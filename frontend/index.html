@@ -448,6 +448,20 @@
                             <input type="text" id="apiUrl" placeholder="http://localhost:1234/v1">
                         </div>
                         <div class="setting-item">
+                            <label>API Anahtarı (Kullanıcıya Özel):</label>
+                            <input type="password" id="userApiKey" placeholder="Boş bırakılırsa değişmez" autocomplete="new-password">
+                        </div>
+                        <div class="setting-item">
+                            <label>Global API Anahtarı (sohbet sunucusu):</label>
+                            <input type="password" id="globalApiKey" placeholder="Boş bırakılırsa değişmez" autocomplete="new-password">
+                        </div>
+                        <div class="setting-item">
+                            <label>&nbsp;</label>
+                            <label style="font-weight: normal; display: flex; align-items: center; gap: 6px;">
+                                <input type="checkbox" id="clearApiKeys" style="width: auto;"> Kayıtlı API anahtarlarını temizle
+                            </label>
+                        </div>
+                        <div class="setting-item">
                             <label>Sıcaklık (Temperature):</label>
                             <input type="range" id="temperature" min="0" max="1" step="0.1" value="0.7">
                             <span id="temperatureValue">0.7</span>
@@ -486,6 +500,29 @@
                         <button class="btn btn-primary" onclick="saveLMSettings()">Kaydet</button>
                         <button class="btn btn-secondary" onclick="testLMConnection()">Bağlantı Test Et</button>
                         <div id="connectionResult"></div>
+                    </div>
+
+                    <div class="settings-group">
+                        <h3>Embedding (RAG) Ayarları</h3>
+                        <p style="color: #666; font-size: 12px; margin: 0 0 12px 0;">
+                            Embedding modeli/sunucusu sohbet modelinden bağımsız olabilir. URL boşsa sohbet sunucusu kullanılır;
+                            anahtar boşsa ve aynı sunucu kullanılıyorsa sohbet API anahtarı devreye girer (farklı sunucuya sohbet anahtarı gönderilmez).
+                            Model adı değişir ise eksik vektörler bir sonraki "İndeks Oluştur" adımında otomatik yeniden üretilir.
+                        </p>
+                        <div class="setting-item">
+                            <label>Embedding Modeli:</label>
+                            <input type="text" id="embeddingModel" placeholder="text-embedding-nomic-embed-text-v1.5">
+                        </div>
+                        <div class="setting-item">
+                            <label>Embedding API URL (opsiyonel):</label>
+                            <input type="text" id="embeddingApiUrl" placeholder="Boş = sohbet sunucusu">
+                        </div>
+                        <div class="setting-item">
+                            <label>Embedding API Anahtarı:</label>
+                            <input type="password" id="embeddingApiKey" placeholder="Boş bırakılırsa değişmez" autocomplete="new-password">
+                        </div>
+                        <button class="btn btn-secondary" onclick="testEmbedding()">🔌 Embedding Test Et</button>
+                        <div id="embeddingTestResult"></div>
                     </div>
 
                     <div class="settings-group">

@@ -230,12 +230,13 @@ def _build_document_chunks(
 
 def _embed_doc_chunks_async(project_id: int, file_name: str, chunks: list):
     """Generate embeddings for doc_chunks in a background thread."""
-    from backend.rag_index import _get_embedding, EMBEDDING_MODEL
+    from backend.rag_index import _get_embedding, get_embedding_model
 
     def worker():
         import requests as _req
         session = _req.Session()
         session.trust_env = False
+        emb_model = get_embedding_model()
         for idx, chunk in enumerate(chunks):
             try:
                 chunk_text = chunk.get('content') if isinstance(chunk, dict) else chunk
@@ -245,7 +246,7 @@ def _embed_doc_chunks_async(project_id: int, file_name: str, chunks: list):
                     db.execute_update(
                         '''UPDATE doc_chunks SET embedding = ?, model_name = ?
                            WHERE project_id = ? AND file_name = ? AND chunk_index = ?''',
-                        (json.dumps(vec), EMBEDDING_MODEL, project_id, file_name, idx)
+                        (json.dumps(vec), emb_model, project_id, file_name, idx)
                     )
             except Exception as e:
                 logger.warning(f"Doc chunk embed error [{file_name}#{idx}]: {e}")
@@ -275,7 +276,7 @@ def _process_code_file(project_id: int, file_path: str, rel_path: str, file_name
 
 def _process_doc_file(project_id: int, path: str, file_name: str) -> int:
     """Extract text from doc file, store chunks. Returns chunk count."""
-    _, chunks = _build_document_chunks(path, file_name)
+    text, chunks = _build_document_chunks(path, file_name)
     if not chunks:
         return 0
 
@@ -291,6 +292,33 @@ def _process_doc_file(project_id: int, path: str, file_name: str) -> int:
                VALUES (?, ?, ?, ?, ?, ?)''',
             (project_id, file_name, idx, chunk['content'], chunk.get('page_start'), chunk.get('page_end'))
         )
+
+    # GELIS20: Insert or update project_documents table to list and serve the document file later.
+    try:
+        file_type = _ext(file_name)
+        file_size = os.path.getsize(path) if os.path.exists(path) else 0
+        rel_path = os.path.relpath(path, UPLOAD_DIR)
+        
+        exists = db.execute_query(
+            'SELECT id FROM project_documents WHERE project_id = ? AND file_name = ?',
+            (project_id, file_name)
+        )
+        if exists:
+            db.execute_update(
+                '''UPDATE project_documents 
+                   SET file_path = ?, file_size = ?, extracted_text = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE project_id = ? AND file_name = ?''',
+                (rel_path, file_size, text, project_id, file_name)
+            )
+        else:
+            db.execute_insert(
+                '''INSERT INTO project_documents 
+                   (project_id, file_name, file_path, file_type, document_type, file_size, extracted_text, source_folder)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                (project_id, file_name, rel_path, file_type, file_type, file_size, text, 'documents')
+            )
+    except Exception as e:
+        logger.warning(f"Failed to record document metadata in project_documents: {e}")
 
     # Trigger async embedding
     _embed_doc_chunks_async(project_id, file_name, chunks)
@@ -567,4 +595,30 @@ def rebuild_project_docs_rag(project_id):
         }), 200
     except Exception as e:
         logger.error(f"Document RAG rebuild failed for project {project_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/<int:project_id>/docs/file/<filename>', methods=['GET'])
+@check_project_access('read')
+def serve_project_document(project_id, filename):
+    """Serve a project document file securely from UPLOAD_DIR."""
+    from flask import send_from_directory
+    try:
+        rows = db.execute_query(
+            'SELECT file_path FROM project_documents WHERE project_id = ? AND file_name = ?',
+            (project_id, filename)
+        )
+        if not rows:
+            return jsonify({'error': 'Doküman bulunamadı'}), 404
+        
+        file_path = rows[0][0]
+        full_path = os.path.join(UPLOAD_DIR, file_path)
+        if not os.path.exists(full_path):
+            return jsonify({'error': f'Doküman dosyası sunucuda bulunamadı: {file_path}'}), 404
+        
+        dir_name = os.path.dirname(full_path)
+        base_name = os.path.basename(full_path)
+        return send_from_directory(dir_name, base_name)
+    except Exception as e:
+        logger.error(f"Error serving document {filename} for project {project_id}: {e}")
         return jsonify({'error': str(e)}), 500

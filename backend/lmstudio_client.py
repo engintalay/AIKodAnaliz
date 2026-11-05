@@ -9,6 +9,7 @@ from config.config import (
     LMSTUDIO_TOP_P,
     LMSTUDIO_REQUEST_TIMEOUT,
     CONTEXT_LIMIT_TOKENS,
+    AI_API_KEY,
 )
 from backend.database import db
 
@@ -18,6 +19,7 @@ class LMStudioClient:
     def __init__(self, user_id=None):
         self.provider = 'lmstudio'
         self.api_url = LMSTUDIO_API_URL
+        self.api_key = AI_API_KEY
         self.model = LMSTUDIO_DEFAULT_MODEL
         self.max_tokens = LMSTUDIO_MAX_TOKENS
         self.temperature = LMSTUDIO_TEMPERATURE
@@ -34,12 +36,29 @@ class LMStudioClient:
         # Never inherit OS/env proxy settings.
         self.session = requests.Session()
         self.session.trust_env = False
+        self._apply_auth_header()
         self.last_call_stats = {
             'duration_seconds': 0.0,
             'prompt_tokens': 0,
             'completion_tokens': 0,
             'total_tokens': 0,
         }
+
+    def _apply_auth_header(self):
+        """Set (or clear) the Authorization header once for the whole session.
+
+        All chat/embedding/model-list calls share this session, so the API key
+        only needs to be wired here — never at individual call sites.
+        """
+        if self.api_key:
+            self.session.headers['Authorization'] = f'Bearer {self.api_key}'
+        else:
+            self.session.headers.pop('Authorization', None)
+
+    def set_api_key(self, api_key):
+        """Override API key at runtime (used by connection-test flows; not persisted)."""
+        self.api_key = (api_key or '').strip()
+        self._apply_auth_header()
 
     @property
     def provider_display(self) -> str:
@@ -69,6 +88,8 @@ class LMStudioClient:
 
                 if name == 'api_url' and parsed:
                     self.api_url = str(parsed).strip().rstrip('/')
+                elif name == 'api_key':
+                    self.api_key = str(parsed or '').strip()
                 elif name == 'provider' and parsed:
                     self.provider = str(parsed).strip().lower()
                 elif name == 'model_name' and parsed:
@@ -84,21 +105,21 @@ class LMStudioClient:
                 elif name == 'retry_count':
                     self.retry_count = int(parsed)
 
-            # Per-user override for AI server URL
+            # Per-user override for AI server URL (and matching key)
             if user_id is not None:
                 user_rows = db.execute_query(
-                    'SELECT ai_api_url FROM user_settings WHERE user_id = ?',
+                    'SELECT ai_api_url, ai_api_key FROM user_settings WHERE user_id = ?',
                     [user_id]
                 )
                 if user_rows:
                     user_row = dict(user_rows[0])
                     user_api_url = (user_row.get('ai_api_url') or '').strip()
+                    user_api_key = (user_row.get('ai_api_key') or '').strip()
                     if user_api_url:
                         self.api_url = user_api_url.rstrip('/')
-
-                    user_model_name = (user_row.get('ai_model_name') or '').strip()
-                    if user_model_name:
-                        self.model = user_model_name
+                        # Kullanıcı kendi sunucusuna yönlenmişse global anahtar
+                        # ASLA o sunucuya gönderilmez; yalnız kullanıcı anahtarı.
+                        self.api_key = user_api_key
         except Exception:
             # Keep config defaults if DB is unavailable or malformed.
             pass

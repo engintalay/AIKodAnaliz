@@ -372,11 +372,11 @@ def analyze_project(project_id):
         # Snapshot existing summaries and restore by stable key after re-analysis.
         previous_summaries = {}
         summary_rows = db.execute_query(
-            '''SELECT f.function_name, f.function_type, f.signature, f.class_name, f.ai_summary,
+            """SELECT f.function_name, f.function_type, f.signature, f.class_name, f.ai_summary,
                       s.file_path, s.file_name
                FROM functions f
                JOIN source_files s ON f.file_id = s.id
-               WHERE f.project_id = ? AND f.ai_summary IS NOT NULL AND TRIM(f.ai_summary) != ''',
+               WHERE f.project_id = ? AND f.ai_summary IS NOT NULL AND TRIM(f.ai_summary) != ''""",
             (project_id,)
         )
         for row in summary_rows:

@@ -14,11 +14,15 @@ from typing import Optional
 
 from backend.database import db
 from backend.logger import logger
-from config.config import LMSTUDIO_API_URL
+from config.config import (
+    LMSTUDIO_API_URL,
+    AI_API_KEY,
+    EMBEDDING_MODEL as DEFAULT_EMBEDDING_MODEL,
+)
 
-# Embedding model to use (must be available on active provider)
-EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
-EMBEDDING_DIM = 768          # nomic-embed-text-v1.5 output dim
+# Default embedding model (used when ai_settings has no configured value).
+EMBEDDING_MODEL = DEFAULT_EMBEDDING_MODEL
+EMBEDDING_DIM = 768          # nomic-embed-text-v1.5 output dim (informational)
 
 # Runtime cache for AI provider settings and embedding capability detection.
 _RUNTIME_SETTINGS_CACHE = {
@@ -30,7 +34,8 @@ _CACHE_LOCK = threading.Lock()
 
 
 def _get_runtime_ai_settings() -> dict:
-    """Resolve provider + API URL from ai_settings with a short-lived cache."""
+    """Resolve provider/API URL/API keys + embedding config from ai_settings
+    with a short-lived cache."""
     now = time.time()
     with _CACHE_LOCK:
         cached = _RUNTIME_SETTINGS_CACHE.get('value')
@@ -40,21 +45,30 @@ def _get_runtime_ai_settings() -> dict:
     cfg = {
         'provider': 'lmstudio',
         'api_url': (LMSTUDIO_API_URL or 'http://localhost:1234/v1').rstrip('/'),
+        'api_key': AI_API_KEY or '',
+        'embedding_api_url': '',
+        'embedding_model': DEFAULT_EMBEDDING_MODEL,
+        'embedding_api_key': '',
     }
     try:
         rows = db.execute_query(
             '''SELECT setting_name, setting_value
                FROM ai_settings
-               WHERE setting_name IN ('provider', 'api_url')'''
+               WHERE setting_name IN (
+                   'provider', 'api_url', 'api_key',
+                   'embedding_api_url', 'embedding_model', 'embedding_api_key'
+               )'''
         )
         for row in rows or []:
             payload = dict(row)
             name = payload.get('setting_name')
             value = (payload.get('setting_value') or '').strip()
-            if name == 'provider' and value:
-                cfg['provider'] = value.lower()
-            elif name == 'api_url' and value:
-                cfg['api_url'] = value.rstrip('/')
+            if name in ('provider', 'embedding_model') and value:
+                cfg[name] = value.lower() if name == 'provider' else value
+            elif name in ('api_url', 'embedding_api_url') and value:
+                cfg[name] = value.rstrip('/')
+            elif name in ('api_key', 'embedding_api_key'):
+                cfg[name] = value
     except Exception as e:
         logger.debug(f"Runtime AI settings fallback used: {e}")
 
@@ -62,6 +76,46 @@ def _get_runtime_ai_settings() -> dict:
         _RUNTIME_SETTINGS_CACHE['value'] = dict(cfg)
         _RUNTIME_SETTINGS_CACHE['expires_at'] = now + 5.0
     return cfg
+
+
+def _resolve_embedding_config(overrides: Optional[dict] = None) -> dict:
+    """Resolve effective embedding endpoint: {api_url, model, api_key}.
+
+    Rules:
+      - embedding_api_url empty  -> chat provider's api_url is used.
+      - embedding_model empty    -> DEFAULT_EMBEDDING_MODEL is used.
+      - embedding_api_key empty  -> if embedding runs on the SAME server as chat,
+        the chat api_key is reused; on a DIFFERENT server no auth is sent
+        (the chat key is never leaked to another host).
+
+    Optional `overrides` (from the settings-test UI) win over stored settings.
+    """
+    cfg = _get_runtime_ai_settings()
+    overrides = overrides or {}
+
+    chat_url = (cfg.get('api_url') or LMSTUDIO_API_URL or '').rstrip('/')
+    emb_url = (overrides.get('embedding_api_url') or cfg.get('embedding_api_url') or '').strip().rstrip('/')
+    model = (overrides.get('embedding_model') or cfg.get('embedding_model') or DEFAULT_EMBEDDING_MODEL).strip()
+
+    api_key = (overrides.get('embedding_api_key') or cfg.get('embedding_api_key') or '').strip()
+    if not api_key and not emb_url:
+        # Same server as chat -> reuse chat api key.
+        # ('api_key' may be passed by the settings-test UI; otherwise DB value.)
+        api_key = ((overrides.get('api_key') if 'api_key' in overrides else cfg.get('api_key')) or '').strip()
+
+    return {'api_url': emb_url or chat_url, 'model': model, 'api_key': api_key}
+
+
+def get_embedding_model() -> str:
+    """Configured embedding model name (for writers that store model_name)."""
+    return _resolve_embedding_config()['model']
+
+
+def _embedding_headers(api_key: str) -> dict:
+    headers = {'Content-Type': 'application/json'}
+    if api_key:
+        headers['Authorization'] = f'Bearer {api_key}'
+    return headers
 
 
 def _mark_embedding_capability(api_url: str, model: str, available: bool):
@@ -83,11 +137,13 @@ def _is_embedding_temporarily_disabled(api_url: str, model: str) -> bool:
         return not bool(info.get('available'))
 
 
-def _build_fts_match_query(raw_query: str) -> Optional[str]:
+def _build_fts_match_query(raw_query: str, mode: str = 'AND') -> Optional[str]:
     """Build a safe FTS5 MATCH expression from free-form user input.
 
     Removes problematic symbols (e.g. '?', ':', operators) and emits
-    an AND-joined quoted token query to avoid FTS syntax errors.
+    a quoted-token query joined with `mode` ('AND' or 'OR'). AND is
+    precise; OR is the natural-language fallback (bm25 still ranks
+    rare terms first).
     """
     q = (raw_query or '').strip()
     if not q:
@@ -117,6 +173,8 @@ def _build_fts_match_query(raw_query: str) -> Optional[str]:
     if not parts:
         return None
 
+    if mode == 'OR':
+        return ' OR '.join(parts[:10])
     return ' AND '.join(parts[:10])
 
 # ------------------------------------------------------------------
@@ -138,34 +196,51 @@ def cosine_similarity(a: list, b: list) -> float:
     return max(0.0, min(1.0, sim))
 
 # ------------------------------------------------------------------
-# LMStudio embedding call
+# Embedding API call (OpenAI-compatible /v1/embeddings)
 # ------------------------------------------------------------------
 
 def _get_embedding(text: str, session=None) -> Optional[list]:
-    """Call OpenAI-compatible /embeddings and return float list or None."""
-    import requests
-    cfg = _get_runtime_ai_settings()
-    api_url = (cfg.get('api_url') or LMSTUDIO_API_URL or '').rstrip('/')
+    """Call OpenAI-compatible /embeddings and return float list or None.
 
-    if _is_embedding_temporarily_disabled(api_url, EMBEDDING_MODEL):
+    Endpoint/model/key are resolved from ai_settings (embedding can be a
+    separate server from the chat provider).
+    """
+    import requests
+    emb = _resolve_embedding_config()
+    api_url, model, api_key = emb['api_url'], emb['model'], emb['api_key']
+
+    if _is_embedding_temporarily_disabled(api_url, model):
         return None
 
     sess = session or requests.Session()
-    try:
-        resp = sess.post(
-            f"{api_url}/embeddings",
-            headers={"Content-Type": "application/json"},
-            json={"model": EMBEDDING_MODEL, "input": text},
-            timeout=30,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            _mark_embedding_capability(api_url, EMBEDDING_MODEL, True)
-            return data["data"][0]["embedding"]
-        else:
+    body_text = text
+    for attempt in range(3):
+        try:
+            resp = sess.post(
+                f"{api_url}/embeddings",
+                headers=_embedding_headers(api_key),
+                json={"model": model, "input": body_text},
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                _mark_embedding_capability(api_url, model, True)
+                return data["data"][0]["embedding"]
+
+            # Server token/batch limit (e.g. llama.cpp "input ... too large ...
+            # increase the physical batch size"): retry with a shorter text.
+            if resp.status_code == 500 and 'too large' in (resp.text or '').lower() and attempt < 2:
+                shorter = body_text[:max(200, len(body_text) // 2)]
+                if len(shorter) < len(body_text):
+                    logger.info(
+                        f"Embedding input too large for {api_url}; retrying with {len(shorter)} chars."
+                    )
+                    body_text = shorter
+                    continue
+
             # Some provider setups do not expose /embeddings at all.
             if resp.status_code in (400, 404, 405, 501):
-                _mark_embedding_capability(api_url, EMBEDDING_MODEL, False)
+                _mark_embedding_capability(api_url, model, False)
                 logger.info(
                     f"Embeddings unavailable on {api_url} (status {resp.status_code}); "
                     "semantic layer temporarily disabled, lexical fallback will be used."
@@ -173,9 +248,57 @@ def _get_embedding(text: str, session=None) -> Optional[list]:
             else:
                 logger.warning(f"Embedding API returned {resp.status_code}: {resp.text[:120]}")
             return None
+        except Exception as e:
+            logger.warning(f"Embedding request failed: {e}")
+            return None
+    return None
+
+
+def test_embedding_config(overrides: Optional[dict] = None) -> dict:
+    """Try a sample embedding call with the given (or stored) embedding config.
+
+    Returns {available, model, api_url, dim?, latency_ms, status_code?, error?}.
+    Does NOT touch the capability cache — safe to call from a settings test UI.
+    """
+    import requests
+    emb = _resolve_embedding_config(overrides)
+    sess = requests.Session()
+    sess.trust_env = False
+    started = time.time()
+    try:
+        resp = sess.post(
+            f"{emb['api_url']}/embeddings",
+            headers=_embedding_headers(emb['api_key']),
+            json={"model": emb['model'], "input": "aikodanaliz baglanti testi"},
+            timeout=30,
+        )
+        latency = round((time.time() - started) * 1000)
+        if resp.status_code == 200:
+            data = resp.json()
+            vector = data['data'][0]['embedding']
+            return {
+                'available': True,
+                'model': emb['model'],
+                'api_url': emb['api_url'],
+                'dim': len(vector),
+                'latency_ms': latency,
+            }
+        return {
+            'available': False,
+            'model': emb['model'],
+            'api_url': emb['api_url'],
+            'status_code': resp.status_code,
+            'error': (resp.text or '')[:200],
+            'latency_ms': latency,
+        }
     except Exception as e:
-        logger.warning(f"Embedding request failed: {e}")
-        return None
+        return {
+            'available': False,
+            'model': emb['model'],
+            'api_url': emb['api_url'],
+            'error': str(e),
+            'latency_ms': round((time.time() - started) * 1000),
+        }
 
 # ------------------------------------------------------------------
 # RagIndex class
@@ -274,6 +397,9 @@ class RagIndex:
                 session = requests.Session()
                 session.trust_env = False
 
+                # Resolve once per build so model_name stays consistent.
+                emb_model = _resolve_embedding_config()['model']
+
                 # Get functions that have ai_summary (most informative)
                 # Incremental mode: only select rows whose embedding is missing or stale.
                 if force_rebuild:
@@ -302,13 +428,14 @@ class RagIndex:
                                      AND datetime(f.updated_at) > datetime(fe.indexed_at)
                                  )
                              )''',
-                        (project_id, EMBEDDING_MODEL)
+                        (project_id, emb_model)
                     )
                 total = len(rows)
                 with cls._lock:
                     cls._build_progress[project_id]['total'] = total
 
                 done = 0
+                failed = 0
                 for row in rows:
                     func_id = row[0]
                     name = row[1] or ''
@@ -325,17 +452,23 @@ class RagIndex:
                             '''INSERT OR REPLACE INTO function_embeddings
                                (function_id, project_id, embedding, model_name)
                                VALUES (?, ?, ?, ?)''',
-                            (func_id, project_id, json.dumps(embedding), EMBEDDING_MODEL)
+                            (func_id, project_id, json.dumps(embedding), emb_model)
                         )
-                    done += 1
+                        done += 1
+                    else:
+                        failed += 1
                     with cls._lock:
                         cls._build_progress[project_id]['done'] = done
+                        cls._build_progress[project_id]['failed'] = failed
 
                 elapsed = round(time.time() - cls._build_progress[project_id]['started'], 1)
                 with cls._lock:
                     cls._build_progress[project_id]['status'] = 'done'
                     cls._build_progress[project_id]['elapsed'] = elapsed
-                logger.info(f"Embedding build complete: project={project_id}, {done}/{total} in {elapsed}s")
+                logger.info(
+                    f"Embedding build complete: project={project_id}, {done}/{total} saved, "
+                    f"{failed} failed in {elapsed}s"
+                )
 
             except Exception as e:
                 logger.error(f"Embedding build error (project={project_id}): {e}")
@@ -395,11 +528,14 @@ class RagIndex:
             return result
 
         # Step 1: Embedding search (if embeddings exist)
+        # IMPORTANT: only compare vectors produced by the CURRENT embedding model.
+        # Vectors from a different model are not comparable (silently wrong scores).
         embedding_hits = {}  # function_id → score
         try:
+            current_model = get_embedding_model()
             count_rows = db.execute_query(
-                'SELECT COUNT(*) FROM function_embeddings WHERE project_id = ?',
-                (project_id,)
+                'SELECT COUNT(*) FROM function_embeddings WHERE project_id = ? AND model_name = ?',
+                (project_id, current_model)
             )
             embedding_count = count_rows[0][0] if count_rows else 0
 
@@ -407,17 +543,25 @@ class RagIndex:
                 query_vec = _get_embedding(query)
                 if query_vec:
                     stored = db.execute_query(
-                        'SELECT function_id, embedding FROM function_embeddings WHERE project_id = ?',
-                        (project_id,)
+                        'SELECT function_id, embedding FROM function_embeddings WHERE project_id = ? AND model_name = ?',
+                        (project_id, current_model)
                     )
+                    raw_sims = {}
                     for row in stored:
                         fid = row[0]
                         try:
                             vec = json.loads(row[1])
-                            sim = cosine_similarity(query_vec, vec)
-                            embedding_hits[fid] = sim
+                            raw_sims[fid] = cosine_similarity(query_vec, vec)
                         except Exception:
                             pass
+                    if raw_sims:
+                        # Mean-centering: embedding spaces are anisotropic, so
+                        # even unrelated pairs score high (~0.5+). Subtracting
+                        # the query's mean similarity removes that baseline and
+                        # lets truly relevant rows stand out.
+                        mean_sim = sum(raw_sims.values()) / len(raw_sims)
+                        for fid, sim in raw_sims.items():
+                            embedding_hits[fid] = max(0.0, sim - mean_sim)
         except Exception as e:
             logger.warning(f"Embedding search error: {e}")
 
@@ -429,8 +573,13 @@ class RagIndex:
                 (project_id,)
             )
             if fts_count and fts_count[0][0] > 0:
-                fts_query = _build_fts_match_query(query)
-                if fts_query:
+                # AND is precise but fails on natural-language queries
+                # (stopwords etc. never co-occur); fall back to OR where
+                # bm25 still ranks rare terms (e.g. exact method names) first.
+                for mode in ('AND', 'OR'):
+                    fts_query = _build_fts_match_query(query, mode=mode)
+                    if not fts_query:
+                        break
                     fts_rows = db.execute_query(
                         '''SELECT function_id, bm25(fts_functions) as score
                            FROM fts_functions
@@ -440,8 +589,10 @@ class RagIndex:
                            ORDER BY score LIMIT ?''',
                         (fts_query, project_id, limit * 2)
                     )
-                    for row in fts_rows:
-                        fts_hits[row[0]] = row[1]
+                    if fts_rows:
+                        for row in fts_rows:
+                            fts_hits[row[0]] = row[1]
+                        break
         except Exception as e:
             logger.warning(f"FTS5 search error: {e}")
 
@@ -449,11 +600,15 @@ class RagIndex:
         all_ids = set(embedding_hits.keys()) | set(fts_hits.keys())
         score_map = {}
 
+        # Normalize bm25 hits relative to the strongest lexical hit
+        # (raw |bm25| values are small; 1/(1+|bm25|) squashed exact matches
+        # to ~0.1 so lexical hits always lost to vector noise).
+        best_bm25 = min(fts_hits.values()) if fts_hits else 0.0  # most negative = best
+
         def combined_score(fid):
             emb = embedding_hits.get(fid, 0.0)
-            # BM25 scores are negative (more negative = better), normalize to [0,1]
             bm25 = fts_hits.get(fid, 0.0)
-            bm25_norm = 1.0 / (1.0 - bm25) if bm25 < 0 else 0.0
+            bm25_norm = (abs(bm25) / abs(best_bm25)) if bm25 < 0 and best_bm25 < 0 else 0.0
             # Weight: embeddings 60%, FTS5 40%
             s = 0.6 * emb + 0.4 * bm25_norm
             score_map[fid] = s
@@ -498,9 +653,10 @@ class RagIndex:
         """Search doc_chunks embeddings for relevant document passages.
         Returns list of dicts: {file_name, chunk_index, content, score}"""
         try:
+            current_model = get_embedding_model()
             count_rows = db.execute_query(
-                'SELECT COUNT(*) FROM doc_chunks WHERE project_id = ? AND embedding IS NOT NULL',
-                (project_id,)
+                'SELECT COUNT(*) FROM doc_chunks WHERE project_id = ? AND embedding IS NOT NULL AND model_name = ?',
+                (project_id, current_model)
             )
             if not count_rows or count_rows[0][0] == 0:
                 return []
@@ -512,8 +668,8 @@ class RagIndex:
             stored = db.execute_query(
                 '''SELECT file_name, chunk_index, content, embedding, page_start, page_end
                    FROM doc_chunks
-                   WHERE project_id = ? AND embedding IS NOT NULL''',
-                (project_id,)
+                   WHERE project_id = ? AND embedding IS NOT NULL AND model_name = ?''',
+                (project_id, current_model)
             )
             scored = []
             for row in stored:

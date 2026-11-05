@@ -32,6 +32,16 @@ LMSTUDIO_MAX_TOKENS = int(os.getenv('LMSTUDIO_MAX_TOKENS', '1000'))
 LMSTUDIO_TEMPERATURE = float(os.getenv('LMSTUDIO_TEMPERATURE', '0.7'))
 LMSTUDIO_TOP_P = float(os.getenv('LMSTUDIO_TOP_P', '0.9'))
 LMSTUDIO_REQUEST_TIMEOUT = int(os.getenv('LMSTUDIO_REQUEST_TIMEOUT', '900'))
+# OpenAI-compatible sunucu API anahtarı (opsiyonel; boş = auth gönderilmez)
+AI_API_KEY = os.getenv('AI_API_KEY', '').strip()
+
+# ---- Embedding (RAG) ayarları ----
+# Embedding sohbet sağlayıcısından bağımsızlandırılabilir:
+#   EMBEDDING_API_URL boşsa sohbet api_url'i kullanılır.
+#   EMBEDDING_API_KEY boşsa ve ayrı URL yoksa sohbet API anahtarı kullanılır.
+EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'text-embedding-nomic-embed-text-v1.5').strip()
+EMBEDDING_API_URL = os.getenv('EMBEDDING_API_URL', '').strip()
+EMBEDDING_API_KEY = os.getenv('EMBEDDING_API_KEY', '').strip()
 
 # ---- Veritabanı ----
 DB_CONNECTION_TYPE = os.getenv('DB_CONNECTION_TYPE', 'sqlite')

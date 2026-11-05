@@ -14,7 +14,7 @@ AIKodAnaliz'de 3 ana rol vardır ve her rol farklı izinler ile sunulan özellik
 - ✅ **Proje Yönetimi**: Tüm projeleri görebilir, yönetebilir, silebilir
 - ✅ **İzin Yönetimi**: Herhangi bir kullanıcıya herhangi bir projeye erişim verebilir
 - ✅ **AI Özet Yönetimi**: Tüm fonksiyonları özetleyebilir
-- ✅ **Sistem Ayarları**: LMStudio ve veritabanı ayarlarını yapılandırabiliir
+- ✅ **Sistem Ayarları**: AI provider (LMStudio/llama.cpp) ve veritabanı ayarlarını yapılandırabilir
 - ✅ **Veri Dışa Aktarma**: Tüm projeleri ve verileri export edebilir
 
 ### Erişim
@@ -87,13 +87,13 @@ Kullanıcı: analyzer1
 
 1. **Analizci Kullanıcılara İzin**
    - İzin düzeyi ne olursa olsun, **analizci daima salt okuma**
-   - "Tam yetkili" seçeneği seçilse bile, stil okuyabilir
+   - "Tam yetkili" seçeneği seçilse bile, yalnızca okuyabilir
 
 2. **Developer Kullanıcılara İzin**
    - "Salt Okuma" → Salt görüntüleyebilir
    - "Tam Yetkili" → Dosya yükleyebilir, özet oluşturabilir (kendi projesi gibi)
 
-3. **Admin'in Yetneği**
+3. **Admin'in Yetkisi**
    - Herhangi bir kullanıcıya herhangi bir izni verebilir
    - Analizci için de kurallar geçerli
 
@@ -153,8 +153,8 @@ Analizci (10)
 
 ### Esneklik
 - ✅ Dinamik olarak izinler değiştirilebilir
-- ✅ Mehrere roller kombinasyonları desteklenir
-- ✅ Liman kalkımaz derektör kontrolü
+- ✅ Rol + proje-izin kombinasyonları desteklenir (`project_permissions`)
+- ✅ Tüm kontrol backend decorator'larında yapılır (`permission_manager.py`)
 
 ---
 

@@ -124,6 +124,22 @@ def _build_context(
         if not key[0] or key in doc_ref_seen:
             return
         doc_ref_seen.add(key)
+        
+        # GELIS20: Query doc_chunks table to find page_start/page_end of this chunk
+        page_start = None
+        try:
+            chunk_rows = db.execute_query(
+                '''SELECT page_start
+                   FROM doc_chunks
+                   WHERE project_id = ? AND file_name = ? AND chunk_index = ?
+                   LIMIT 1''',
+                (project_id, key[0], key[1])
+            )
+            if chunk_rows and chunk_rows[0][0] is not None:
+                page_start = int(chunk_rows[0][0])
+        except Exception:
+            pass
+
         location = _locate_doc_reference(project_id, key[0], key[1], content or '')
         doc_refs.append({
             'type': 'document',
@@ -132,6 +148,7 @@ def _build_context(
             'file': key[0],
             'chunk_index': key[1],
             'location': location,
+            'page_start': page_start,
         })
 
     # If user explicitly selected documents/chunks from RAG results, prioritize them.

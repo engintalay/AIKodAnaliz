@@ -1,7 +1,15 @@
 import sqlite3
 import os
 from datetime import datetime
-from config.config import DATABASE_PATH, AI_PROVIDER, LMSTUDIO_API_URL
+from config.config import (
+    DATABASE_PATH,
+    AI_PROVIDER,
+    LMSTUDIO_API_URL,
+    AI_API_KEY,
+    EMBEDDING_MODEL as DEFAULT_EMBEDDING_MODEL,
+    EMBEDDING_API_URL,
+    EMBEDDING_API_KEY,
+)
 
 class Database:
     def __init__(self):
@@ -196,6 +204,7 @@ class Database:
                     items_per_page INTEGER DEFAULT 20,
                     default_filter TEXT,
                     ai_api_url TEXT,
+                    ai_api_key TEXT,
                     preferences TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id)
@@ -298,6 +307,8 @@ class Database:
             existing_columns = {row[1] for row in cursor.fetchall()}
             if 'ai_api_url' not in existing_columns:
                 cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_api_url TEXT')
+            if 'ai_api_key' not in existing_columns:
+                cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_api_key TEXT')
             
             # Migration: Add updated_at column to functions table if not exists
             cursor.execute("PRAGMA table_info(functions)")
@@ -346,6 +357,7 @@ class Database:
                 default_settings = [
                     ('provider', AI_PROVIDER or 'lmstudio', 'string'),
                     ('api_url', LMSTUDIO_API_URL or 'http://localhost:1234/v1', 'string'),
+                    ('api_key', AI_API_KEY or '', 'string'),
                     ('temperature', '0.7', 'float'),
                     ('top_p', '0.9', 'float'),
                     ('max_tokens', '1000', 'integer'),
@@ -353,6 +365,9 @@ class Database:
                     ('frequency_penalty', '0', 'float'),
                     ('presence_penalty', '0', 'float'),
                     ('retry_count', '3', 'integer'),
+                    ('embedding_model', DEFAULT_EMBEDDING_MODEL, 'string'),
+                    ('embedding_api_url', EMBEDDING_API_URL or '', 'string'),
+                    ('embedding_api_key', EMBEDDING_API_KEY or '', 'string'),
                 ]
                 for setting_name, setting_value, data_type in default_settings:
                     cursor.execute('''
@@ -370,6 +385,18 @@ class Database:
                 INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)
                 VALUES (?, ?, ?)
             ''', ('api_url', LMSTUDIO_API_URL or 'http://localhost:1234/v1', 'string'))
+
+            # API key + embedding (GELIS23) defaults for existing databases too.
+            for setting_name, setting_value, data_type in [
+                ('api_key', AI_API_KEY or '', 'string'),
+                ('embedding_model', DEFAULT_EMBEDDING_MODEL, 'string'),
+                ('embedding_api_url', EMBEDDING_API_URL or '', 'string'),
+                ('embedding_api_key', EMBEDDING_API_KEY or '', 'string'),
+            ]:
+                cursor.execute('''
+                    INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)
+                    VALUES (?, ?, ?)
+                ''', (setting_name, setting_value, data_type))
             
             conn.commit()
     

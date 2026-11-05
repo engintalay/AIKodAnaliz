@@ -840,6 +840,15 @@ function viewFunctionFromChat(functionId) {
     setTimeout(() => tryScroll(10), 200);
 }
 
+function viewDocumentFromChat(fileName, pageStart) {
+    if (!currentProjectId) return;
+    let url = `${API_URL}/projects/${currentProjectId}/docs/file/${encodeURIComponent(fileName)}`;
+    if (fileName.toLowerCase().endsWith('.pdf') && pageStart) {
+        url += `#page=${pageStart}`;
+    }
+    window.open(url, '_blank');
+}
+
 
 async function sendChatMessage() {
     if (chatStreaming) return;
@@ -968,7 +977,8 @@ async function sendChatMessage() {
                             const label = r.name || r.file || 'Doküman';
                             const shortName = label.split('/').pop();
                             const location = r.location || `chunk ${Number(r.chunk_index || 0)}`;
-                            return `<span class="chat-ref-chip" title="${_escapeHtml(label)}\n${_escapeHtml(location)}">📄 ${_escapeHtml(shortName)} (${_escapeHtml(location)})</span>`;
+                            const pageStart = r.page_start || '';
+                            return `<span class="chat-ref-chip" onclick="viewDocumentFromChat(this.getAttribute('data-filename'), this.getAttribute('data-page'))" data-filename="${_escapeHtml(label)}" data-page="${pageStart}" title="${_escapeHtml(label)}\n${_escapeHtml(location)}">📄 ${_escapeHtml(shortName)} (${_escapeHtml(location)})</span>`;
                         }
 
                         const shortName = (r.name || '').split('.').pop();
@@ -2711,6 +2721,8 @@ function filterFiles() {
         filteredDocs.forEach(doc => {
             const item = document.createElement('div');
             item.className = 'file-item';
+            item.style.cursor = 'pointer';
+            item.onclick = () => viewDocumentFromChat(doc.file_name);
             const nameEl = document.createElement('h4');
             nameEl.textContent = doc.file_name;
             const pathEl = document.createElement('p');
@@ -2939,6 +2951,14 @@ async function loadSettings() {
             if (typeof setGlobalAiQueueLimit === 'function') {
                 setGlobalAiQueueLimit(userPreferences.ai_queue_limit || 2);
             }
+            // GELIS23: show whether a per-user API key already exists (never prefill it)
+            const userKeyInput = document.getElementById('userApiKey');
+            if (userKeyInput) {
+                userKeyInput.value = '';
+                userKeyInput.placeholder = userSettings.ai_api_key_set
+                    ? 'Kayıtlı anahtar var — değişmez, doldurursanız değiştirilir'
+                    : 'Boş bırakılırsa değişmez';
+            }
         }
 
         // Load global AI parameters
@@ -3012,6 +3032,37 @@ async function loadSettings() {
             }
         }
 
+        // GELIS23: Embedding (RAG) settings + API key placeholders (keys are never prefilled)
+        const embeddingModelInput = document.getElementById('embeddingModel');
+        if (embeddingModelInput) {
+            embeddingModelInput.value = settings.embedding_model || '';
+        }
+        const embeddingUrlInput = document.getElementById('embeddingApiUrl');
+        if (embeddingUrlInput) {
+            embeddingUrlInput.value = settings.embedding_api_url || '';
+        }
+        const embeddingKeyInput = document.getElementById('embeddingApiKey');
+        if (embeddingKeyInput) {
+            embeddingKeyInput.value = '';
+            embeddingKeyInput.placeholder = settings.embedding_api_key_set
+                ? 'Kayıtlı anahtar var — değişmez, doldurursanız değiştirilir'
+                : 'Boş bırakılırsa değişmez';
+        }
+        const globalKeyInput = document.getElementById('globalApiKey');
+        if (globalKeyInput) {
+            globalKeyInput.value = '';
+            globalKeyInput.placeholder = settings.api_key_set
+                ? 'Kayıtlı anahtar var — değişmez, doldurursanız değiştirilir'
+                : 'Boş bırakılırsa değişmez';
+        }
+
+        // Baseline for change detection in saveLMSettings (test-before-save only for changes)
+        window._aiEmbeddingBaseline = {
+            model: settings.embedding_model || '',
+            url: settings.embedding_api_url || '',
+            chatApiUrl: apiUrlInput ? apiUrlInput.value.trim() : ''
+        };
+
         console.log('Settings loaded from database:', settings);
     } catch (error) {
         console.error('Ayarlar yükleme hatası:', error);
@@ -3030,6 +3081,14 @@ async function saveLMSettings() {
     const presencePenaltyValue = parseFloat(document.getElementById('presencePenalty').value);
     const retryCountValue = parseInt(document.getElementById('retryCount').value);
 
+    // GELIS23: API keys + embedding fields
+    const userKeyValue = (document.getElementById('userApiKey')?.value || '').trim();
+    const globalKeyValue = (document.getElementById('globalApiKey')?.value || '').trim();
+    const embeddingKeyValue = (document.getElementById('embeddingApiKey')?.value || '').trim();
+    const clearKeys = document.getElementById('clearApiKeys')?.checked === true;
+    const embeddingModelValue = (document.getElementById('embeddingModel')?.value || '').trim();
+    const embeddingUrlValue = (document.getElementById('embeddingApiUrl')?.value || '').trim();
+
     const settings = {
         provider: { value: providerValue, type: 'string' },
         temperature: { value: tempValue, type: 'float' },
@@ -3038,8 +3097,22 @@ async function saveLMSettings() {
         timeout: { value: timeoutValue, type: 'integer' },
         frequency_penalty: { value: frequencyPenaltyValue, type: 'float' },
         presence_penalty: { value: presencePenaltyValue, type: 'float' },
-        retry_count: { value: retryCountValue, type: 'integer' }
+        retry_count: { value: retryCountValue, type: 'integer' },
+        embedding_model: { value: embeddingModelValue, type: 'string' },
+        embedding_api_url: { value: embeddingUrlValue, type: 'string' }
     };
+
+    // API keys are only sent when typed or explicitly cleared (empty = unchanged)
+    if (globalKeyValue) {
+        settings.api_key = { value: globalKeyValue, type: 'string' };
+    } else if (clearKeys) {
+        settings.api_key = { value: '', type: 'string', clear: true };
+    }
+    if (embeddingKeyValue) {
+        settings.embedding_api_key = { value: embeddingKeyValue, type: 'string' };
+    } else if (clearKeys) {
+        settings.embedding_api_key = { value: '', type: 'string', clear: true };
+    }
 
     try {
         // Validate the AI server URL before saving
@@ -3047,9 +3120,27 @@ async function saveLMSettings() {
             throw new Error('Lütfen AI Sunucu URL’sini girin');
         }
 
-        const testResult = await testLMConnection(apiUrlValue, providerValue);
+        const testResult = await testLMConnection(apiUrlValue, providerValue, userKeyValue);
         if (testResult.status !== 'connected') {
             throw new Error(`Bağlantı testi başarısız: ${testResult.message || 'Bilinmeyen hata'}`);
+        }
+
+        // DZT-3: embedding testi yalnız embedding ile ilgili bir ayar değiştiyse koşulur
+        const baseline = window._aiEmbeddingBaseline || {};
+        const embeddingChanged =
+            embeddingModelValue !== (baseline.model || '') ||
+            embeddingUrlValue !== (baseline.url || '') ||
+            embeddingKeyValue.length > 0 ||
+            userKeyValue.length > 0 ||
+            globalKeyValue.length > 0 ||
+            clearKeys ||
+            (!embeddingUrlValue && apiUrlValue !== (baseline.chatApiUrl || apiUrlValue));
+        if (embeddingChanged) {
+            const embResult = await testEmbedding(false);
+            if (!embResult.available) {
+                const detail = embResult.error || embResult.status_code || 'Bilinmeyen hata';
+                throw new Error(`Embedding testi başarısız: ${detail}`);
+            }
         }
 
         console.log('Saving settings:', settings);
@@ -3070,11 +3161,17 @@ async function saveLMSettings() {
             ai_queue_limit: Math.max(1, Math.min(8, queueLimitValue || 2))
         };
 
-        // Save per-user AI server URL
+        // Save per-user AI server URL (+ optional per-user API key)
+        const userSettingsPayload = { ai_api_url: apiUrlValue, preferences: JSON.stringify(nextPreferences) };
+        if (userKeyValue) {
+            userSettingsPayload.ai_api_key = userKeyValue;
+        } else if (clearKeys) {
+            userSettingsPayload.ai_api_key = '';
+        }
         const userSettingsResponse = await fetch(`${API_URL}/users/settings`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ai_api_url: apiUrlValue, preferences: JSON.stringify(nextPreferences) })
+            body: JSON.stringify(userSettingsPayload)
         });
 
         if (!userSettingsResponse.ok) {
@@ -3088,7 +3185,8 @@ async function saveLMSettings() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     value: setting.value,
-                    type: setting.type
+                    type: setting.type,
+                    ...(setting.clear ? { clear: true } : {})
                 })
             });
 
@@ -3103,6 +3201,23 @@ async function saveLMSettings() {
             setGlobalAiQueueLimit(nextPreferences.ai_queue_limit);
         }
 
+        // Reset key inputs + refresh baseline after successful save
+        const keyInputs = ['userApiKey', 'globalApiKey', 'embeddingApiKey'];
+        keyInputs.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        if (clearKeys) {
+            const clearBox = document.getElementById('clearApiKeys');
+            if (clearBox) clearBox.checked = false;
+        }
+        window._aiEmbeddingBaseline = {
+            model: embeddingModelValue,
+            url: embeddingUrlValue,
+            chatApiUrl: apiUrlValue
+        };
+        loadSettings();
+
         showSuccess('Başarılı', 'Ayarlar kaydedildi ve sisteme uygulandı');
     } catch (error) {
         console.error('Ayarlar Kaydetme Hatası:', error);
@@ -3110,15 +3225,19 @@ async function saveLMSettings() {
     }
 }
 
-async function testLMConnection(apiUrl) {
-    const provider = (document.getElementById('aiProvider')?.value || 'lmstudio').trim();
-    const targetUrl = typeof apiUrl === 'string' ? apiUrl : (document.getElementById('apiUrl')?.value || '').trim();
+async function testLMConnection(apiUrl, providerOverride, apiKey) {
+    const provider = (providerOverride || document.getElementById('aiProvider')?.value || 'lmstudio').trim();
+    const targetUrl = (typeof apiUrl === 'string' && apiUrl)
+        ? apiUrl
+        : (document.getElementById('apiUrl')?.value || '').trim();
 
     try {
+        const body = { api_url: targetUrl, provider };
+        if (apiKey) body.api_key = apiKey;
         const response = await fetch(`${API_URL}/ai-settings/provider/test`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ api_url: targetUrl, provider })
+            body: JSON.stringify(body)
         });
         const result = await response.json();
 
@@ -3141,6 +3260,56 @@ async function testLMConnection(apiUrl) {
             resultDiv.className = 'error';
         }
         return { status: 'error', message: error.message || String(error) };
+    }
+}
+
+// GELIS23: Embedding endpoint testi (model/URL/anahtar kombinasyonu).
+// showUi=false modu saveLMSettings test akışı için sessiz çalışır.
+async function testEmbedding(showUi = true) {
+    const payload = {};
+    const model = (document.getElementById('embeddingModel')?.value || '').trim();
+    const url = (document.getElementById('embeddingApiUrl')?.value || '').trim();
+    const embKey = (document.getElementById('embeddingApiKey')?.value || '').trim();
+    const userKey = (document.getElementById('userApiKey')?.value || '').trim();
+    const globalKey = (document.getElementById('globalApiKey')?.value || '').trim();
+
+    if (model) payload.embedding_model = model;
+    if (url) payload.embedding_api_url = url;
+    if (embKey) payload.embedding_api_key = embKey;
+    const chatKey = userKey || globalKey;
+    if (chatKey) payload.api_key = chatKey;
+
+    const resultDiv = document.getElementById('embeddingTestResult');
+    if (showUi && resultDiv) {
+        resultDiv.textContent = '⏳ Embedding test ediliyor...';
+        resultDiv.className = '';
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/ai-settings/embedding/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+
+        if (showUi && resultDiv) {
+            if (result.available) {
+                resultDiv.textContent = `✓ Embedding hazır: ${result.model} · boyut ${result.dim} · ${result.latency_ms} ms`;
+                resultDiv.className = 'success';
+            } else {
+                resultDiv.textContent = `✗ Embedding kullanılamıyor (${result.api_url}): ${result.error || result.status_code || 'bilinmeyen hata'}`;
+                resultDiv.className = 'error';
+            }
+        }
+        return result;
+    } catch (error) {
+        const result = { available: false, error: error.message || String(error) };
+        if (showUi && resultDiv) {
+            resultDiv.textContent = 'Hata: ' + result.error;
+            resultDiv.className = 'error';
+        }
+        return result;
     }
 }
 
