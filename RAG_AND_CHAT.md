@@ -98,12 +98,12 @@ Kullanıcının `user_settings.ai_api_url` override'ı varsa sohbet onun göster
 
 ### Model seçimi (GELIS24)
 
-Sohbet modeli şu sırayla çözülür: **`user_settings.ai_model`** (kullanıcı bazlı) → **`ai_settings.model_name`** (global) → `LMSTUDIO_DEFAULT_MODEL` env değeri. Kullanıcı Ayarlar ekranındaki **Model** alanından seçim yapar; alan hem datalist'ten seçime hem elle yazmaya izin verir.
+Sohbet modeli şu sırayla çözülür: **`user_settings.ai_model`** (kullanıcı bazlı) → **`ai_settings.model_name`** (global) → `LMSTUDIO_DEFAULT_MODEL` env değeri. Kullanıcı Ayarlar ekranındaki **Model** dropdown'ından seçim yapar; liste "Modelleri Yükle" ile doldurulur ve kayıtlı model listede yoksa `(kayıtlı)` seçeneği olarak korunur.
 
 - **Modelleri Yükle:** `POST /api/ai-settings/models` çağrısıyla model listesi ve meta verisi getirilir. API anahtarı girildikten sonra (veya kayıtlı anahtar varsa) otomatik de tetiklenir.
 - **Meta veri:** `context_length`, `max_output_tokens`, `suggested_max_tokens`, `state`, `quantization` ve üretim varsayılanları gösterilir; `suggested_max_tokens` değeri `max_tokens` alanının üst sınırı olarak uygulanır.
-- **Yanıt Testi:** `POST /api/ai-settings/generation/test` gerçek bir sohbet tamamlama isteği atar (`temperature=0`, `max_tokens=32`). Bağlantı testinden farklı olarak modelin fiilen yanıt ürettiğini doğrular; geçersiz model hatasında ilk mevcut modelle bir kez yeniden dener.
-- **Kaydetme:** Ayarlar kaydedilirken bağlantı testine ek olarak model seçiliyse kısa yanıt testi de çalışır; başarısızsa kayıt engellenir.
+- **Yanıt Testi:** `POST /api/ai-settings/generation/test` gerçek bir sohbet tamamlama isteği atar (`temperature=0`, `max_tokens=256`). Bağlantı testinden farklı olarak modelin fiilen yanıt ürettiğini doğrular; geçersiz model hatasında ilk mevcut modelle bir kez yeniden dener. Reasoning modelleri bütçeyi `reasoning_content`'te harcayıp boş `content` döndürebilir; bu durumda reasoning metni geçerli yanıt sayılır.
+- **Kaydetme:** Ayarlar kaydedilirken bağlantı testine ek olarak model seçiliyse kısa yanıt testi de çalışır. Yanıt testi **uyarı niteliğindedir**: başarısız olsa da model seçimi kaydedilir ve kullanıcıya uyarı gösterilir. Global `model_name` yalnızca admin tarafından kaydedilir.
 
 ### Yanıt akışı (SSE)
 

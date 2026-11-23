@@ -162,7 +162,7 @@ def test_generation():
 
     Optional request JSON:
     { "api_url": "...", "provider": "lmstudio|llamacpp",
-      "api_key": "...", "model": "...", "max_tokens": 32 }
+      "api_key": "...", "model": "...", "max_tokens": 256 }
 
     A successful ``/models`` check only proves reachability; this endpoint
     proves the selected model can actually produce a response.
@@ -176,9 +176,9 @@ def test_generation():
             client.model = model
 
         try:
-            max_tokens = int(data.get('max_tokens', 32))
+            max_tokens = int(data.get('max_tokens', 256))
         except (TypeError, ValueError):
-            max_tokens = 32
+            max_tokens = 256
 
         result = client.test_generation(max_tokens=max_tokens)
         return jsonify(result), 200

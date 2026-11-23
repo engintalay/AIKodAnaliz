@@ -52,7 +52,9 @@ Model listesi ve meta verisi `GET/POST /api/ai-settings/models` ile alınır. Ka
 - LM Studio `/api/v0/models` → `max_context_length`, `state`, `quantization`, `publisher`, `arch`
 - llama.cpp `/props` → `default_generation_settings` (`n_ctx`, `n_predict`, `temperature`, `top_p`, `top_k`, `repeat_penalty`)
 
-Normalize edilmiş alanlar: `id`, `context_length`, `max_output_tokens`, `suggested_max_tokens`, `state`, `type`, `quantization`, `publisher`, `arch`, `defaults`. `suggested_max_tokens`, sağlayıcı çıktı limiti biliniyorsa o değer, değilse `min(context_length, 4096)` olur. UI bu değeri `max_tokens` alanının üst sınırı olarak uygular.
+Normalize edilmiş alanlar: `id`, `context_length`, `max_output_tokens`, `suggested_max_tokens`, `state`, `type`, `quantization`, `publisher`, `arch`, `defaults`. `context_length` için vLLM'in `max_input_tokens` alanı da kabul edilir. `suggested_max_tokens`, sağlayıcı çıktı limiti biliniyorsa o değer, değilse `min(context_length, 4096)` olur. UI bu değeri `max_tokens` alanının üst sınırı olarak uygular.
+
+Ayarlar ekranındaki **Model** alanı bir dropdown'dır: "Modelleri Yükle" listeyi doldurur, kayıtlı model listede yoksa `(kayıtlı)` seçeneği olarak korunur. Kaydetme akışı, model seçiliyse `POST /api/ai-settings/generation/test` ile gerçek bir yanıt testi de çalıştırır; bu test uyarı niteliğindedir ve başarısız olsa da seçim kaydedilir. Global `model_name` yalnızca admin tarafından kaydedilir.
 
 > ⚠️ **Öncelik sırası (chat):** `ai_settings` tablosundaki değerler (UI'daki **Ayarlar** ekranı) env varsayılanlarını **ezer**. Kullanıcı `ai_api_url` ile kendi sunucusuna yönlenmişse yalnız kendi `ai_api_key`'i kullanılır — global anahtar kullanıcının sunucusuna asla gönderilmez.
 > **Öncelik sırası (embedding):** UI'dan kaydedilen `embedding_*` ayarları > env değerleri > kod default'u.

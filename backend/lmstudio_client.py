@@ -324,7 +324,8 @@ class LMStudioClient:
             models.append({
                 'id': item['id'],
                 'context_length': self._first_int(
-                    item, 'context_length', 'max_context_length', 'max_model_len'
+                    item, 'context_length', 'max_context_length', 'max_model_len',
+                    'max_input_tokens'
                 ),
                 'max_output_tokens': self._first_int(
                     item, 'max_output_tokens', 'max_completion_tokens'
@@ -351,17 +352,21 @@ class LMStudioClient:
         result['models'] = models
         return result
 
-    def test_generation(self, prompt: str = None, max_tokens: int = 32) -> dict:
+    def test_generation(self, prompt: str = None, max_tokens: int = 256) -> dict:
         """Send a real chat completion and verify that the model answers.
 
         A ``/models`` connection test only proves the server is reachable; this
         method proves the selected model can actually produce a response.
+
+        Reasoning models (e.g. Qwen3) may spend the whole budget on
+        ``reasoning_content`` and return an empty ``content``. Such a response
+        still proves the model works, so reasoning text is accepted as a reply.
         """
         prompt = prompt or "Sadece OK yaz."
         try:
-            max_tokens = max(1, int(max_tokens or 32))
+            max_tokens = max(1, int(max_tokens or 256))
         except (TypeError, ValueError):
-            max_tokens = 32
+            max_tokens = 256
 
         payload = {
             "model": self.model,
@@ -438,7 +443,9 @@ class LMStudioClient:
 
         choices = data.get('choices') or []
         message = (choices[0].get('message') or {}) if choices else {}
-        reply = (message.get('content') or message.get('reasoning_content') or '').strip()
+        content = (message.get('content') or '').strip()
+        reasoning = (message.get('reasoning_content') or '').strip()
+        reply = content or reasoning
         usage = data.get('usage') or {}
 
         if not reply:
@@ -455,6 +462,7 @@ class LMStudioClient:
             'status': 'ok',
             'model': self.model,
             'reply': reply,
+            'reasoning_only': not content,
             'latency_ms': latency_ms,
             'prompt_tokens': int(usage.get('prompt_tokens', 0) or 0),
             'completion_tokens': int(usage.get('completion_tokens', 0) or 0),

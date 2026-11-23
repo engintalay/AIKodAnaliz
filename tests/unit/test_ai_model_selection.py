@@ -104,6 +104,22 @@ class TestModelMetadata(unittest.TestCase):
         self.assertEqual(result['models'][0]['context_length'], 8192)
         self.assertEqual(result['models'][1]['max_output_tokens'], 2048)
 
+    def test_vllm_max_input_tokens_is_context_length(self):
+        """vLLM /models yanıtı max_input_tokens alanını kullanır."""
+        client = self._client_with({
+            '/models': FakeResponse(200, {
+                'data': [{
+                    'id': 'Qwen3.8-Flash-Next',
+                    'max_input_tokens': 262144,
+                    'max_output_tokens': 131072,
+                }]
+            }),
+        })
+        model = client.list_models_with_metadata()['models'][0]
+        self.assertEqual(model['context_length'], 262144)
+        self.assertEqual(model['max_output_tokens'], 131072)
+        self.assertEqual(model['suggested_max_tokens'], 131072)
+
     def test_lmstudio_metadata_enriches_models(self):
         client = self._client_with({
             '/models': FakeResponse(200, {'data': [{'id': 'model-a'}]}),
@@ -189,9 +205,25 @@ class TestGenerationTest(unittest.TestCase):
         result = client.test_generation()
         self.assertEqual(result['status'], 'ok')
         self.assertEqual(result['reply'], 'OK')
+        self.assertFalse(result['reasoning_only'])
         self.assertEqual(result['total_tokens'], 6)
-        self.assertEqual(client.session.post_calls[0]['json']['max_tokens'], 32)
+        self.assertEqual(client.session.post_calls[0]['json']['max_tokens'], 256)
         self.assertEqual(client.session.post_calls[0]['json']['temperature'], 0)
+
+    def test_reasoning_only_reply_is_accepted(self):
+        """Reasoning modelleri bütçeyi reasoning_content'te harcayabilir."""
+        client = self._client_with(post_map={
+            '/chat/completions': FakeResponse(200, {
+                'choices': [{
+                    'message': {'content': '\n\n', 'reasoning_content': 'OK yazmam yeterli.'},
+                    'finish_reason': 'length',
+                }],
+            }),
+        })
+        result = client.test_generation()
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(result['reply'], 'OK yazmam yeterli.')
+        self.assertTrue(result['reasoning_only'])
 
     def test_empty_reply_is_error(self):
         client = self._client_with(post_map={
@@ -254,7 +286,7 @@ class FakeRouteClient:
         return {'models': [{'id': self.model}], 'api_url': self.api_url,
                 'provider': self.provider, 'error': None}
 
-    def test_generation(self, max_tokens=32):
+    def test_generation(self, max_tokens=256):
         return {'status': 'ok', 'model': self.model, 'reply': 'OK',
                 'latency_ms': 1, 'max_tokens': max_tokens}
 

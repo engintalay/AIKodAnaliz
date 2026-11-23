@@ -3060,12 +3060,13 @@ async function loadSettings() {
 
         // GELIS24: model selection (per-user, global fallback) + metadata
         const modelInput = document.getElementById('aiModel');
+        const savedModel = userModel || settings.model_name || '';
         if (modelInput) {
-            modelInput.value = userModel || settings.model_name || '';
+            setModelSelectValue(savedModel);
         }
         window._aiModelMetadata = {};
         window._aiModelBaseline = {
-            model: userModel || settings.model_name || '',
+            model: savedModel,
             maxTokens: settings.max_tokens
         };
         updateModelInfo();
@@ -3101,9 +3102,28 @@ function bindModelAutoLoad() {
     });
     const modelInput = document.getElementById('aiModel');
     if (modelInput) {
-        modelInput.addEventListener('input', updateModelInfo);
         modelInput.addEventListener('change', updateModelInfo);
     }
+}
+
+// Seçili modeli dropdown'da göster; kayıtlı model listede yoksa geçici
+// bir seçenek olarak ekle (sunucu erişilemezken seçim kaybolmasın).
+function setModelSelectValue(value) {
+    const select = document.getElementById('aiModel');
+    if (!select) return;
+    const modelId = (value || '').trim();
+    if (!modelId) {
+        select.value = '';
+        return;
+    }
+    let option = Array.from(select.options).find(opt => opt.value === modelId);
+    if (!option) {
+        option = document.createElement('option');
+        option.value = modelId;
+        option.textContent = `${modelId} (kayıtlı)`;
+        select.appendChild(option);
+    }
+    select.value = modelId;
 }
 
 async function saveLMSettings() {
@@ -3129,7 +3149,6 @@ async function saveLMSettings() {
 
     const settings = {
         provider: { value: providerValue, type: 'string' },
-        model_name: { value: modelValue, type: 'string' },
         temperature: { value: tempValue, type: 'float' },
         top_p: { value: topPValue, type: 'float' },
         max_tokens: { value: maxTokensValue, type: 'integer' },
@@ -3140,6 +3159,13 @@ async function saveLMSettings() {
         embedding_model: { value: embeddingModelValue, type: 'string' },
         embedding_api_url: { value: embeddingUrlValue, type: 'string' }
     };
+
+    // Model seçimi kullanıcı bazlıdır (user_settings.ai_model). Global
+    // varsayılanı (ai_settings.model_name) yalnızca admin değiştirebilir;
+    // normal kullanıcının seçimi diğer kullanıcıları etkilemez.
+    if (currentUser && currentUser.role === 'admin') {
+        settings.model_name = { value: modelValue, type: 'string' };
+    }
 
     // API keys are only sent when typed or explicitly cleared (empty = unchanged)
     if (globalKeyValue) {
@@ -3164,11 +3190,14 @@ async function saveLMSettings() {
             throw new Error(`Bağlantı testi başarısız: ${testResult.message || 'Bilinmeyen hata'}`);
         }
 
-        // GELIS24: model seçiliyse gerçek bir yanıt testi de yap
+        // GELIS24: model seçiliyse gerçek bir yanıt testi de yap.
+        // Uyarı niteliğindedir: test başarısız olsa da seçim kaydedilir.
+        let generationWarning = '';
         if (modelValue) {
             const genResult = await testGeneration(false);
             if (genResult.status !== 'ok') {
-                throw new Error(`Yanıt testi başarısız: ${genResult.error || 'Bilinmeyen hata'}`);
+                generationWarning = genResult.error || 'Bilinmeyen hata';
+                console.warn('Yanıt testi başarısız (kayıt sürüyor):', generationWarning);
             }
         }
 
@@ -3269,7 +3298,11 @@ async function saveLMSettings() {
         };
         loadSettings();
 
-        showSuccess('Başarılı', 'Ayarlar kaydedildi ve sisteme uygulandı');
+        if (generationWarning) {
+            showWarning('Ayarlar kaydedildi', `Model seçimi kaydedildi ancak yanıt testi başarısız: ${generationWarning}`);
+        } else {
+            showSuccess('Başarılı', 'Ayarlar kaydedildi ve sisteme uygulandı');
+        }
     } catch (error) {
         console.error('Ayarlar Kaydetme Hatası:', error);
         showError('Ayarlar Kaydetme Hatası', 'Ayarlar kaydedilirken hata oluştu: ' + error.message);
@@ -3343,9 +3376,14 @@ async function loadModels(showUi = true) {
         const result = await response.json();
         const models = Array.isArray(result.models) ? result.models : [];
 
-        const datalist = document.getElementById('aiModelOptions');
-        if (datalist) {
-            datalist.innerHTML = '';
+        const select = document.getElementById('aiModel');
+        const previous = select ? select.value : '';
+        if (select) {
+            select.innerHTML = '';
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = '— Model seçin —';
+            select.appendChild(placeholder);
             models.forEach(model => {
                 const option = document.createElement('option');
                 option.value = model.id;
@@ -3353,13 +3391,26 @@ async function loadModels(showUi = true) {
                 if (model.context_length) bits.push(`ctx ${model.context_length}`);
                 if (model.max_output_tokens) bits.push(`max çıktı ${model.max_output_tokens}`);
                 if (model.quantization) bits.push(model.quantization);
-                if (bits.length) option.label = bits.join(' · ');
-                datalist.appendChild(option);
+                option.textContent = bits.length ? `${model.id} — ${bits.join(' · ')}` : model.id;
+                select.appendChild(option);
             });
         }
 
         window._aiModelMetadata = {};
         models.forEach(model => { window._aiModelMetadata[model.id] = model; });
+
+        // Mevcut seçimi koru. Kayıtlı model listede yoksa ilk gerçek modeli seç;
+        // liste hiç yüklenemediyse kayıtlı değeri kaybetme.
+        const baselineModel = (window._aiModelBaseline && window._aiModelBaseline.model) || '';
+        const keep = previous || baselineModel;
+        const keepExists = keep && models.some(model => model.id === keep);
+        if (keepExists) {
+            setModelSelectValue(keep);
+        } else if (models.length) {
+            setModelSelectValue(models[0].id);
+        } else if (keep) {
+            setModelSelectValue(keep);
+        }
         updateModelInfo();
 
         if (showUi && infoDiv) {
@@ -3427,7 +3478,7 @@ async function testGeneration(showUi = true) {
     const payload = _modelRequestPayload();
     const model = (document.getElementById('aiModel')?.value || '').trim();
     if (model) payload.model = model;
-    payload.max_tokens = 32;
+    payload.max_tokens = 256;
 
     try {
         const response = await fetch(`${API_URL}/ai-settings/generation/test`, {
@@ -3439,7 +3490,8 @@ async function testGeneration(showUi = true) {
 
         if (showUi && resultDiv) {
             if (result.status === 'ok') {
-                resultDiv.textContent = `✓ Yanıt alındı (${result.model}, ${result.latency_ms} ms): ${result.reply}`;
+                const note = result.reasoning_only ? ' (yanıt reasoning alanında)' : '';
+                resultDiv.textContent = `✓ Yanıt alındı (${result.model}, ${result.latency_ms} ms)${note}: ${result.reply}`;
                 resultDiv.className = 'success';
             } else {
                 resultDiv.textContent = `✗ Yanıt testi başarısız (${result.model || model || 'model yok'}): ${result.error || 'bilinmeyen hata'}`;
