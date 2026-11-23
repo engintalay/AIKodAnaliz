@@ -18,7 +18,7 @@ Tüm yapılandırma **proje kökündeki `.env`** dosyasından okunur (`python-do
 
 | Değişken | Varsayılan | Açıklama |
 |---|---|---|
-| `AI_PROVIDER` | `lmstudio` | `lmstudio` veya `llamacpp` |
+| `AI_PROVIDER` | `lmstudio` | `lmstudio`, `llamacpp`, `vllm` veya `openai` |
 | `LMSTUDIO_HOST` / `LMSTUDIO_PORT` | `localhost` / `1234` | `LMSTUDIO_API_URL` türetilirken kullanılır |
 | `LMSTUDIO_API_URL` | `http://{host}:{port}/v1` | OpenAI-uyumlu kök URL |
 | `LMSTUDIO_DEFAULT_MODEL` | `local-model` | Model adı (çoğu yerel sunucuda zorunlu değil) |
@@ -51,6 +51,8 @@ Model listesi ve meta verisi `GET/POST /api/ai-settings/models` ile alınır. Ka
 - OpenAI-uyumlu `/v1/models` → model kimlikleri
 - LM Studio `/api/v0/models` → `max_context_length`, `state`, `quantization`, `publisher`, `arch`
 - llama.cpp `/props` → `default_generation_settings` (`n_ctx`, `n_predict`, `temperature`, `top_p`, `top_k`, `repeat_penalty`)
+
+`provider` değeri `lmstudio`, `llamacpp`, `vllm` veya `openai` olabilir. `vllm`/`openai` seçiliyse yalnız `/v1/models` kullanılır (LM Studio ve llama.cpp uç noktaları yoktur); `lmstudio`/`llamacpp` seçiliyse iki yerel zenginleştirme de denenir.
 
 Normalize edilmiş alanlar: `id`, `context_length`, `max_output_tokens`, `suggested_max_tokens`, `state`, `type`, `quantization`, `publisher`, `arch`, `defaults`. `context_length` için vLLM'in `max_input_tokens` alanı da kabul edilir. `suggested_max_tokens`, sağlayıcı çıktı limiti biliniyorsa o değer, değilse `min(context_length, 4096)` olur. UI bu değeri `max_tokens` alanının üst sınırı olarak uygular.
 

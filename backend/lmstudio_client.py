@@ -66,6 +66,8 @@ class LMStudioClient:
         mapping = {
             'lmstudio': 'LMStudio',
             'llamacpp': 'llama.cpp',
+            'vllm': 'vLLM',
+            'openai': 'OpenAI',
         }
         return mapping.get((self.provider or '').lower(), self.provider or 'AI Server')
 
@@ -338,8 +340,15 @@ class LMStudioClient:
                 'defaults': None,
             })
 
-        self._enrich_models_lmstudio(models)
-        self._enrich_models_llamacpp(models)
+        # vLLM/OpenAI uyumlu sunucularda LM Studio (/api/v0/models) ve
+        # llama.cpp (/props) uç noktaları yoktur; bu sağlayıcılarda yalnız
+        # /v1/models kullanılır. lmstudio/llamacpp için geriye uyumlu olarak
+        # iki zenginleştirme de denenir (yanlış etiketlenmiş sunucularda da
+        # meta veri kaybolmasın).
+        provider = (self.provider or '').strip().lower()
+        if provider not in ('vllm', 'openai'):
+            self._enrich_models_lmstudio(models)
+            self._enrich_models_llamacpp(models)
 
         for model in models:
             if model.get('max_output_tokens'):

@@ -120,6 +120,23 @@ class TestModelMetadata(unittest.TestCase):
         self.assertEqual(model['max_output_tokens'], 131072)
         self.assertEqual(model['suggested_max_tokens'], 131072)
 
+    def test_vllm_provider_skips_native_metadata_endpoints(self):
+        """vLLM/OpenAI sağlayıcılarında yalnız /models çağrılır."""
+        client = self._client_with({
+            '/models': FakeResponse(200, {'data': [{'id': 'm1'}]}),
+        })
+        client.provider = 'vllm'
+        client.list_models_with_metadata()
+        self.assertEqual(client.session.get_calls, ['http://ai:1234/v1/models'])
+
+    def test_openai_provider_skips_native_metadata_endpoints(self):
+        client = self._client_with({
+            '/models': FakeResponse(200, {'data': [{'id': 'm1'}]}),
+        })
+        client.provider = 'openai'
+        client.list_models_with_metadata()
+        self.assertEqual(client.session.get_calls, ['http://ai:1234/v1/models'])
+
     def test_lmstudio_metadata_enriches_models(self):
         client = self._client_with({
             '/models': FakeResponse(200, {'data': [{'id': 'model-a'}]}),
