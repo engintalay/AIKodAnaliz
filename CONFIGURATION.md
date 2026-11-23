@@ -36,8 +36,27 @@ Tüm yapılandırma **proje kökündeki `.env`** dosyasından okunur (`python-do
 | `EMBEDDING_API_URL` | *(boş)* | Boş = sohbet `api_url`'i kullanılır. Dolu = embedding ayrı sunucuya gider |
 | `EMBEDDING_API_KEY` | *(boş)* | Boşsa: embedding sohbetle AYNI sunucudaysa sohbet anahtarı kullanılır; ayrı URL verildiyse sohbet anahtarı o sunucuya gönderilmez, bu değişken gerekir |
 
+### Model seçimi ve meta veri (GELIS24)
+
+| Ayar | Yer | Açıklama |
+|---|---|---|
+| `model_name` | `ai_settings` (global) | Varsayılan sohbet modeli. Yeni ve mevcut DB'lere `LMSTUDIO_DEFAULT_MODEL` ile tohumlanır |
+| `context_limit` | `ai_settings` (global) | Prompt'a giren maks. bağlam. Yeni ve mevcut DB'lere `CONTEXT_LIMIT_TOKENS` ile tohumlanır |
+| `ai_model` | `user_settings` (kullanıcı bazlı) | Kullanıcının seçtiği model. Boş/NULL ise global `model_name` kullanılır |
+
+Etkin model: **`user_settings.ai_model` > `ai_settings.model_name` > `LMSTUDIO_DEFAULT_MODEL`**.
+
+Model listesi ve meta verisi `GET/POST /api/ai-settings/models` ile alınır. Kaynaklar sırayla denenir ve birleştirilir:
+
+- OpenAI-uyumlu `/v1/models` → model kimlikleri
+- LM Studio `/api/v0/models` → `max_context_length`, `state`, `quantization`, `publisher`, `arch`
+- llama.cpp `/props` → `default_generation_settings` (`n_ctx`, `n_predict`, `temperature`, `top_p`, `top_k`, `repeat_penalty`)
+
+Normalize edilmiş alanlar: `id`, `context_length`, `max_output_tokens`, `suggested_max_tokens`, `state`, `type`, `quantization`, `publisher`, `arch`, `defaults`. `suggested_max_tokens`, sağlayıcı çıktı limiti biliniyorsa o değer, değilse `min(context_length, 4096)` olur. UI bu değeri `max_tokens` alanının üst sınırı olarak uygular.
+
 > ⚠️ **Öncelik sırası (chat):** `ai_settings` tablosundaki değerler (UI'daki **Ayarlar** ekranı) env varsayılanlarını **ezer**. Kullanıcı `ai_api_url` ile kendi sunucusuna yönlenmişse yalnız kendi `ai_api_key`'i kullanılır — global anahtar kullanıcının sunucusuna asla gönderilmez.
 > **Öncelik sırası (embedding):** UI'dan kaydedilen `embedding_*` ayarları > env değerleri > kod default'u.
+> **Öncelik sırası (model):** `user_settings.ai_model` > `ai_settings.model_name` > `LMSTUDIO_DEFAULT_MODEL`.
 > Not: Bazı dağıtımlarda `ai_settings` tablosuna tohumlanan `timeout` değeri env'den kısaysa o değeri kullanır — timeout sorunlarında önce UI ayarlarına bakın.
 
 ### Veritabanı

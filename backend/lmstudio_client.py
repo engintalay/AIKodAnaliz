@@ -1,3 +1,4 @@
+import os
 import requests
 import json
 import time
@@ -104,22 +105,27 @@ class LMStudioClient:
                     self.request_timeout = int(parsed)
                 elif name == 'retry_count':
                     self.retry_count = int(parsed)
+                elif name == 'context_limit':
+                    self.context_limit = int(parsed)
 
             # Per-user override for AI server URL (and matching key)
             if user_id is not None:
                 user_rows = db.execute_query(
-                    'SELECT ai_api_url, ai_api_key FROM user_settings WHERE user_id = ?',
+                    'SELECT ai_api_url, ai_api_key, ai_model FROM user_settings WHERE user_id = ?',
                     [user_id]
                 )
                 if user_rows:
                     user_row = dict(user_rows[0])
                     user_api_url = (user_row.get('ai_api_url') or '').strip()
                     user_api_key = (user_row.get('ai_api_key') or '').strip()
+                    user_model = (user_row.get('ai_model') or '').strip()
                     if user_api_url:
                         self.api_url = user_api_url.rstrip('/')
                         # Kullanıcı kendi sunucusuna yönlenmişse global anahtar
                         # ASLA o sunucuya gönderilmez; yalnız kullanıcı anahtarı.
                         self.api_key = user_api_key
+                    if user_model:
+                        self.model = user_model
         except Exception:
             # Keep config defaults if DB is unavailable or malformed.
             pass
@@ -193,6 +199,267 @@ class LMStudioClient:
             if model_id:
                 model_ids.append(model_id)
         return model_ids
+
+    def _base_url(self) -> str:
+        """Server base URL without the OpenAI-compatible ``/v1`` suffix."""
+        url = (self.api_url or '').rstrip('/')
+        if url.endswith('/v1'):
+            return url[:-3]
+        return url
+
+    @staticmethod
+    def _first_int(payload: dict, *keys):
+        """Return the first positive integer found under any of ``keys``."""
+        for key in keys:
+            value = payload.get(key)
+            if value is None:
+                continue
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                continue
+            if parsed > 0:
+                return parsed
+        return None
+
+    def _enrich_models_lmstudio(self, models: list):
+        """Add LM Studio native metadata (context length, state, quantization)."""
+        try:
+            response = self.session.get(f"{self._base_url()}/api/v0/models", timeout=5)
+            if response.status_code != 200:
+                return
+            payload = response.json()
+        except Exception:
+            return
+
+        items = payload.get('data', []) if isinstance(payload, dict) else []
+        by_id = {model['id']: model for model in models}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            target = by_id.get(item.get('id'))
+            if not target:
+                continue
+            context_length = self._first_int(item, 'max_context_length', 'loaded_context_length')
+            if context_length:
+                target['context_length'] = context_length
+            for key in ('state', 'type', 'quantization', 'publisher', 'arch'):
+                if item.get(key):
+                    target[key] = item[key]
+
+    def _enrich_models_llamacpp(self, models: list):
+        """Add llama.cpp ``/props`` metadata (context, n_predict, generation defaults)."""
+        try:
+            response = self.session.get(f"{self._base_url()}/props", timeout=5)
+            if response.status_code != 200:
+                return
+            payload = response.json()
+        except Exception:
+            return
+        if not isinstance(payload, dict):
+            return
+
+        generation = payload.get('default_generation_settings') or {}
+        if not isinstance(generation, dict):
+            generation = {}
+
+        context_length = self._first_int(generation, 'n_ctx')
+        max_output = self._first_int(generation, 'n_predict')
+
+        defaults = {}
+        for key in ('temperature', 'top_p', 'top_k', 'repeat_penalty'):
+            if generation.get(key) is not None:
+                defaults[key] = generation[key]
+        if max_output:
+            defaults['max_tokens'] = max_output
+
+        # llama.cpp normally serves a single model; when several are listed,
+        # only attach the props to the model that matches ``model_path``.
+        targets = models
+        if len(models) > 1:
+            model_path = payload.get('model_path') or ''
+            basename = os.path.basename(model_path) if model_path else ''
+            if basename:
+                targets = [
+                    model for model in models
+                    if model['id'] == basename
+                    or basename in model['id']
+                    or model['id'] in basename
+                ]
+
+        for model in targets:
+            if context_length:
+                model['context_length'] = context_length
+            if max_output:
+                model['max_output_tokens'] = max_output
+            if defaults:
+                model['defaults'] = dict(defaults)
+
+    def list_models_with_metadata(self) -> dict:
+        """List models with context/output limits and provider defaults.
+
+        Returns ``{models, api_url, provider, error}``. Never raises: a failed
+        request yields an empty list plus an ``error`` string so the UI can
+        show a useful message instead of a 500.
+        """
+        result = {
+            'models': [],
+            'api_url': self.api_url,
+            'provider': self.provider,
+            'error': None,
+        }
+        try:
+            response = self.session.get(f"{self.api_url}/models", timeout=10)
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:
+            result['error'] = str(exc)
+            return result
+
+        raw_models = payload.get('data', []) if isinstance(payload, dict) else []
+        models = []
+        for item in raw_models:
+            if not isinstance(item, dict) or not item.get('id'):
+                continue
+            models.append({
+                'id': item['id'],
+                'context_length': self._first_int(
+                    item, 'context_length', 'max_context_length', 'max_model_len'
+                ),
+                'max_output_tokens': self._first_int(
+                    item, 'max_output_tokens', 'max_completion_tokens'
+                ),
+                'state': item.get('state'),
+                'type': item.get('type'),
+                'quantization': item.get('quantization'),
+                'publisher': item.get('publisher'),
+                'arch': item.get('arch'),
+                'defaults': None,
+            })
+
+        self._enrich_models_lmstudio(models)
+        self._enrich_models_llamacpp(models)
+
+        for model in models:
+            if model.get('max_output_tokens'):
+                model['suggested_max_tokens'] = model['max_output_tokens']
+            elif model.get('context_length'):
+                model['suggested_max_tokens'] = min(model['context_length'], 4096)
+            else:
+                model['suggested_max_tokens'] = None
+
+        result['models'] = models
+        return result
+
+    def test_generation(self, prompt: str = None, max_tokens: int = 32) -> dict:
+        """Send a real chat completion and verify that the model answers.
+
+        A ``/models`` connection test only proves the server is reachable; this
+        method proves the selected model can actually produce a response.
+        """
+        prompt = prompt or "Sadece OK yaz."
+        try:
+            max_tokens = max(1, int(max_tokens or 32))
+        except (TypeError, ValueError):
+            max_tokens = 32
+
+        payload = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+
+        started_at = time.perf_counter()
+        try:
+            response = self.session.post(
+                f"{self.api_url}/chat/completions",
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=self.request_timeout,
+            )
+            if self._is_invalid_model_response(response):
+                models = self.list_models()
+                if models:
+                    self.model = models[0]
+                    payload["model"] = self.model
+                    response = self.session.post(
+                        f"{self.api_url}/chat/completions",
+                        headers={"Content-Type": "application/json"},
+                        json=payload,
+                        timeout=self.request_timeout,
+                    )
+        except requests.exceptions.Timeout:
+            return {
+                'status': 'error',
+                'model': self.model,
+                'latency_ms': int((time.perf_counter() - started_at) * 1000),
+                'error': f'İstek {self.request_timeout} saniyede zaman aşımına uğradı.',
+            }
+        except requests.exceptions.ConnectionError:
+            return {
+                'status': 'error',
+                'model': self.model,
+                'latency_ms': int((time.perf_counter() - started_at) * 1000),
+                'error': f'{self.provider_display} sunucusuna bağlanılamadı ({self.api_url}).',
+            }
+        except Exception as exc:
+            return {
+                'status': 'error',
+                'model': self.model,
+                'latency_ms': int((time.perf_counter() - started_at) * 1000),
+                'error': str(exc),
+            }
+
+        latency_ms = int((time.perf_counter() - started_at) * 1000)
+        if response.status_code != 200:
+            try:
+                detail = response.json()
+            except Exception:
+                detail = (response.text or '')[:500]
+            return {
+                'status': 'error',
+                'model': self.model,
+                'latency_ms': latency_ms,
+                'status_code': response.status_code,
+                'error': f'HTTP {response.status_code}: {detail}',
+            }
+
+        try:
+            data = response.json()
+        except Exception as exc:
+            return {
+                'status': 'error',
+                'model': self.model,
+                'latency_ms': latency_ms,
+                'error': f'Yanıt JSON olarak çözümlenemedi: {exc}',
+            }
+
+        choices = data.get('choices') or []
+        message = (choices[0].get('message') or {}) if choices else {}
+        reply = (message.get('content') or message.get('reasoning_content') or '').strip()
+        usage = data.get('usage') or {}
+
+        if not reply:
+            finish_reason = choices[0].get('finish_reason') if choices else None
+            return {
+                'status': 'error',
+                'model': self.model,
+                'latency_ms': latency_ms,
+                'finish_reason': finish_reason,
+                'error': 'Model boş yanıt döndürdü (içerik yok).',
+            }
+
+        return {
+            'status': 'ok',
+            'model': self.model,
+            'reply': reply,
+            'latency_ms': latency_ms,
+            'prompt_tokens': int(usage.get('prompt_tokens', 0) or 0),
+            'completion_tokens': int(usage.get('completion_tokens', 0) or 0),
+            'total_tokens': int(usage.get('total_tokens', 0) or 0),
+        }
     
     def test_connection(self) -> dict:
         """Test connection to active provider endpoint."""

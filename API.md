@@ -103,8 +103,8 @@ Görev bellek-içidir; sunucu restart'ı veya süre aşımında `{status:'failed
 
 | Metod | Yol | Açıklama |
 |---|---|---|
-| GET | `/api/users/settings` | `{id, username, role, full_name, email, theme, notifications_enabled, items_per_page, default_filter, ai_api_url, ai_api_key (maskeli) + ai_api_key_set, preferences}` |
-| PUT | `/api/users/settings` | Verilen alanları günceller. `ai_api_url`: **kullanıcı bazlı AI sunucu URL override'ı** (boş string → NULL). `ai_api_key`: kullanıcı bazlı anahtar — boş string → silinir, maskeli değer (`••••…`) → değişmez. Kullanıcı URL override'ı varsa chat isteklerinde yalnız bu anahtar kullanılır (global anahtar sızmaz) |
+| GET | `/api/users/settings` | `{id, username, role, full_name, email, theme, notifications_enabled, items_per_page, default_filter, ai_api_url, ai_api_key (maskeli) + ai_api_key_set, ai_model, preferences}` |
+| PUT | `/api/users/settings` | Verilen alanları günceller. `ai_api_url`: **kullanıcı bazlı AI sunucu URL override'ı** (boş string → NULL). `ai_api_key`: kullanıcı bazlı anahtar — boş string → silinir, maskeli değer (`••••…`) → değişmez. `ai_model`: kullanıcı bazlı model seçimi (boş string → NULL, global `model_name` kullanılır). Kullanıcı URL override'ı varsa chat isteklerinde yalnız bu anahtar kullanılır (global anahtar sızmaz) |
 | PUT | `/api/users/change-password` | `{current_password, new_password}`; yeni parola ≥ 4 krn, eskisiyle aynı olamaz |
 
 ### Kullanıcı yönetimi (yalnız **admin** — `manage_users`)
@@ -142,15 +142,19 @@ Görev bellek-içidir; sunucu restart'ı veya süre aşımında `{status:'failed
 
 | Metod | Yol | Açıklama |
 |---|---|---|
-| GET | `/api/ai-settings/` | Tüm ayarlar (`provider`, `api_url`, `temperature`, `top_p`, `max_tokens`, `timeout`, `embedding_model`, `embedding_api_url`, …). **Gizli anahtarlar maskeli döner**: `api_key`/`embedding_api_key` → `••••<son4>` + `*_set` bayrağı |
+| GET | `/api/ai-settings/` | Tüm ayarlar (`provider`, `api_url`, `model_name`, `context_limit`, `temperature`, `top_p`, `max_tokens`, `timeout`, `embedding_model`, `embedding_api_url`, …). **Gizli anahtarlar maskeli döner**: `api_key`/`embedding_api_key` → `••••<son4>` + `*_set` bayrağı |
 | PUT | `/api/ai-settings/<setting_name>` | Tek ayar güncelle. Gizli anahtarlarda özel semantik (aşağıda) |
 | POST | `/api/ai-settings/provider/test` | Aktif provider bağlantı testi. Body (ops.): `{api_url?, provider?, api_key?}` — `api_url` farklı bir sunucu ise kayıtlı anahtar o sunucuya gönderilmez; `api_key` yalnız testte kullanılır |
+| GET/POST | `/api/ai-settings/models` | **Model listesi + meta veri (GELIS24).** GET kayıtlı ayarları kullanır; POST ops. `{api_url?, provider?, api_key?}` override'ı alır (kalıcı değil). **200:** `{models: [{id, context_length, max_output_tokens, suggested_max_tokens, state, type, quantization, publisher, arch, defaults}], api_url, provider, error}`. Meta veri kaynakları: OpenAI `/v1/models`, LM Studio `/api/v0/models`, llama.cpp `/props` |
+| POST | `/api/ai-settings/generation/test` | **Gerçek yanıt testi (GELIS24).** Body (ops.): `{api_url?, provider?, api_key?, model?, max_tokens?}`. Küçük bir prompt ile `temperature=0` sohbet tamamlama isteği atar; geçersiz model hatasında ilk mevcut modelle bir kez yeniden dener. **200:** `{status: ok|error, model, reply?, latency_ms, prompt_tokens?, completion_tokens?, total_tokens?, status_code?, error?}` |
 | POST | `/api/ai-settings/embedding/test` | **Embedding yetenek testi (GELIS23).** Body (ops.): `{embedding_model?, embedding_api_url?, embedding_api_key?, api_key?}` (maskeli değerler yok sayılır). **200:** `{available, model, api_url, dim?, latency_ms, status_code?, error?}` |
 | POST | `/api/ai-settings/lmstudio/test` | Geriye uyumluluk: eski test route'u |
 
 **Gizli anahtar PUT semantiği (`api_key`, `embedding_api_key`):** `value` yok/`null`/maskeli yansıma (`••••…`)/boş string → **değer değiştirilmez**; `{"value": "", "clear": true}` → anahtar silinir; dolu değer → kaydedilir. Diğer ayarlarda boş string anlamlıdır (örn. `embedding_api_url: ""` = sohbet sunucusunu kullan).
 
 Provider değeri `lmstudio` veya `llamacpp` olabilir; her ikisi de OpenAI-compatible çalışır. Ayarlar `ai_settings` tablosundan çözülür (5 sn cache), yoksa env default'larına düşer. Anahtar dolduysa tüm AI isteklerine `Authorization: Bearer <key>` eklenir. Bkz. [CONFIGURATION.md](CONFIGURATION.md).
+
+**Model seçimi (GELIS24):** Etkin model önce `user_settings.ai_model` (kullanıcı bazlı), boşsa `ai_settings.model_name` (global) değerinden çözülür. Model listesi ve meta verisi (`context_length`, `max_output_tokens`, `suggested_max_tokens`, üretim varsayılanları) `/api/ai-settings/models` ile alınır; `suggested_max_tokens` sağlayıcı çıktı limiti biliniyorsa o, değilse `min(context_length, 4096)` olur. Ayarlar ekranında model alanı datalist ile hem seçim hem elle girişe izin verir; "Modelleri Yükle" listeyi, "Yanıt Testi" ise gerçek bir tamamlama isteğini çalıştırır. Kaydetme akışı bağlantı testine ek olarak model seçiliyse kısa bir yanıt testi de yapar ve başarısızsa kaydı engeller.
 
 ## 6. Diyagram (`/api/diagram` — routes/diagram.py)
 

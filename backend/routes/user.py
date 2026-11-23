@@ -335,7 +335,7 @@ def get_user_settings():
         
         rows = db.execute_query(
             '''SELECT u.id, u.username, u.role, u.full_name, u.email,
-                      s.theme, s.notifications_enabled, s.items_per_page, s.default_filter, s.ai_api_url, s.ai_api_key, s.preferences
+                      s.theme, s.notifications_enabled, s.items_per_page, s.default_filter, s.ai_api_url, s.ai_api_key, s.ai_model, s.preferences
                FROM users u
                LEFT JOIN user_settings s ON u.id = s.user_id
                WHERE u.id = ?''',
@@ -411,6 +411,11 @@ def update_user_settings():
                 settings_updates.append('ai_api_key = ?')
                 settings_params.append(str(raw_key).strip() or None)
 
+        # Per-user model selection (GELIS24). '' falls back to the global model.
+        if 'ai_model' in data:
+            settings_updates.append('ai_model = ?')
+            settings_params.append(str(data['ai_model'] or '').strip() or None)
+
         if 'preferences' in data:
             settings_updates.append('preferences = ?')
             settings_params.append(data['preferences'])
@@ -419,8 +424,8 @@ def update_user_settings():
             existing = db.execute_query('SELECT id FROM user_settings WHERE user_id = ?', [user_id])
             if not existing:
                 db.execute_insert(
-                    '''INSERT INTO user_settings (user_id, theme, notifications_enabled, items_per_page, default_filter, ai_api_url, ai_api_key, preferences)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                    '''INSERT INTO user_settings (user_id, theme, notifications_enabled, items_per_page, default_filter, ai_api_url, ai_api_key, ai_model, preferences)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                     [
                         user_id,
                         data.get('theme', 'light'),
@@ -429,6 +434,7 @@ def update_user_settings():
                         data.get('default_filter'),
                         (data.get('ai_api_url') or '').strip() or None,
                         str(data.get('ai_api_key') or '').strip() or None,
+                        str(data.get('ai_model') or '').strip() or None,
                         data.get('preferences')
                     ]
                 )

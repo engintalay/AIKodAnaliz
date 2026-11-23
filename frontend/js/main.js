@@ -2930,6 +2930,7 @@ async function loadSettings() {
         const providerSelect = document.getElementById('aiProvider');
         const queueLimitInput = document.getElementById('globalAiQueueLimit');
         let userApiUrl = '';
+        let userModel = '';
         let userPreferences = {};
 
         // Load per-user settings first (includes ai_api_url)
@@ -2937,6 +2938,7 @@ async function loadSettings() {
         if (userSettingsResp.ok) {
             const userSettings = await userSettingsResp.json();
             userApiUrl = (userSettings.ai_api_url || '').trim();
+            userModel = (userSettings.ai_model || '').trim();
             try {
                 userPreferences = userSettings.preferences ? JSON.parse(userSettings.preferences) : {};
             } catch (_err) {
@@ -3056,6 +3058,18 @@ async function loadSettings() {
                 : 'Boş bırakılırsa değişmez';
         }
 
+        // GELIS24: model selection (per-user, global fallback) + metadata
+        const modelInput = document.getElementById('aiModel');
+        if (modelInput) {
+            modelInput.value = userModel || settings.model_name || '';
+        }
+        window._aiModelMetadata = {};
+        window._aiModelBaseline = {
+            model: userModel || settings.model_name || '',
+            maxTokens: settings.max_tokens
+        };
+        updateModelInfo();
+
         // Baseline for change detection in saveLMSettings (test-before-save only for changes)
         window._aiEmbeddingBaseline = {
             model: settings.embedding_model || '',
@@ -3064,8 +3078,31 @@ async function loadSettings() {
         };
 
         console.log('Settings loaded from database:', settings);
+
+        // GELIS24: model listesini ayarlar açıldığında sessizce yükle
+        bindModelAutoLoad();
+        if (apiUrlInput && apiUrlInput.value.trim()) {
+            loadModels(false);
+        }
     } catch (error) {
         console.error('Ayarlar yükleme hatası:', error);
+    }
+}
+
+// GELIS24: API URL veya anahtar değiştiğinde model listesini yenile
+function bindModelAutoLoad() {
+    if (window._aiModelListenersBound) return;
+    window._aiModelListenersBound = true;
+    ['userApiKey', 'apiUrl'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', () => loadModels(false));
+        el.addEventListener('blur', () => loadModels(false));
+    });
+    const modelInput = document.getElementById('aiModel');
+    if (modelInput) {
+        modelInput.addEventListener('input', updateModelInfo);
+        modelInput.addEventListener('change', updateModelInfo);
     }
 }
 
@@ -3088,9 +3125,11 @@ async function saveLMSettings() {
     const clearKeys = document.getElementById('clearApiKeys')?.checked === true;
     const embeddingModelValue = (document.getElementById('embeddingModel')?.value || '').trim();
     const embeddingUrlValue = (document.getElementById('embeddingApiUrl')?.value || '').trim();
+    const modelValue = (document.getElementById('aiModel')?.value || '').trim();
 
     const settings = {
         provider: { value: providerValue, type: 'string' },
+        model_name: { value: modelValue, type: 'string' },
         temperature: { value: tempValue, type: 'float' },
         top_p: { value: topPValue, type: 'float' },
         max_tokens: { value: maxTokensValue, type: 'integer' },
@@ -3123,6 +3162,14 @@ async function saveLMSettings() {
         const testResult = await testLMConnection(apiUrlValue, providerValue, userKeyValue);
         if (testResult.status !== 'connected') {
             throw new Error(`Bağlantı testi başarısız: ${testResult.message || 'Bilinmeyen hata'}`);
+        }
+
+        // GELIS24: model seçiliyse gerçek bir yanıt testi de yap
+        if (modelValue) {
+            const genResult = await testGeneration(false);
+            if (genResult.status !== 'ok') {
+                throw new Error(`Yanıt testi başarısız: ${genResult.error || 'Bilinmeyen hata'}`);
+            }
         }
 
         // DZT-3: embedding testi yalnız embedding ile ilgili bir ayar değiştiyse koşulur
@@ -3161,8 +3208,12 @@ async function saveLMSettings() {
             ai_queue_limit: Math.max(1, Math.min(8, queueLimitValue || 2))
         };
 
-        // Save per-user AI server URL (+ optional per-user API key)
-        const userSettingsPayload = { ai_api_url: apiUrlValue, preferences: JSON.stringify(nextPreferences) };
+        // Save per-user AI server URL (+ optional per-user API key/model)
+        const userSettingsPayload = {
+            ai_api_url: apiUrlValue,
+            ai_model: modelValue,
+            preferences: JSON.stringify(nextPreferences)
+        };
         if (userKeyValue) {
             userSettingsPayload.ai_api_key = userKeyValue;
         } else if (clearKeys) {
@@ -3260,6 +3311,149 @@ async function testLMConnection(apiUrl, providerOverride, apiKey) {
             resultDiv.className = 'error';
         }
         return { status: 'error', message: error.message || String(error) };
+    }
+}
+
+// GELIS24: model listesi + meta veri istekleri için ortak gövde.
+// Kayıtlı anahtarlar sunucuda zaten mevcut olduğundan yalnızca kullanıcının
+// bu oturumda yazdığı anahtar gönderilir (global anahtar farklı URL'ye sızmaz).
+function _modelRequestPayload() {
+    const payload = {};
+    const apiUrl = (document.getElementById('apiUrl')?.value || '').trim();
+    const provider = (document.getElementById('aiProvider')?.value || 'lmstudio').trim();
+    const userKey = (document.getElementById('userApiKey')?.value || '').trim();
+    if (apiUrl) payload.api_url = apiUrl;
+    if (provider) payload.provider = provider;
+    if (userKey) payload.api_key = userKey;
+    return payload;
+}
+
+async function loadModels(showUi = true) {
+    const infoDiv = document.getElementById('modelInfo');
+    if (showUi && infoDiv) {
+        infoDiv.textContent = '⏳ Modeller yükleniyor...';
+        infoDiv.className = '';
+    }
+    try {
+        const response = await fetch(`${API_URL}/ai-settings/models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(_modelRequestPayload())
+        });
+        const result = await response.json();
+        const models = Array.isArray(result.models) ? result.models : [];
+
+        const datalist = document.getElementById('aiModelOptions');
+        if (datalist) {
+            datalist.innerHTML = '';
+            models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.id;
+                const bits = [];
+                if (model.context_length) bits.push(`ctx ${model.context_length}`);
+                if (model.max_output_tokens) bits.push(`max çıktı ${model.max_output_tokens}`);
+                if (model.quantization) bits.push(model.quantization);
+                if (bits.length) option.label = bits.join(' · ');
+                datalist.appendChild(option);
+            });
+        }
+
+        window._aiModelMetadata = {};
+        models.forEach(model => { window._aiModelMetadata[model.id] = model; });
+        updateModelInfo();
+
+        if (showUi && infoDiv) {
+            if (result.error) {
+                infoDiv.textContent = `✗ Modeller yüklenemedi: ${result.error}`;
+                infoDiv.className = 'error';
+            } else {
+                infoDiv.textContent = `✓ ${models.length} model bulundu (${result.api_url || ''})`;
+                infoDiv.className = 'success';
+            }
+        }
+        return result;
+    } catch (error) {
+        const result = { models: [], error: error.message || String(error) };
+        if (showUi && infoDiv) {
+            infoDiv.textContent = 'Hata: ' + result.error;
+            infoDiv.className = 'error';
+        }
+        return result;
+    }
+}
+
+// Seçili modelin meta verisini göster ve maxTokens üst sınırını uyarla.
+function updateModelInfo() {
+    const infoDiv = document.getElementById('modelInfo');
+    const modelInput = document.getElementById('aiModel');
+    const maxTokensInput = document.getElementById('maxTokens');
+    if (!infoDiv || !modelInput) return;
+
+    const modelId = (modelInput.value || '').trim();
+    if (!modelId) {
+        infoDiv.textContent = '';
+        return;
+    }
+    const meta = (window._aiModelMetadata || {})[modelId];
+    if (!meta) {
+        infoDiv.textContent = 'Model bilgisi yok — "Modelleri Yükle" ile meta verileri getirebilirsiniz.';
+        return;
+    }
+
+    const bits = [];
+    if (meta.context_length) bits.push(`Bağlam: ${meta.context_length}`);
+    if (meta.max_output_tokens) bits.push(`Maks. çıktı: ${meta.max_output_tokens}`);
+    if (meta.suggested_max_tokens) bits.push(`Önerilen max_tokens: ${meta.suggested_max_tokens}`);
+    if (meta.quantization) bits.push(`Kuantizasyon: ${meta.quantization}`);
+    if (meta.state) bits.push(`Durum: ${meta.state}`);
+    infoDiv.textContent = bits.join(' · ');
+
+    if (maxTokensInput && meta.suggested_max_tokens) {
+        maxTokensInput.max = String(meta.suggested_max_tokens);
+        if (parseInt(maxTokensInput.value, 10) > meta.suggested_max_tokens) {
+            maxTokensInput.value = meta.suggested_max_tokens;
+        }
+    }
+}
+
+// GELIS24: gerçek bir sohbet tamamlama isteği ile modeli doğrula.
+async function testGeneration(showUi = true) {
+    const resultDiv = document.getElementById('generationTestResult');
+    if (showUi && resultDiv) {
+        resultDiv.textContent = '⏳ Yanıt testi çalışıyor...';
+        resultDiv.className = '';
+    }
+
+    const payload = _modelRequestPayload();
+    const model = (document.getElementById('aiModel')?.value || '').trim();
+    if (model) payload.model = model;
+    payload.max_tokens = 32;
+
+    try {
+        const response = await fetch(`${API_URL}/ai-settings/generation/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+
+        if (showUi && resultDiv) {
+            if (result.status === 'ok') {
+                resultDiv.textContent = `✓ Yanıt alındı (${result.model}, ${result.latency_ms} ms): ${result.reply}`;
+                resultDiv.className = 'success';
+            } else {
+                resultDiv.textContent = `✗ Yanıt testi başarısız (${result.model || model || 'model yok'}): ${result.error || 'bilinmeyen hata'}`;
+                resultDiv.className = 'error';
+            }
+        }
+        return result;
+    } catch (error) {
+        const result = { status: 'error', error: error.message || String(error) };
+        if (showUi && resultDiv) {
+            resultDiv.textContent = 'Hata: ' + result.error;
+            resultDiv.className = 'error';
+        }
+        return result;
     }
 }
 

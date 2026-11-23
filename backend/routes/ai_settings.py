@@ -16,6 +16,35 @@ def _mask_secret(value):
     return '••••' + value[-4:]
 
 
+def _build_client_with_overrides(data):
+    """Build a user-aware client and apply optional request overrides.
+
+    ``api_url``/``provider``/``api_key`` are used only for this request and are
+    never persisted. When the requested URL differs from the effective one, the
+    stored key is intentionally not sent to the new URL.
+    """
+    user = get_user_from_session()
+    client = LocalAIClient(user_id=user['id'] if user else None)
+
+    api_url = (data.get('api_url') or '').strip().rstrip('/')
+    provider = (data.get('provider') or '').strip().lower()
+    api_key = (data.get('api_key') or '').strip()
+
+    if provider:
+        client.provider = provider
+
+    if api_url:
+        if api_url != (client.api_url or '').rstrip('/'):
+            client.api_url = api_url
+            client.set_api_key(api_key)
+        elif api_key:
+            client.set_api_key(api_key)
+    elif api_key:
+        client.set_api_key(api_key)
+
+    return client
+
+
 @bp.route('/', methods=['GET'])
 def get_settings():
     """Get all AI settings (sensitive keys masked)"""
@@ -103,29 +132,58 @@ def test_provider_connection():
     """
     try:
         data = request.get_json(silent=True) or {}
-        api_url = (data.get('api_url') or '').strip().rstrip('/')
-        provider = (data.get('provider') or '').strip().lower()
-        api_key = (data.get('api_key') or '').strip()
-
-        user = get_user_from_session()
-        client = LocalAIClient(user_id=user['id'] if user else None)
-
-        if provider:
-            client.provider = provider
-
-        if api_url:
-            if api_url != (client.api_url or '').rstrip('/'):
-                client.api_url = api_url
-                client.set_api_key(api_key)
-            elif api_key:
-                client.set_api_key(api_key)
-        elif api_key:
-            client.set_api_key(api_key)
-
+        client = _build_client_with_overrides(data)
         result = client.test_connection()
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/models', methods=['GET', 'POST'])
+def list_models():
+    """List models with metadata (context length, output limit, defaults).
+
+    GET  -> uses the stored settings (per-user URL/key aware).
+    POST -> optional ``{api_url?, provider?, api_key?}`` overrides for a
+            test-before-save flow; nothing is persisted.
+    """
+    try:
+        data = (request.get_json(silent=True) or {}) if request.method == 'POST' else {}
+        client = _build_client_with_overrides(data)
+        result = client.list_models_with_metadata()
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({'models': [], 'error': str(e)}), 500
+
+
+@bp.route('/generation/test', methods=['POST'])
+def test_generation():
+    """Send a real chat completion and verify the model answers.
+
+    Optional request JSON:
+    { "api_url": "...", "provider": "lmstudio|llamacpp",
+      "api_key": "...", "model": "...", "max_tokens": 32 }
+
+    A successful ``/models`` check only proves reachability; this endpoint
+    proves the selected model can actually produce a response.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        client = _build_client_with_overrides(data)
+
+        model = (data.get('model') or '').strip()
+        if model:
+            client.model = model
+
+        try:
+            max_tokens = int(data.get('max_tokens', 32))
+        except (TypeError, ValueError):
+            max_tokens = 32
+
+        result = client.test_generation(max_tokens=max_tokens)
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({'status': 'error', 'error': str(e)}), 500
 
 
 @bp.route('/embedding/test', methods=['POST'])

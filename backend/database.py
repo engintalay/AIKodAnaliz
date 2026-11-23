@@ -9,6 +9,8 @@ from config.config import (
     EMBEDDING_MODEL as DEFAULT_EMBEDDING_MODEL,
     EMBEDDING_API_URL,
     EMBEDDING_API_KEY,
+    LMSTUDIO_DEFAULT_MODEL,
+    CONTEXT_LIMIT_TOKENS,
 )
 
 class Database:
@@ -205,6 +207,7 @@ class Database:
                     default_filter TEXT,
                     ai_api_url TEXT,
                     ai_api_key TEXT,
+                    ai_model TEXT,
                     preferences TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id)
@@ -309,6 +312,8 @@ class Database:
                 cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_api_url TEXT')
             if 'ai_api_key' not in existing_columns:
                 cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_api_key TEXT')
+            if 'ai_model' not in existing_columns:
+                cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_model TEXT')
             
             # Migration: Add updated_at column to functions table if not exists
             cursor.execute("PRAGMA table_info(functions)")
@@ -365,6 +370,8 @@ class Database:
                     ('frequency_penalty', '0', 'float'),
                     ('presence_penalty', '0', 'float'),
                     ('retry_count', '3', 'integer'),
+                    ('model_name', LMSTUDIO_DEFAULT_MODEL or '', 'string'),
+                    ('context_limit', str(CONTEXT_LIMIT_TOKENS), 'integer'),
                     ('embedding_model', DEFAULT_EMBEDDING_MODEL, 'string'),
                     ('embedding_api_url', EMBEDDING_API_URL or '', 'string'),
                     ('embedding_api_key', EMBEDDING_API_KEY or '', 'string'),
@@ -389,6 +396,8 @@ class Database:
             # API key + embedding (GELIS23) defaults for existing databases too.
             for setting_name, setting_value, data_type in [
                 ('api_key', AI_API_KEY or '', 'string'),
+                ('model_name', LMSTUDIO_DEFAULT_MODEL or '', 'string'),
+                ('context_limit', str(CONTEXT_LIMIT_TOKENS), 'integer'),
                 ('embedding_model', DEFAULT_EMBEDDING_MODEL, 'string'),
                 ('embedding_api_url', EMBEDDING_API_URL or '', 'string'),
                 ('embedding_api_key', EMBEDDING_API_KEY or '', 'string'),
