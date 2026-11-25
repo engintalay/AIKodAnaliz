@@ -277,6 +277,23 @@ class Database:
                 )
             ''')
 
+            # DALMap files table (GELIS9)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS dalmap_files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    file_name TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    raw_xml TEXT,
+                    tables_json TEXT,
+                    mappings_json TEXT,
+                    sections_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+                )
+            ''')
+
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS doc_chunks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -315,7 +332,7 @@ class Database:
                 cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_api_key TEXT')
             if 'ai_model' not in existing_columns:
                 cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_model TEXT')
-            
+
             # Migration: Add updated_at column to functions table if not exists
             cursor.execute("PRAGMA table_info(functions)")
             func_columns = {row[1] for row in cursor.fetchall()}
@@ -328,7 +345,12 @@ class Database:
                 cursor.execute('ALTER TABLE doc_chunks ADD COLUMN page_start INTEGER')
             if 'page_end' not in doc_chunk_columns:
                 cursor.execute('ALTER TABLE doc_chunks ADD COLUMN page_end INTEGER')
-            
+
+            # Add sections_json to dalmap_files if missing (GELIS9)
+            cursor.execute("PRAGMA table_info(dalmap_files)")
+            dalmap_columns = {row[1] for row in cursor.fetchall()}
+            if 'sections_json' not in dalmap_columns:
+                cursor.execute('ALTER TABLE dalmap_files ADD COLUMN sections_json TEXT')
             # Create demo users if not exist
             cursor.execute("SELECT COUNT(*) FROM users WHERE username = ?", ("admin",))
             if cursor.fetchone()[0] == 0:

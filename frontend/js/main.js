@@ -2430,6 +2430,10 @@ async function showFunctionDetails(functionId) {
             }).join('')
             : '<span class="dep-empty">Yok</span>';
 
+        // Build DB mapping section placeholders (will be filled async)
+        const dbTablesPlaceholderId = 'funcModalDbTables';
+        const dbProcsPlaceholderId = 'funcModalDbProcs';
+
         // Meta info display with dependencies
         document.getElementById('funcModalContent').innerHTML = `
             <p><strong>Tür:</strong> ${func.function_type}</p>
@@ -2444,7 +2448,128 @@ async function showFunctionDetails(functionId) {
                 <p><strong>Bunu Çağıran Fonksiyonlar:</strong></p>
                 <div style="padding: 8px 0;">${calledByHtml}</div>
             </div>
+            <div style="margin-top: 15px;">
+                <p><strong>Kullanılan Veri Tabanı Tabloları:</strong></p>
+                <div id="${dbTablesPlaceholderId}" style="padding: 8px 0; color: #555;">Yükleniyor...</div>
+            </div>
+            <div style="margin-top: 15px;">
+                <p><strong>Kullanılan SP/Fonksiyonlar:</strong></p>
+                <div id="${dbProcsPlaceholderId}" style="padding: 8px 0; color: #555;">Yükleniyor...</div>
+            </div>
         `;
+
+        // Start async load of DB mapping info
+        (async () => {
+            try {
+                const resp = await fetch(`${API_URL}/projects/${currentProjectId}/dalmaps`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+                const data = await resp.json();
+                const dalmaps = Array.isArray(data.dalmaps) ? data.dalmaps : [];
+                const sqlTables = (data.sql_tables && typeof data.sql_tables === 'object') ? data.sql_tables : {};
+                const sqlProcs = (data.sql_procedures && typeof data.sql_procedures === 'object') ? data.sql_procedures : {};
+
+                const className = func.class_name || '';
+                const usedTablesFromCode = Array.isArray(func.used_db_tables) ? func.used_db_tables : [];
+                const usedProcsFromCode = Array.isArray(func.used_stored_procedures) ? func.used_stored_procedures : [];
+                const usedDalmapClasses = Array.isArray(func.used_dalmap_classes) ? func.used_dalmap_classes : [];
+
+                // Collect table candidates (from code usage + DALMap class mapping)
+                const tableEntries = [];
+
+                // From code usage (.from("table"))
+                usedTablesFromCode.forEach(t => {
+                    const normalized = (t || '').toLowerCase().split('.').pop();
+                    const createStmt = sqlTables[normalized];
+                    tableEntries.push({label: t, sql: createStmt, source: 'code'});
+                });
+
+                // From DALMap class -> table mapping
+                if (className) {
+                    const match = dalmaps
+                        .flatMap(d => (d.sections && Array.isArray(d.sections.classes) ? d.sections.classes : []))
+                        .find(c => (c.name || c.class || '').toLowerCase() === className.toLowerCase());
+                    if (match && match.table) {
+                        const tableName = match.table;
+                        const normalized = tableName.toLowerCase().split('.').pop();
+                        const createStmt = sqlTables[normalized];
+                        tableEntries.push({label: tableName, sql: createStmt, source: 'dalmap'});
+                    }
+                }
+
+                // From DALMap insert class usage (DALDB.persistenceBroker().insert(..., ClassInstance))
+                usedDalmapClasses.forEach(cls => {
+                    const match = dalmaps
+                        .flatMap(d => (d.sections && Array.isArray(d.sections.classes) ? d.sections.classes : []))
+                        .find(c => (c.name || c.class || '').toLowerCase().endsWith(cls.toLowerCase()));
+                    if (match && match.table) {
+                        const tableName = match.table;
+                        const normalized = tableName.toLowerCase().split('.').pop();
+                        const createStmt = sqlTables[normalized];
+                        tableEntries.push({label: tableName, sql: createStmt, source: 'dalmap'});
+                    }
+                });
+
+                const tableContainer = document.getElementById(dbTablesPlaceholderId);
+                if (!tableContainer) return;
+
+                if (tableEntries.length === 0) {
+                    tableContainer.textContent = 'Tablo ilişkisi bulunamadı.';
+                } else {
+                    tableContainer.innerHTML = tableEntries.map((t, idx) => {
+                        if (t.sql) {
+                            return `<div style="margin-bottom:6px;"><a href="#" data-sql-index="${idx}" class="db-table-link">${t.label}</a></div>`;
+                        } else {
+                            return `<div style="margin-bottom:6px;">${t.label}</div>`;
+                        }
+                    }).join('');
+
+                    // Attach click handlers to show SQL DDL
+                    tableContainer.querySelectorAll('.db-table-link').forEach(link => {
+                        link.onclick = (e) => {
+                            e.preventDefault();
+                            const idx = parseInt(link.dataset.sqlIndex);
+                            if (!Number.isNaN(idx) && tableEntries[idx] && tableEntries[idx].sql) {
+                                openFileViewerModal(`Tablo DDL: ${tableEntries[idx].label}`, tableEntries[idx].sql);
+                            }
+                        };
+                    });
+                }
+
+                // Build SP list HTML (from code usage + SQL procedure definitions)
+                const procContainer = document.getElementById(dbProcsPlaceholderId);
+                if (!procContainer) return;
+
+                const procFromCode = usedProcsFromCode || [];
+                const procFromSql = Object.keys(sqlProcs || {});
+
+                const procCandidates = Array.from(new Set([...(procFromCode || []), ...procFromSql]));
+
+                if (procCandidates.length === 0) {
+                    procContainer.textContent = 'İlişkili SP/fonksiyon bulunamadı.';
+                } else {
+                    procContainer.innerHTML = procCandidates.map((pn, idx) => {
+                        const hasSql = Boolean(sqlProcs && sqlProcs[pn]);
+                        return `<div style="margin-bottom:6px;"><a href="#" data-proc-name="${pn}" class="db-proc-link">${pn}</a>${hasSql ? ' <small style="color:#666;">(tanım bulundu)</small>' : ''}</div>`;
+                    }).join('');
+
+                    procContainer.querySelectorAll('.db-proc-link').forEach(link => {
+                        link.onclick = (e) => {
+                            e.preventDefault();
+                            const procName = link.dataset.procName;
+                            const sql = sqlProcs[procName];
+                            openFileViewerModal(`SP: ${procName}`, sql || '<i>Tanım bulunamadı</i>');
+                        };
+                    });
+                }
+            } catch (innerErr) {
+                const tableContainer = document.getElementById(dbTablesPlaceholderId);
+                const procContainer = document.getElementById(dbProcsPlaceholderId);
+                if (tableContainer) tableContainer.textContent = 'DB haritalama yüklenirken hata oluştu.';
+                if (procContainer) procContainer.textContent = 'DB haritalama yüklenirken hata oluştu.';
+                console.warn('DALMap/SQL mapping load error', innerErr);
+            }
+        })();
 
         // Update Text Areas
         const summaryTextarea = document.getElementById('funcModalSummary');
@@ -3055,8 +3180,8 @@ async function loadFiles() {
         allDocuments = data.documents || [];
 
         filterFiles();
-        updateDocumentsRagStatus();
-        return;
+        await loadDalmapFiles();
+        updateDocumentsRagStatus();        return;
 
     } catch (error) {
         console.error('Dosyalar yükleme hatası:', error);
@@ -3124,6 +3249,243 @@ async function viewFileContent(fileId, fileName) {
         openFileViewerModal(fileName || data.file_name || 'Dosya Görüntüleme', content);
     } catch (error) {
         showError('Dosya Yükleme Hatası', error.message);
+    }
+}
+
+async function buildDalmapMappingView(dalmap, sqlTables, sqlProcedures) {
+    const sections = dalmap.sections || {};
+    const classes = Array.isArray(sections.classes) ? sections.classes : [];
+    const virtualTables = Array.isArray(sections.virtual_tables) ? sections.virtual_tables : [];
+    const proxyTables = Array.isArray(sections.proxy_tables) ? sections.proxy_tables : [];
+    const dalmapProcedures = Array.isArray(sections.procedures) ? sections.procedures : [];
+    const dalmapFunctions = Array.isArray(sections.functions) ? sections.functions : [];
+
+    const lines = [];
+    lines.push(`DALMap: ${dalmap.file_name || 'DALMap'}`);
+    lines.push(`Özet: ${proxyTables.length} proxy tablo, ${virtualTables.length} sanal tablo, ` +
+        `${classes.length} CLASS, ${dalmapProcedures.length} SP, ${dalmapFunctions.length} fonksiyon`);
+    lines.push('');
+
+    // 1) CLASS -> fiziksel tablo eşlemeleri
+    if (classes.length === 0) {
+        lines.push('⚠️ Hiç CLASS tanımı bulunamadı.');
+        lines.push('');
+    } else {
+        lines.push('CLASS → TABLO EŞLEMELERİ:');
+        lines.push('');
+        classes.forEach((cls, idx) => {
+            const className = cls.name || cls['class'] || '<unknown>';
+            const tableName = cls.table || '<yok>';
+            lines.push(`${idx + 1}. CLASS: ${className}`);
+            lines.push(`   TABLO: ${tableName}`);
+
+            if (Array.isArray(cls.fields) && cls.fields.length > 0) {
+                lines.push('   Alanlar:');
+                cls.fields.forEach(f => {
+                    const fieldName = f.name || f['column'] || f.field || '<unknown>';
+                    const fieldType = f.type || f['datatype'] || '';
+                    const pk = String(f.primarykey || '').toLowerCase() === 'true' ? ' [PK]' : '';
+                    lines.push(`     - ${fieldName}${fieldType ? ` (${fieldType})` : ''}${pk}`);
+                });
+            } else {
+                lines.push('   (Bu CLASS için alan bilgisi bulunamadı)');
+            }
+
+            // Show SQL schema if available
+            const normalizedTable = (tableName || '').toLowerCase().split('.').pop();
+            if (normalizedTable && sqlTables) {
+                const sql = sqlTables[normalizedTable];
+                if (sql) {
+                    lines.push('   --- DB TABLO ŞEMASI (CREATE TABLE) ---');
+                    const sqlLines = sql.split('\n').map(l => `     ${l}`);
+                    lines.push(...sqlLines);
+                }
+            }
+
+            // Find related stored procedures (by table name or class name)
+            const normalizedClassName = (className || '').toLowerCase();
+            const procMatches = [];
+            if (sqlProcedures) {
+                Object.keys(sqlProcedures).forEach(procName => {
+                    const pn = procName.toLowerCase();
+                    if (normalizedTable && pn.includes(normalizedTable)) {
+                        procMatches.push(procName);
+                    } else if (normalizedClassName && pn.includes(normalizedClassName)) {
+                        procMatches.push(procName);
+                    }
+                });
+            }
+
+            if (procMatches.length > 0) {
+                lines.push('   İlgili SP/Function (SQL):');
+                procMatches.forEach(pn => lines.push(`     - ${pn}`));
+            }
+
+            lines.push('');
+        });
+    }
+
+    // 2) Sanal tablo -> proxy tablo ilişkileri
+    if (virtualTables.length > 0) {
+        lines.push('SANAL TABLO → PROXY TABLO İLİŞKİLERİ:');
+        lines.push('');
+        virtualTables.forEach((vt, idx) => {
+            const refs = Array.isArray(vt.proxy_tables) ? vt.proxy_tables : [];
+            const refNames = refs.map(r => r.name || r['name'] || '').filter(Boolean);
+            lines.push(`${idx + 1}. VT: ${vt.name || '<unknown>'}`);
+            lines.push(`   PT: ${refNames.length ? refNames.join(', ') : '<yok>'}`);
+        });
+        lines.push('');
+    }
+
+    // 3) Proxy tablo -> fiziksel tablo
+    if (proxyTables.length > 0) {
+        lines.push('PROXY TABLO → FİZİKSEL TABLO:');
+        lines.push('');
+        proxyTables.forEach((pt, idx) => {
+            const fieldCount = Array.isArray(pt.fields) ? pt.fields.length : 0;
+            const db = pt.db ? ` [db: ${pt.db}]` : '';
+            lines.push(`${idx + 1}. ${pt.name || '<unknown>'} → ${pt.table || '<yok>'}${db} (${fieldCount} alan)`);
+        });
+        lines.push('');
+    }
+
+    // 4) DALMap içindeki SP / FUNCTION tanımları
+    const dalmapCallables = [
+        ...dalmapProcedures.map(p => ({ kind: 'SP', item: p })),
+        ...dalmapFunctions.map(f => ({ kind: 'FUNCTION', item: f })),
+    ];
+    if (dalmapCallables.length > 0) {
+        lines.push('DALMAP SP / FONKSİYON TANIMLARI:');
+        lines.push('');
+        dalmapCallables.forEach(({ kind, item }, idx) => {
+            const params = Array.isArray(item.params) ? item.params.length : 0;
+            const db = item.db ? ` [db: ${item.db}]` : '';
+            lines.push(`${idx + 1}. ${kind}: ${item.name || item.id || '<unknown>'}${db} (${params} parametre)`);
+        });
+        lines.push('');
+    }
+
+    // 5) SQL kaynaklarından çıkarılan prosedürler
+    const procedures = sqlProcedures || {};
+    const procNames = Object.keys(procedures);
+    if (procNames.length > 0) {
+        lines.push('SQL PROSEDÜRLERİ / FONKSİYONLARI:');
+        lines.push('');
+        procNames.forEach(name => {
+            lines.push(`- ${name}`);
+        });
+    }
+
+    return lines.join('\n');
+}
+
+async function loadDalmapFiles() {
+    if (!currentProjectId) return;
+
+    const container = document.getElementById('dalmapList');
+    if (!container) return;
+    container.innerHTML = '<div style="color:#666;">DALMap dosyaları yükleniyor...</div>';
+
+    try {
+        const resp = await fetch(`${API_URL}/projects/${currentProjectId}/dalmaps`);
+        if (!resp.ok) {
+            container.innerHTML = `<div style="color:#c0392b;">Hata: ${resp.status}</div>`;
+            return;
+        }
+
+        const data = await resp.json();
+        const dalmaps = Array.isArray(data.dalmaps) ? data.dalmaps : [];
+        const sqlTables = (data.sql_tables && typeof data.sql_tables === 'object') ? data.sql_tables : {};
+        const sqlProcedures = (data.sql_procedures && typeof data.sql_procedures === 'object') ? data.sql_procedures : {};
+
+        if (!dalmaps.length) {
+            container.innerHTML = '<div style="color:#666;">Bu projede DALMap dosyası bulunamadı.</div>';
+            return;
+        }
+
+        container.innerHTML = '';
+        dalmaps.forEach(d => {
+            const item = document.createElement('div');
+            item.style.cssText = 'padding:8px; border:1px solid #e1e7ee; border-radius:6px; margin-bottom:8px; background:#fff; display:flex; justify-content:space-between; align-items:flex-start;';
+
+            const info = document.createElement('div');
+            const title = document.createElement('div');
+            title.style.fontWeight = '600';
+            title.textContent = d.file_name || 'DALMap';
+            const meta = document.createElement('div');
+            meta.style.fontSize = '12px';
+            meta.style.color = '#555';
+            meta.textContent = `Oluşturulma: ${new Date(d.created_at).toLocaleString('tr-TR')}`;
+            info.appendChild(title);
+            info.appendChild(meta);
+
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-secondary';
+            btn.style.fontSize = '12px';
+            btn.textContent = 'Göster';
+            btn.onclick = async () => {
+                const mappedView = await buildDalmapMappingView(d, sqlTables, sqlProcedures);
+                openFileViewerModal(d.file_name || 'DALMap', mappedView);
+            };
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-secondary';
+            deleteBtn.style.cssText = 'font-size:12px; color:#c0392b;';
+            deleteBtn.textContent = '🗑 Sil';
+            deleteBtn.onclick = (e) => { e.stopPropagation(); deleteDalmapFile(d.id, d.file_name); };
+
+            const actions = document.createElement('div');
+            actions.style.cssText = 'display:flex; gap:6px; flex-shrink:0;';
+            actions.appendChild(btn);
+            actions.appendChild(deleteBtn);
+
+            item.appendChild(info);
+            item.appendChild(actions);
+            container.appendChild(item);
+        });
+    } catch (error) {
+        container.innerHTML = `<div style="color:#c0392b;">Hata: ${error.message}</div>`;
+    }
+}
+
+async function deleteProjectDocument(fileName) {
+    if (!currentProjectId || !fileName) return;
+    if (!confirm(`"${fileName}" dokümanını ve RAG indeksini silmek istediğinizden emin misiniz?`)) return;
+
+    try {
+        const response = await fetch(
+            `${API_URL}/projects/${currentProjectId}/docs/file/${encodeURIComponent(fileName)}`,
+            { method: 'DELETE' }
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            alert(`Silme başarısız: ${data.error || response.status}`);
+            return;
+        }
+        await loadFiles();
+    } catch (error) {
+        alert(`Silme hatası: ${error.message}`);
+    }
+}
+
+async function deleteDalmapFile(dalmapId, fileName) {
+    if (!currentProjectId || !dalmapId) return;
+    if (!confirm(`"${fileName || 'DALMap'}" konfigürasyonunu ve RAG indeksini silmek istediğinizden emin misiniz?`)) return;
+
+    try {
+        const response = await fetch(
+            `${API_URL}/projects/${currentProjectId}/dalmaps/${dalmapId}`,
+            { method: 'DELETE' }
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            alert(`Silme başarısız: ${data.error || response.status}`);
+            return;
+        }
+        await loadFiles();
+    } catch (error) {
+        alert(`Silme hatası: ${error.message}`);
     }
 }
 
@@ -3214,8 +3576,10 @@ function filterFiles() {
         filteredDocs.forEach(doc => {
             const item = document.createElement('div');
             item.className = 'file-item';
-            item.style.cursor = 'pointer';
-            item.onclick = () => viewDocumentFromChat(doc.file_name);
+            item.style.cssText = 'display:flex; justify-content:space-between; align-items:flex-start; gap:8px;';
+            const infoDiv = document.createElement('div');
+            infoDiv.style.cssText = 'flex:1; cursor:pointer;';
+            infoDiv.onclick = () => viewDocumentFromChat(doc.file_name);
             const nameEl = document.createElement('h4');
             nameEl.textContent = doc.file_name;
             const pathEl = document.createElement('p');
@@ -3223,9 +3587,18 @@ function filterFiles() {
             pathEl.textContent = doc.file_path;
             const typeEl = document.createElement('small');
             typeEl.textContent = `Tip: ${doc.document_type || 'doküman'} • RAG`;
-            item.appendChild(nameEl);
-            item.appendChild(pathEl);
-            item.appendChild(typeEl);
+            infoDiv.appendChild(nameEl);
+            infoDiv.appendChild(pathEl);
+            infoDiv.appendChild(typeEl);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-secondary';
+            deleteBtn.style.cssText = 'font-size:11px; padding:4px 8px; white-space:nowrap; flex-shrink:0; color:#c0392b;';
+            deleteBtn.textContent = '🗑 Sil';
+            deleteBtn.onclick = (e) => { e.stopPropagation(); deleteProjectDocument(doc.file_name); };
+
+            item.appendChild(infoDiv);
+            item.appendChild(deleteBtn);
             list.appendChild(item);
         });
     }
@@ -3252,9 +3625,8 @@ async function addFileToProject() {
     
     // Validate file type
     const fileName = file.name.toLowerCase();
-    const validExtensions = ['.zip', '.war', '.jar', '.java', '.sql', '.py', '.js', '.ts', '.php',
-                             '.pdf', '.doc', '.docx', '.txt', '.md', '.xlsx', '.xls'];
-    const isValid = validExtensions.some(ext => fileName.endsWith(ext));
+    const validExtensions = ['.zip', '.war', '.jar', '.java', '.sql', '.py', '.js', '.ts', '.php', '.xml',
+                             '.pdf', '.doc', '.docx', '.txt', '.md', '.xlsx', '.xls'];    const isValid = validExtensions.some(ext => fileName.endsWith(ext));
     
     if (!isValid) {
         showError('Geçersiz Dosya Tipi', `Desteklenmeyen dosya tipi: ${file.name}\n\nDesteklenen: ZIP, WAR, JAR, Java, Python, JavaScript, SQL, PDF, DOC, DOCX, TXT, MD, XLSX, XLS`);

@@ -393,6 +393,17 @@ def analyze_project(project_id):
                 detail=f'Proje {project_id} için analiz başlatıldı'
             )
         
+        # Preserve existing AI summaries (by qualified name) so re-analysis doesn't wipe them.
+        preserved_summaries = {}
+        existing_rows = db.execute_query(
+            'SELECT function_name, class_name, ai_summary FROM functions WHERE project_id = ?',
+            (project_id,)
+        )
+        for r in existing_rows:
+            kval = f"{r['class_name']}.{r['function_name']}" if r.get('class_name') else r['function_name']
+            if r.get('ai_summary'):
+                preserved_summaries[kval] = r['ai_summary']
+
         # Snapshot existing summaries and restore by stable key after re-analysis.
         previous_summaries = {}
         summary_rows = db.execute_query(
@@ -414,7 +425,6 @@ def analyze_project(project_id):
                 r.get('function_type')
             )
             previous_summaries[key] = r.get('ai_summary')
-
         # Clear previous analysis data (allow re-analysis)
         db.execute_update('DELETE FROM function_calls WHERE project_id = ?', (project_id,))
         db.execute_update('DELETE FROM entry_points WHERE project_id = ?', (project_id,))
@@ -509,16 +519,19 @@ def analyze_project(project_id):
             
             # Store functions and entry points
             for func in result.get('functions', []):
+                qualified = f"{func.get('class_name')}.{func.get('name')}" if func.get('class_name') else func.get('name')
+                ai_summary = preserved_summaries.get(qualified)
+
                 func_id = db.execute_insert(
                     '''INSERT INTO functions 
                     (project_id, file_id, function_name, function_type, 
                     start_line, end_line, signature, parameters, return_type,
-                    class_name, package_name)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    class_name, package_name, ai_summary)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                     (project_id, file_id, func['name'], func['type'],
                     func['start_line'], func['end_line'], func['signature'],
                     json.dumps(func['parameters']), func.get('return_type', ''),
-                    func.get('class_name'), func.get('package_name'))
+                    func.get('class_name'), func.get('package_name'), ai_summary)
                 )
 
                 restored_summary = previous_summaries.get(
@@ -1950,6 +1963,31 @@ def get_function_details(function_id):
             
         # Don't send the entire file content back
         func.pop('content', None)
+
+        # Extract DB table/SP usage from source code (e.g. .from("table"), storedProcedure("SP"), insert(..., obj))
+        try:
+            import re
+            src = func.get('source_code', '') or ''
+
+            tables = set()
+            for m in re.finditer(r"\.from\(\s*['\"]([^'\"]+)['\"]\s*\)", src):
+                tables.add(m.group(1))
+
+            procs = set()
+            for m in re.finditer(r"DALDB\.storedProcedure\(\s*['\"]([^'\"]+)['\"]\s*\)", src):
+                procs.add(m.group(1))
+
+            dalmap_classes = set()
+            for m in re.finditer(r"DALDB\.persistenceBroker\(\)\.insert\(\s*[^,]+,\s*([A-Za-z_][A-Za-z0-9_]*)", src):
+                dalmap_classes.add(m.group(1))
+
+            func['used_db_tables'] = sorted(tables)
+            func['used_stored_procedures'] = sorted(procs)
+            func['used_dalmap_classes'] = sorted(dalmap_classes)
+        except Exception:
+            func['used_db_tables'] = []
+            func['used_stored_procedures'] = []
+            func['used_dalmap_classes'] = []
         
         # Parse parameters from JSON string
         if func['parameters']:
