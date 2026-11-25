@@ -454,8 +454,8 @@ def add_files_to_project(project_id):
                 # Cleanup
                 shutil.rmtree(temp_extract_dir, ignore_errors=True)
                 
-            elif file_lower.endswith('.xml'):
-                # DALMap configuration file
+            elif file_lower.endswith('.xml') and _is_dalmap_file(file.filename):
+                # DALMap configuration file (dalMapConfig_*.xml)
                 progress_tracker.update(task_id, progress=30, step='DALMap işleniyor...', detail='DALMap yapılandırması pars ediliyor')
 
                 dalmap_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}', 'dalmap')
@@ -570,7 +570,7 @@ def add_files_to_project(project_id):
                 added_documents = 1
                 logger.debug(f"[Project {project_id}] Added document: {file.filename} (ID: {doc_id})")
                 
-            elif file_lower.endswith(('.java', '.sql', '.py', '.js', '.ts', '.php')):
+            elif file_lower.endswith(('.java', '.sql', '.py', '.js', '.ts', '.php', '.xml')):
                 # Single source code files
                 progress_tracker.update(task_id, progress=30, step='Kaynak dosyası işleniyor...', detail=f'{file.filename}')
                 

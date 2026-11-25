@@ -308,38 +308,78 @@ def _parse_dalmap_xml(path: str) -> dict:
     virtual_tables = []
     classes = []
     procedures = []
+    functions = []
 
-    for pt in root.findall('.//PT'):
-        entry = attrs(pt)
-        entry['fields'] = parse_fields(pt)
-        proxy_tables.append(entry)
+    # Scope PT lookups to the PROXYTABLES section only. VIRTUALTABLES also
+    # contain <PT name="..."/> references; a global .//PT search would wrongly
+    # treat those references as proxy table definitions.
+    proxy_root = root.find('PROXYTABLES')
+    if proxy_root is not None:
+        for pt in proxy_root.findall('PT'):
+            entry = attrs(pt)
+            entry['fields'] = parse_fields(pt)
+            proxy_tables.append(entry)
 
-    for vt in root.findall('.//VT'):
-        entry = attrs(vt)
-        # VT may contain PT references (as child tags) or other info
-        entry['proxy_tables'] = [attrs(child) for child in vt.findall('PT')]
-        virtual_tables.append(entry)
+    vt_root = root.find('VIRTUALTABLES')
+    if vt_root is not None:
+        for vt in vt_root.findall('VT'):
+            entry = attrs(vt)
+            # VT references one or more proxy tables via child <PT name="..."/>
+            entry['proxy_tables'] = [attrs(child) for child in vt.findall('PT')]
+            virtual_tables.append(entry)
 
-    for cl in root.findall('.//CLASS'):
-        entry = attrs(cl)
-        entry['fields'] = []
-        for f in cl.findall('FIELD'):
-            field_entry = attrs(f)
-            if (text := (f.text or '').strip()):
-                field_entry['text'] = text
-            entry['fields'].append(field_entry)
-        classes.append(entry)
+    class_root = root.find('CLASSES')
+    if class_root is not None:
+        for cl in class_root.findall('CLASS'):
+            entry = attrs(cl)
+            entry['fields'] = parse_fields(cl)
+            classes.append(entry)
 
-    for sp in root.findall('.//SP'):
-        entry = attrs(sp)
-        entry['params'] = parse_params(sp)
-        procedures.append(entry)
+    proc_root = root.find('PROCEDURES')
+    if proc_root is not None:
+        for sp in proc_root.findall('SP'):
+            entry = attrs(sp)
+            entry['params'] = parse_params(sp)
+            procedures.append(entry)
+
+    func_root = root.find('FUNCTIONS')
+    if func_root is not None:
+        for fn in func_root.findall('FUNCTION'):
+            entry = attrs(fn)
+            entry['params'] = parse_params(fn)
+            functions.append(entry)
+
+    # Build explicit mappings used by the UI / analysis:
+    #   - class -> table (CLASS name/table)
+    #   - virtual table -> proxy tables (VT name -> [PT names])
+    #   - proxy table -> physical table (PT name -> table)
+    class_mappings = [
+        {'class': c.get('name'), 'table': c.get('table')}
+        for c in classes if c.get('name') or c.get('table')
+    ]
+    virtual_mappings = [
+        {
+            'virtual_table': v.get('name'),
+            'proxy_tables': [p.get('name') for p in v.get('proxy_tables', []) if p.get('name')],
+        }
+        for v in virtual_tables if v.get('name')
+    ]
+    proxy_mappings = [
+        {'proxy_table': p.get('name'), 'table': p.get('table'), 'db': p.get('db')}
+        for p in proxy_tables if p.get('name')
+    ]
 
     return {
         'proxy_tables': proxy_tables,
         'virtual_tables': virtual_tables,
         'classes': classes,
-        'procedures': procedures
+        'procedures': procedures,
+        'functions': functions,
+        'mappings': {
+            'classes': class_mappings,
+            'virtual_tables': virtual_mappings,
+            'proxy_tables': proxy_mappings,
+        },
     }
 
 
@@ -352,6 +392,11 @@ def _process_dalmap_file(project_id: int, file_path: str, rel_path: str, file_na
         sections = _parse_dalmap_xml(file_path)
 
         import json
+        # Re-upload: replace the previous record for the same project/file.
+        db.execute_update(
+            'DELETE FROM dalmap_files WHERE project_id = ? AND file_name = ?',
+            (project_id, file_name)
+        )
         db.execute_insert(
             '''INSERT INTO dalmap_files
                (project_id, file_name, file_path, raw_xml, tables_json, mappings_json, sections_json)
@@ -362,7 +407,7 @@ def _process_dalmap_file(project_id: int, file_path: str, rel_path: str, file_na
                 rel_path,
                 raw,
                 json.dumps(sections.get('proxy_tables', []), ensure_ascii=False),
-                json.dumps(sections.get('mappings', []), ensure_ascii=False),
+                json.dumps(sections.get('mappings', {}), ensure_ascii=False),
                 json.dumps(sections, ensure_ascii=False),
             )
         )
@@ -755,9 +800,10 @@ def _extract_sql_procedures_from_text(sql_text: str) -> dict:
 def list_dalmap_files(project_id):
     """Return list of processed DALMap files and their parsed sections."""
     try:
-        # Gather DALMap entries
+        # Gather DALMap entries (raw_xml is intentionally excluded: it can be large
+        # and the UI only needs the parsed sections).
         rows = db.execute_query(
-            '''SELECT id, file_name, file_path, created_at, updated_at, raw_xml, sections_json
+            '''SELECT id, file_name, file_path, created_at, updated_at, sections_json
                FROM dalmap_files
                WHERE project_id = ?
                ORDER BY created_at DESC''',
@@ -767,7 +813,6 @@ def list_dalmap_files(project_id):
         dalmaps = []
         for r in rows:
             entry = dict(r)
-            entry['raw_xml'] = entry.get('raw_xml') or ''
             try:
                 import json
                 entry['sections'] = json.loads(entry.get('sections_json') or '{}')

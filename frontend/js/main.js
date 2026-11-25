@@ -3255,13 +3255,21 @@ async function viewFileContent(fileId, fileName) {
 async function buildDalmapMappingView(dalmap, sqlTables, sqlProcedures) {
     const sections = dalmap.sections || {};
     const classes = Array.isArray(sections.classes) ? sections.classes : [];
+    const virtualTables = Array.isArray(sections.virtual_tables) ? sections.virtual_tables : [];
+    const proxyTables = Array.isArray(sections.proxy_tables) ? sections.proxy_tables : [];
+    const dalmapProcedures = Array.isArray(sections.procedures) ? sections.procedures : [];
+    const dalmapFunctions = Array.isArray(sections.functions) ? sections.functions : [];
 
     const lines = [];
     lines.push(`DALMap: ${dalmap.file_name || 'DALMap'}`);
+    lines.push(`Özet: ${proxyTables.length} proxy tablo, ${virtualTables.length} sanal tablo, ` +
+        `${classes.length} CLASS, ${dalmapProcedures.length} SP, ${dalmapFunctions.length} fonksiyon`);
     lines.push('');
 
+    // 1) CLASS -> fiziksel tablo eşlemeleri
     if (classes.length === 0) {
         lines.push('⚠️ Hiç CLASS tanımı bulunamadı.');
+        lines.push('');
     } else {
         lines.push('CLASS → TABLO EŞLEMELERİ:');
         lines.push('');
@@ -3276,7 +3284,8 @@ async function buildDalmapMappingView(dalmap, sqlTables, sqlProcedures) {
                 cls.fields.forEach(f => {
                     const fieldName = f.name || f['column'] || f.field || '<unknown>';
                     const fieldType = f.type || f['datatype'] || '';
-                    lines.push(`     - ${fieldName}${fieldType ? ` (${fieldType})` : ''}`);
+                    const pk = String(f.primarykey || '').toLowerCase() === 'true' ? ' [PK]' : '';
+                    lines.push(`     - ${fieldName}${fieldType ? ` (${fieldType})` : ''}${pk}`);
                 });
             } else {
                 lines.push('   (Bu CLASS için alan bilgisi bulunamadı)');
@@ -3316,11 +3325,52 @@ async function buildDalmapMappingView(dalmap, sqlTables, sqlProcedures) {
         });
     }
 
-    // Global SQL procedures list
+    // 2) Sanal tablo -> proxy tablo ilişkileri
+    if (virtualTables.length > 0) {
+        lines.push('SANAL TABLO → PROXY TABLO İLİŞKİLERİ:');
+        lines.push('');
+        virtualTables.forEach((vt, idx) => {
+            const refs = Array.isArray(vt.proxy_tables) ? vt.proxy_tables : [];
+            const refNames = refs.map(r => r.name || r['name'] || '').filter(Boolean);
+            lines.push(`${idx + 1}. VT: ${vt.name || '<unknown>'}`);
+            lines.push(`   PT: ${refNames.length ? refNames.join(', ') : '<yok>'}`);
+        });
+        lines.push('');
+    }
+
+    // 3) Proxy tablo -> fiziksel tablo
+    if (proxyTables.length > 0) {
+        lines.push('PROXY TABLO → FİZİKSEL TABLO:');
+        lines.push('');
+        proxyTables.forEach((pt, idx) => {
+            const fieldCount = Array.isArray(pt.fields) ? pt.fields.length : 0;
+            const db = pt.db ? ` [db: ${pt.db}]` : '';
+            lines.push(`${idx + 1}. ${pt.name || '<unknown>'} → ${pt.table || '<yok>'}${db} (${fieldCount} alan)`);
+        });
+        lines.push('');
+    }
+
+    // 4) DALMap içindeki SP / FUNCTION tanımları
+    const dalmapCallables = [
+        ...dalmapProcedures.map(p => ({ kind: 'SP', item: p })),
+        ...dalmapFunctions.map(f => ({ kind: 'FUNCTION', item: f })),
+    ];
+    if (dalmapCallables.length > 0) {
+        lines.push('DALMAP SP / FONKSİYON TANIMLARI:');
+        lines.push('');
+        dalmapCallables.forEach(({ kind, item }, idx) => {
+            const params = Array.isArray(item.params) ? item.params.length : 0;
+            const db = item.db ? ` [db: ${item.db}]` : '';
+            lines.push(`${idx + 1}. ${kind}: ${item.name || item.id || '<unknown>'}${db} (${params} parametre)`);
+        });
+        lines.push('');
+    }
+
+    // 5) SQL kaynaklarından çıkarılan prosedürler
     const procedures = sqlProcedures || {};
     const procNames = Object.keys(procedures);
     if (procNames.length > 0) {
-        lines.push('SQL PROSEDÜRLERİ / FONKSİYONLAR:');
+        lines.push('SQL PROSEDÜRLERİ / FONKSİYONLARI:');
         lines.push('');
         procNames.forEach(name => {
             lines.push(`- ${name}`);
