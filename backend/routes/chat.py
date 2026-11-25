@@ -1,16 +1,198 @@
 """AI Chat routes – per-project conversational assistant."""
 import json
 import math
+import os
 import re
+import time
+import uuid
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 from backend.database import db
 from backend.ai_client import LocalAIClient
 from backend.permission_manager import get_user_from_session, check_project_access
 from backend.logger import logger, log_audit
 from backend.rag_index import RagIndex
-from config.config import LLM_RATE_LIMIT_MAX_WAIT
+from config.config import LLM_RATE_LIMIT_MAX_WAIT, UPLOAD_DIR
 
 bp = Blueprint('chat', __name__, url_prefix='/api/chat')
+
+# ------------------------------------------------------------------
+# GELIS29: Chat-scoped attachments (not added to the project/RAG index)
+# ------------------------------------------------------------------
+CHAT_ATTACHMENT_DIR = os.path.join(UPLOAD_DIR, 'chat_attachments')
+CHAT_ATTACHMENT_ALLOWED_EXT = {'pdf', 'doc', 'docx', 'txt', 'md', 'text'}
+CHAT_ATTACHMENT_MAX_AGE_SECONDS = 24 * 60 * 60
+# Total characters injected into the LLM prompt. Files are never rejected for
+# size; only the prompt injection is capped to protect the context window.
+CHAT_ATTACHMENT_MAX_PROMPT_CHARS = 120000
+
+
+def _ensure_attachment_dir() -> None:
+    os.makedirs(CHAT_ATTACHMENT_DIR, exist_ok=True)
+
+
+def _attachment_meta_path(att_id: str) -> str:
+    return os.path.join(CHAT_ATTACHMENT_DIR, f'{att_id}.json')
+
+
+def _cleanup_old_attachments() -> None:
+    """Remove attachment metadata older than the retention window."""
+    try:
+        if not os.path.isdir(CHAT_ATTACHMENT_DIR):
+            return
+        cutoff = time.time() - CHAT_ATTACHMENT_MAX_AGE_SECONDS
+        for entry in os.listdir(CHAT_ATTACHMENT_DIR):
+            if not entry.endswith('.json'):
+                continue
+            path = os.path.join(CHAT_ATTACHMENT_DIR, entry)
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+            except OSError:
+                continue
+    except Exception as exc:
+        logger.warning(f"Chat attachment cleanup failed: {exc}")
+
+
+def _raw_binary_text(raw: bytes) -> str:
+    """Best-effort text recovery from legacy binary formats (.doc)."""
+    if not raw:
+        return ''
+    if raw[:2] in (b'\xff\xfe', b'\xfe\xff'):
+        try:
+            return raw.decode('utf-16', errors='ignore')
+        except Exception:
+            pass
+    # Keep printable runs (latin-1 keeps byte values 1:1).
+    text = raw.decode('latin-1', errors='ignore')
+    runs = re.findall(r'[ -~\u00a0-\u024f]{4,}', text)
+    return '\n'.join(run.strip() for run in runs if run.strip())
+
+
+def _extract_attachment_text(path: str, file_name: str) -> str:
+    """Extract readable text from a chat attachment (pdf/doc/docx/txt/md)."""
+    ext = os.path.splitext(file_name)[1].lower().lstrip('.')
+
+    if ext == 'pdf':
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(path)
+            parts = []
+            for page in reader.pages:
+                try:
+                    parts.append(page.extract_text() or '')
+                except Exception:
+                    continue
+            return '\n'.join(part for part in parts if part.strip())
+        except Exception as exc:
+            logger.warning(f"Chat PDF extraction failed {file_name}: {exc}")
+            return ''
+
+    if ext in ('docx', 'doc'):
+        try:
+            import docx
+            doc = docx.Document(path)
+            parts = [p.text for p in doc.paragraphs if p.text and p.text.strip()]
+            for table in doc.tables:
+                for row in table.rows:
+                    cells = [c.text.strip() for c in row.cells if c.text and c.text.strip()]
+                    if cells:
+                        parts.append(' | '.join(cells))
+            text = '\n'.join(parts)
+            if text.strip():
+                return text
+        except Exception:
+            pass
+
+        if ext == 'doc':
+            # Legacy .doc: try antiword, then fall back to raw text recovery.
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ['antiword', path], capture_output=True, timeout=30
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.decode('utf-8', errors='ignore')
+            except Exception:
+                pass
+            try:
+                with open(path, 'rb') as fh:
+                    return _raw_binary_text(fh.read())
+            except Exception as exc:
+                logger.warning(f"Chat DOC extraction failed {file_name}: {exc}")
+                return ''
+        return ''
+
+    # txt / md / text
+    try:
+        with open(path, 'r', encoding='utf-8', errors='ignore') as fh:
+            return fh.read()
+    except Exception as exc:
+        logger.warning(f"Chat text extraction failed {file_name}: {exc}")
+        return ''
+
+
+def _load_chat_attachments(project_id: int, user, attachment_ids: list) -> tuple[str, list]:
+    """Load attachment texts for prompt injection.
+
+    Returns (prompt_block, refs). Only attachments belonging to the same
+    project and user are accepted.
+    """
+    if not attachment_ids:
+        return '', []
+
+    user_id = user['id'] if user else None
+    loaded = []
+    for att_id in attachment_ids[:20]:
+        att_id = str(att_id or '').strip()
+        if not att_id or not re.fullmatch(r'[a-f0-9]{32}', att_id):
+            continue
+        path = _attachment_meta_path(att_id)
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, 'r', encoding='utf-8') as fh:
+                meta = json.load(fh)
+        except Exception:
+            continue
+        if int(meta.get('project_id') or 0) != int(project_id):
+            continue
+        if user_id is not None and meta.get('user_id') not in (None, user_id):
+            continue
+        text = (meta.get('text') or '').strip()
+        if not text:
+            continue
+        loaded.append({'name': meta.get('name') or 'dosya', 'text': text})
+
+    if not loaded:
+        return '', []
+
+    total_chars = sum(len(item['text']) for item in loaded)
+    truncated = total_chars > CHAT_ATTACHMENT_MAX_PROMPT_CHARS
+    if truncated:
+        # Distribute the budget proportionally so every file keeps some content.
+        budget = CHAT_ATTACHMENT_MAX_PROMPT_CHARS
+        for item in loaded:
+            share = max(1000, int(budget * (len(item['text']) / total_chars)))
+            if len(item['text']) > share:
+                item['text'] = item['text'][:share] + '\n[...içerik bağlam sınırı nedeniyle kısaltıldı...]'
+
+    blocks = []
+    refs = []
+    for item in loaded:
+        blocks.append(f"=== DOSYA: {item['name']} ===\n{item['text']}\n=== DOSYA SONU: {item['name']} ===")
+        refs.append({'type': 'attachment', 'id': None, 'name': item['name'], 'file': item['name']})
+
+    header = (
+        "Kullanıcı bu sohbete özel dosyalar yükledi. Bu dosyalar projeye veya RAG "
+        "indeksine eklenmemiştir; yalnızca bu konuşma için bağlam sağlar. "
+        "Soruları yanıtlarken bu dosyaların içeriğini birincil kaynak olarak kullan "
+        "ve dosya adlarına atıfta bulun."
+    )
+    if truncated:
+        header += " Not: toplam içerik bağlam sınırı nedeniyle kısaltılmıştır."
+
+    prompt_block = header + '\n\n' + '\n\n'.join(blocks)
+    return prompt_block, refs
 
 # ------------------------------------------------------------------
 # Context retrieval helpers
@@ -249,6 +431,7 @@ def chat_with_project(project_id):
     history = data.get('history', [])  # list of {role, content}
     context_function_ids = data.get('context_function_ids') or None
     context_documents = data.get('context_documents') or None
+    attachment_ids = data.get('attachments') or []
     max_tokens = data.get('max_tokens') or None
     if max_tokens:
         try:
@@ -272,6 +455,12 @@ def chat_with_project(project_id):
         function_ids=context_function_ids,
         selected_docs=context_documents,
     )
+
+    # GELIS29: inject chat-scoped attachments (not part of the project index).
+    attachment_block, attachment_refs = _load_chat_attachments(project_id, user, attachment_ids)
+    if attachment_block:
+        system_prompt = system_prompt + '\n\n' + attachment_block
+        refs.extend(attachment_refs)
 
     # Build message list for LLM
     messages = [dict(h) for h in history if h.get('role') in ('user', 'assistant')]
@@ -435,3 +624,148 @@ def search_functions(project_id):
             qualified = f"{f['class_name']}.{qualified}"
         result.append({'name': qualified, 'file': f.get('file_name', '')})
     return jsonify(result), 200
+
+
+# ------------------------------------------------------------------
+# GELIS29: Chat-scoped attachment endpoints
+# ------------------------------------------------------------------
+
+@bp.route('/project/<int:project_id>/attachments', methods=['POST'])
+@check_project_access('read')
+def upload_chat_attachments(project_id):
+    """Upload PDF/DOC/DOCX/TXT/MD files for the current chat only.
+
+    Files are extracted to text and stored outside the project/RAG index.
+    Returns: { "attachments": [{id, name, size, chars} | {name, error}] }
+    """
+    user = get_user_from_session()
+    files = request.files.getlist('files') or request.files.getlist('file')
+    if not files:
+        return jsonify({'error': 'Dosya bulunamadı'}), 400
+
+    _ensure_attachment_dir()
+    _cleanup_old_attachments()
+
+    results = []
+    for storage in files:
+        name = os.path.basename(storage.filename or '').strip()
+        if not name:
+            continue
+        ext = os.path.splitext(name)[1].lower().lstrip('.')
+        if ext not in CHAT_ATTACHMENT_ALLOWED_EXT:
+            results.append({'name': name, 'error': f'Desteklenmeyen format: .{ext or "?"}'})
+            continue
+
+        att_id = uuid.uuid4().hex
+        tmp_path = os.path.join(CHAT_ATTACHMENT_DIR, f'{att_id}.{ext}')
+        try:
+            storage.save(tmp_path)
+            text = _extract_attachment_text(tmp_path, name)
+        except Exception as exc:
+            logger.warning(f"Chat attachment save/extract failed {name}: {exc}")
+            text = ''
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+
+        if not text or not text.strip():
+            results.append({'name': name, 'error': 'Dosyadan metin çıkarılamadı'})
+            continue
+
+        meta = {
+            'id': att_id,
+            'name': name,
+            'ext': ext,
+            'size': len(text.encode('utf-8')),
+            'chars': len(text),
+            'text': text,
+            'project_id': project_id,
+            'user_id': user['id'] if user else None,
+            'created_at': time.time(),
+        }
+        try:
+            with open(_attachment_meta_path(att_id), 'w', encoding='utf-8') as fh:
+                json.dump(meta, fh, ensure_ascii=False)
+        except Exception as exc:
+            logger.warning(f"Chat attachment persist failed {name}: {exc}")
+            results.append({'name': name, 'error': 'Dosya kaydedilemedi'})
+            continue
+
+        results.append({
+            'id': att_id,
+            'name': name,
+            'size': meta['size'],
+            'chars': meta['chars'],
+        })
+
+    log_audit(user, 'chat_attachment_uploaded', 'project', project_id,
+              details=', '.join(r.get('name', '') for r in results), request=request)
+
+    return jsonify({'attachments': results}), 200
+
+
+@bp.route('/project/<int:project_id>/attachments/<att_id>', methods=['DELETE'])
+@check_project_access('read')
+def delete_chat_attachment(project_id, att_id):
+    """Delete a single chat attachment."""
+    user = get_user_from_session()
+    if not re.fullmatch(r'[a-f0-9]{32}', att_id or ''):
+        return jsonify({'error': 'Geçersiz dosya kimliği'}), 400
+
+    path = _attachment_meta_path(att_id)
+    if not os.path.exists(path):
+        return jsonify({'deleted': False}), 200
+
+    try:
+        with open(path, 'r', encoding='utf-8') as fh:
+            meta = json.load(fh)
+    except Exception:
+        meta = {}
+
+    user_id = user['id'] if user else None
+    if int(meta.get('project_id') or 0) != int(project_id) or (
+        user_id is not None and meta.get('user_id') not in (None, user_id)
+    ):
+        return jsonify({'error': 'Bu dosyaya erişim yetkiniz yok'}), 403
+
+    try:
+        os.remove(path)
+    except OSError as exc:
+        logger.warning(f"Chat attachment delete failed {att_id}: {exc}")
+        return jsonify({'error': 'Dosya silinemedi'}), 500
+
+    return jsonify({'deleted': True}), 200
+
+
+@bp.route('/project/<int:project_id>/attachments/clear', methods=['POST'])
+@check_project_access('read')
+def clear_chat_attachments(project_id):
+    """Delete all chat attachments belonging to the current user/project."""
+    user = get_user_from_session()
+    user_id = user['id'] if user else None
+    removed = 0
+
+    if os.path.isdir(CHAT_ATTACHMENT_DIR):
+        for entry in os.listdir(CHAT_ATTACHMENT_DIR):
+            if not entry.endswith('.json'):
+                continue
+            path = os.path.join(CHAT_ATTACHMENT_DIR, entry)
+            try:
+                with open(path, 'r', encoding='utf-8') as fh:
+                    meta = json.load(fh)
+            except Exception:
+                continue
+            if int(meta.get('project_id') or 0) != int(project_id):
+                continue
+            if user_id is not None and meta.get('user_id') not in (None, user_id):
+                continue
+            try:
+                os.remove(path)
+                removed += 1
+            except OSError:
+                continue
+
+    return jsonify({'removed': removed}), 200

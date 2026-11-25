@@ -1,6 +1,7 @@
 // API URL: Use current hostname/port dynamically, but override /api path on root
 const API_URL = `${window.location.protocol}//${window.location.host}/api`;
 let currentProjectId = null;
+let currentProjectName = '';
 let currentUser = null;
 let cy = null;
 
@@ -184,6 +185,10 @@ async function viewProject(projectId) {
     currentProjectId = projectId;
     console.log('viewProject called with projectId:', projectId);
 
+    // GELIS29: attachments are chat/project scoped; drop local list on switch.
+    chatAttachments = [];
+    renderChatAttachments();
+
     try {
         const response = await fetch(`${API_URL}/projects/${projectId}`);
 
@@ -193,6 +198,7 @@ async function viewProject(projectId) {
 
         const project = await response.json();
 
+        currentProjectName = project.name || '';
         document.getElementById('projectTitle').textContent = project.name;
         document.getElementById('projectDescriptionInput').value = project.description || '';
         showSection('projectDetailSection');
@@ -429,6 +435,245 @@ let ragSearchBestScore = 0;   // best score from last RAG search (0-1)
 let ragSelectedFunctionIds = new Set();
 let ragSelectedDocumentKeys = new Set();
 let chatExpanded = false;
+// GELIS29: chat-scoped attachments (not added to the project/RAG index)
+let chatAttachments = [];   // { id, name, size, chars }
+let chatUploading = false;
+
+function _formatBytes(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function triggerChatFileUpload() {
+    if (!currentProjectId) {
+        showError('Proje Seçilmedi', 'Önce bir proje açın.');
+        return;
+    }
+    const input = document.getElementById('chatFileInput');
+    if (input) {
+        input.value = '';
+        input.click();
+    }
+}
+
+async function handleChatFileSelect(event) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+    await uploadChatFiles(files);
+    event.target.value = '';
+}
+
+async function uploadChatFiles(files) {
+    if (!currentProjectId || chatUploading) return;
+
+    chatUploading = true;
+    const attachBtn = document.getElementById('chatAttachBtn');
+    if (attachBtn) {
+        attachBtn.disabled = true;
+        attachBtn.textContent = '⏳ Yükleniyor...';
+    }
+
+    try {
+        const formData = new FormData();
+        files.forEach(file => formData.append('files', file, file.name));
+
+        const response = await fetch(`${API_URL}/chat/project/${currentProjectId}/attachments`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ error: response.statusText }));
+            throw new Error(err.error || 'Dosya yüklenemedi');
+        }
+
+        const data = await response.json();
+        const results = data.attachments || [];
+        const errors = [];
+
+        results.forEach(item => {
+            if (item.error) {
+                errors.push(`${item.name}: ${item.error}`);
+                return;
+            }
+            if (!chatAttachments.some(a => a.id === item.id)) {
+                chatAttachments.push(item);
+            }
+        });
+
+        renderChatAttachments();
+
+        if (errors.length) {
+            showError('Bazı Dosyalar Yüklenemedi', errors.join('\n'));
+        }
+        if (results.some(item => item.id)) {
+            showSuccess('Dosya Eklendi', 'Dosya(lar) bu sohbete eklendi. Projeye eklenmedi.');
+        }
+    } catch (error) {
+        showError('Dosya Yükleme Hatası', error.message);
+    } finally {
+        chatUploading = false;
+        if (attachBtn) {
+            attachBtn.disabled = false;
+            attachBtn.textContent = '📄 Dosya Ekle';
+        }
+    }
+}
+
+function renderChatAttachments() {
+    const container = document.getElementById('chatAttachments');
+    if (!container) return;
+
+    if (!chatAttachments.length) {
+        container.style.display = 'none';
+        container.innerHTML = '';
+        return;
+    }
+
+    container.style.display = 'flex';
+    container.innerHTML = chatAttachments.map(item => `
+        <span class="chat-attachment-chip" title="${_escapeHtml(item.name)} — ${_formatBytes(item.size)}">
+            📄 ${_escapeHtml(item.name)}
+            <span class="chat-attachment-size">${_formatBytes(item.size)}</span>
+            <button type="button" class="chat-attachment-remove"
+                onclick="removeChatAttachment('${item.id}')" title="Dosyayı kaldır">✕</button>
+        </span>
+    `).join('');
+}
+
+async function removeChatAttachment(attachmentId) {
+    if (!currentProjectId || !attachmentId) return;
+
+    chatAttachments = chatAttachments.filter(a => a.id !== attachmentId);
+    renderChatAttachments();
+
+    try {
+        await fetch(`${API_URL}/chat/project/${currentProjectId}/attachments/${attachmentId}`, {
+            method: 'DELETE'
+        });
+    } catch (error) {
+        console.warn('Attachment delete failed:', error);
+    }
+}
+
+async function clearChatAttachments() {
+    const hadAttachments = chatAttachments.length > 0;
+    chatAttachments = [];
+    renderChatAttachments();
+
+    if (!hadAttachments || !currentProjectId) return;
+    try {
+        await fetch(`${API_URL}/chat/project/${currentProjectId}/attachments/clear`, {
+            method: 'POST'
+        });
+    } catch (error) {
+        console.warn('Attachment clear failed:', error);
+    }
+}
+
+// ------------------------------------------------------------------
+// GELIS29: Markdown export helpers
+// ------------------------------------------------------------------
+
+function _slugify(value) {
+    return String(value || 'sohbet')
+        .toLowerCase()
+        .replace(/[çğıöşü]/g, ch => ({ 'ç': 'c', 'ğ': 'g', 'ı': 'i', 'ö': 'o', 'ş': 's', 'ü': 'u' }[ch] || ch))
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60) || 'sohbet';
+}
+
+function _downloadMarkdownFile(content, filename) {
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function _markdownTimestamp(ts) {
+    if (!ts) return '';
+    try {
+        return new Date(ts).toLocaleString('tr-TR');
+    } catch {
+        return '';
+    }
+}
+
+function downloadMessageMarkdown(text, index) {
+    const content = String(text || '').trim();
+    if (!content) {
+        showError('Boş Yanıt', 'İndirilecek içerik yok.');
+        return;
+    }
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const suffix = Number.isInteger(index) ? `-${index + 1}` : '';
+    _downloadMarkdownFile(content + '\n', `yanit${suffix}-${stamp}.md`);
+}
+
+function downloadChatMarkdown() {
+    if (!chatHistory.length) {
+        showError('Boş Sohbet', 'İndirilecek sohbet geçmişi yok.');
+        return;
+    }
+
+    const lines = [];
+    const title = currentProjectName ? `Sohbet Geçmişi – ${currentProjectName}` : 'Sohbet Geçmişi';
+    lines.push(`# ${title}`);
+    lines.push('');
+    lines.push(`> Dışa aktarma: ${new Date().toLocaleString('tr-TR')}`);
+    lines.push('');
+
+    if (chatAttachments.length) {
+        lines.push('## Bu Sohbete Yüklenen Dosyalar');
+        lines.push('');
+        chatAttachments.forEach(item => {
+            lines.push(`- \`${item.name}\` (${_formatBytes(item.size)})`);
+        });
+        lines.push('');
+    }
+
+    chatHistory.forEach((msg, idx) => {
+        const isUser = msg.role === 'user';
+        const ts = _markdownTimestamp(msg.ts);
+        lines.push(`## ${isUser ? '👤 Kullanıcı' : '🤖 Asistan'}${ts ? ` — ${ts}` : ''}`);
+        lines.push('');
+
+        if (msg.attachments && msg.attachments.length) {
+            lines.push(`**Ekli dosyalar:** ${msg.attachments.map(a => `\`${a.name}\``).join(', ')}`);
+            lines.push('');
+        }
+
+        lines.push(String(msg.content || '').trim());
+        lines.push('');
+
+        if (msg.refs && msg.refs.length) {
+            const refNames = msg.refs
+                .map(r => r.name || r.file || '')
+                .filter(Boolean)
+                .map(name => `\`${name}\``);
+            if (refNames.length) {
+                lines.push(`**Kaynaklar:** ${refNames.join(', ')}`);
+                lines.push('');
+            }
+        }
+
+        if (idx < chatHistory.length - 1) {
+            lines.push('---');
+            lines.push('');
+        }
+    });
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    _downloadMarkdownFile(lines.join('\n'), `sohbet-${_slugify(currentProjectName)}-${stamp}.md`);
+}
 
 function _docSelectionKey(fileName, chunkIndex) {
     return JSON.stringify([String(fileName || ''), Number(chunkIndex || 0)]);
@@ -787,6 +1032,7 @@ function _appendChatBubble(role, text) {
 
 function clearChatHistory() {
     chatHistory = [];
+    clearChatAttachments();
     const msgs = document.getElementById('chatMessages');
     if (!msgs) return;
     msgs.innerHTML = `<div class="chat-bubble chat-bubble-assistant">Konuşma sıfırlandı. Yeni bir soru sorabilirsiniz.</div>`;
@@ -879,9 +1125,13 @@ async function sendChatMessage() {
 
     // Build history for backend (last 8 messages = 4 turns)
     const historySlice = chatHistory.slice(-8);
+    const attachmentsForMessage = chatAttachments.map(a => ({ id: a.id, name: a.name, size: a.size }));
 
     try {
         const payload = { message: text, history: historySlice };
+        if (attachmentsForMessage.length > 0) {
+            payload.attachments = attachmentsForMessage.map(a => a.id);
+        }
         if (ragSelectedFunctionIds.size > 0) {
             payload.context_function_ids = Array.from(ragSelectedFunctionIds);
         }
@@ -1002,6 +1252,18 @@ async function sendChatMessage() {
             // Render Markdown after stream completes
             if (replyText) {
                 _renderAssistantMarkdown(replyBubble, replyText);
+
+                // GELIS29: per-message Markdown download
+                const actionsEl = document.createElement('div');
+                actionsEl.className = 'chat-msg-actions';
+                const mdBtn = document.createElement('button');
+                mdBtn.type = 'button';
+                mdBtn.className = 'chat-md-btn';
+                mdBtn.textContent = '📥 MD';
+                mdBtn.title = 'Bu yanıtı Markdown olarak indir';
+                mdBtn.onclick = () => downloadMessageMarkdown(replyText);
+                actionsEl.appendChild(mdBtn);
+                replyBubble.appendChild(actionsEl);
             }
 
             // Render reference function chips
@@ -1019,6 +1281,11 @@ async function sendChatMessage() {
                             return `<span class="chat-ref-chip" onclick="viewDocumentFromChat(this.getAttribute('data-filename'), this.getAttribute('data-page'))" data-filename="${_escapeHtml(label)}" data-page="${pageStart}" title="${_escapeHtml(label)}\n${_escapeHtml(location)}">📄 ${_escapeHtml(shortName)} (${_escapeHtml(location)})</span>`;
                         }
 
+                        if (refType === 'attachment') {
+                            const label = r.name || r.file || 'Dosya';
+                            return `<span class="chat-ref-chip chat-ref-attachment" title="Sohbete yüklenen dosya: ${_escapeHtml(label)}">📎 ${_escapeHtml(label)}</span>`;
+                        }
+
                         const shortName = (r.name || '').split('.').pop();
                         return `<span class="chat-ref-chip" onclick="viewFunctionFromChat(${r.id})" title="${_escapeHtml(r.name || '')}\n${_escapeHtml(r.file || '')}">${_escapeHtml(shortName)}</span>`;
                     }).join('');
@@ -1028,8 +1295,18 @@ async function sendChatMessage() {
         }
 
         // Store in history
-        chatHistory.push({ role: 'user', content: text });
-        chatHistory.push({ role: 'assistant', content: replyText });
+        chatHistory.push({
+            role: 'user',
+            content: text,
+            ts: Date.now(),
+            attachments: attachmentsForMessage
+        });
+        chatHistory.push({
+            role: 'assistant',
+            content: replyText,
+            ts: Date.now(),
+            refs: refs
+        });
 
     } catch (err) {
         typingEl.remove();

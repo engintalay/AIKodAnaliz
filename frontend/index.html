@@ -253,6 +253,10 @@
                             <div class="chat-toolbar">
                                 <span style="font-weight:600; color:#333;">🤖 AI Kod Asistanı</span>
                                 <div class="chat-toolbar-actions">
+                                    <button id="chatAttachBtn" class="btn btn-secondary btn-sm" onclick="triggerChatFileUpload()"
+                                        style="padding:4px 12px; font-size:12px;" title="Bu sohbete özel PDF/DOC/DOCX/TXT/MD dosyası ekle">📄 Dosya Ekle</button>
+                                    <button id="chatExportBtn" class="btn btn-secondary btn-sm" onclick="downloadChatMarkdown()"
+                                        style="padding:4px 12px; font-size:12px;" title="Tüm sohbet geçmişini Markdown olarak indir">📥 MD İndir</button>
                                     <button id="chatExpandBtn" class="btn btn-secondary btn-sm" onclick="toggleChatExpanded()"
                                         style="padding:4px 12px; font-size:12px;">⤢ Sohbeti Genişlet</button>
                                     <button id="chatFullscreenBtn" class="btn btn-secondary btn-sm" onclick="toggleChatFullscreen()"
@@ -261,6 +265,10 @@
                                         style="padding:4px 12px; font-size:12px;">🗑️ Konuşmayı Sıfırla</button>
                                 </div>
                             </div>
+
+                            <input type="file" id="chatFileInput" multiple
+                                accept=".pdf,.doc,.docx,.txt,.md" style="display:none"
+                                onchange="handleChatFileSelect(event)">
 
                             <!-- RAG Search (GELIS11) -->
                             <div class="rag-search">
@@ -293,6 +301,7 @@
                                     • "Bu projede hata yönetimi nasıl yapılmış?"
                                 </div>
                             </div>
+                            <div class="chat-attachments" id="chatAttachments" style="display:none;"></div>
                             <div class="chat-input-area">
                                 <textarea id="chatInput" class="chat-input" rows="2"
                                     placeholder="Proje hakkında soru sorun... (Enter ile gönder, Shift+Enter yeni satır)"

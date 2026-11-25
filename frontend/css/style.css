@@ -1516,6 +1516,89 @@ code {
     border-color: #2980b9;
 }
 
+/* GELIS29: chat-scoped attachments + Markdown export */
+.chat-ref-attachment {
+    background: #f0f7ee;
+    color: #2e7d32;
+    border-color: #c8e6c9;
+    cursor: default;
+}
+
+.chat-ref-attachment:hover {
+    background: #f0f7ee;
+    color: #2e7d32;
+    border-color: #c8e6c9;
+}
+
+.chat-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 16px 0;
+    background: #fff;
+    border-top: 1px solid #eef1f4;
+    flex-shrink: 0;
+}
+
+.chat-attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #eef4fb;
+    color: #2c3e50;
+    border: 1px solid #c5dcf0;
+    border-radius: 14px;
+    padding: 3px 8px 3px 10px;
+    font-size: 12px;
+    max-width: 100%;
+}
+
+.chat-attachment-size {
+    color: #7f8c8d;
+    font-size: 11px;
+}
+
+.chat-attachment-remove {
+    border: none;
+    background: transparent;
+    color: #c0392b;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 50%;
+}
+
+.chat-attachment-remove:hover {
+    background: #fdecea;
+}
+
+.chat-msg-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px dashed #e6e6e6;
+}
+
+.chat-md-btn {
+    border: 1px solid #c5dcf0;
+    background: #f7fbff;
+    color: #2980b9;
+    border-radius: 10px;
+    padding: 2px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.chat-md-btn:hover {
+    background: #2980b9;
+    color: #fff;
+    border-color: #2980b9;
+}
+
 .chat-container.chat-expanded {
     position: fixed;
     top: 70px;
