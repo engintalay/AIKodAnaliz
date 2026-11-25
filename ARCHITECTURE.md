@@ -117,6 +117,8 @@ Hedef fonksiyon → özetlenmemiş callee'ler derinlemesine özetlenir
 ```
 Toplu özetleme (`bulk-ai-summary`) `AI_SUMMARY_WORKERS` (vars. 3) kadar thread ile paralel çalışır; her thread kendi `LocalAIClient` örneğini kullanır ve aynı fonksiyonun iki kez üretilmesi süreç geneli claim setiyle engellenir. Havuz bittikten sonra eksik kalanlar için ikinci bir süpürme turu yapılır. Özet yanıtları `ai_settings.summary_max_tokens` (vars. 2048) ile sınırlanır; prompt en fazla ~250 kelime ister. `analyze_function` isteklerinde `chat_template_kwargs.enable_thinking=false` gönderilir; sunucu alanı reddederse istek bir kez parametresiz tekrarlanır.
 
+Class özetleri (`_generate_class_summary`) önce sınıfın doğrudan metotlarını özetler, sonra bu özetlerden sınıf davranışını çıkarır. Sınıfın kendine ait metodu yoksa (sabit/config sınıfları veya metotları iç sınıflarda olan timer sınıfları) sınıf gövdesi (alanlar, sabitler, iç içe tipler) doğrudan modele verilir; böylece "metot bulunamadı" uyarısı yerine anlamlı bir özet üretilir. Gövde de boşsa uyarı korunur.
+
 ### 3. Sohbet (RAG)
 ```
 Soru → RagIndex.search (0.6*embedding + 0.4*BM25, LIKE fallback)

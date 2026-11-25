@@ -1081,10 +1081,48 @@ def _generate_class_summary(class_func, client, task_id, temperature, top_p, max
     )
     
     methods = [dict(row) for row in methods_query]
-    
+
+    # Class body (fields, constants, nested types) is used both as context and as
+    # the sole input when the class has no methods of its own.
+    class_code = class_func.get('content', '')
+    lines = class_code.split('\n') if class_code else []
+    start = max(0, class_func.get('start_line', 1) - 1)
+    end = min(len(lines), class_func.get('end_line', len(lines)))
+    class_code_snippet = '\n'.join(lines[start:end]) if lines else ''
+
     if not methods:
-        logger.warning(f"No methods found for class {class_name}")
-        return f"⚠️ Class {class_name} için metot bulunamadı."
+        logger.info(f"No methods found for class {class_name}, summarizing class body")
+        if not class_code_snippet.strip():
+            return f"⚠️ Class {class_name} için metot bulunamadı."
+
+        body_context = f"""Class Name: {class_name}
+Class Code:
+{class_code_snippet[:4000]}
+
+Bu class'ın kendine ait metodu yok. Alanları, sabitleri ve iç içe tipleri üzerinden bu class'ın neyi temsil ettiğini ve ne işe yaradığını özetle."""
+
+        body_summary = client.analyze_function(
+            body_context,
+            f"class {class_name}",
+            [],
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            extra_criteria=extra_criteria,
+            extra_question=extra_question
+        )
+
+        if task_id:
+            progress_tracker.update(
+                task_id,
+                step=f"Class özet tamamlandı: {class_name}",
+                detail=f"✓ {class_name} class'ı gövdesi üzerinden analiz edildi"
+            )
+
+        if body_summary and not _is_ai_error_response(body_summary):
+            return body_summary
+
+        return f"⚠️ Class {class_name} için özet oluşturulamadı."
     
     # First, analyze all methods (generate summaries for each)
     method_summaries = []
@@ -1144,12 +1182,6 @@ def _generate_class_summary(class_func, client, task_id, temperature, top_p, max
                 })
     
     # Now generate class summary based on all method summaries
-    class_code = class_func.get('content', '')
-    lines = class_code.split('\n') if class_code else []
-    start = max(0, class_func.get('start_line', 1) - 1)
-    end = min(len(lines), class_func.get('end_line', len(lines)))
-    class_code_snippet = '\n'.join(lines[start:end]) if lines else ''
-    
     # Build method list for class context
     method_list = '\n'.join([
         f"- {m['name']}: {m['summary'][:200]}..." if len(m['summary']) > 200 else f"- {m['name']}: {m['summary']}"
