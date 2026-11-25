@@ -607,15 +607,110 @@ function _markdownTimestamp(ts) {
     }
 }
 
-function downloadMessageMarkdown(text, index) {
+function downloadMessageMarkdown(text, index, refs) {
     const content = String(text || '').trim();
     if (!content) {
         showError('Boş Yanıt', 'İndirilecek içerik yok.');
         return;
     }
+    const lines = [content];
+    const refLines = _buildReferencesSection(refs || []);
+    if (refLines.length) {
+        lines.push('');
+        lines.push(...refLines);
+    }
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     const suffix = Number.isInteger(index) ? `-${index + 1}` : '';
-    _downloadMarkdownFile(content + '\n', `yanit${suffix}-${stamp}.md`);
+    _downloadMarkdownFile(lines.join('\n') + '\n', `yanit${suffix}-${stamp}.md`);
+}
+
+// GELIS30: Markdown kaynakça üretimi.
+// Fonksiyonlar tek tek listelenir; ancak kaynak dosya çok büyükse veya
+// dosyadan çok fazla fonksiyon referans verilmişse yalnızca dosya adı yazılır.
+// Dokümanlar (PDF/DOC/DOCX/TXT...) ve sohbete yüklenen dosyalar sadece isimle eklenir.
+const MD_REF_MAX_FILE_BYTES = 200 * 1024;
+const MD_REF_MAX_FUNCS_PER_FILE = 20;
+
+function _refKind(ref) {
+    const type = ref && ref.type;
+    if (type === 'document') return 'document';
+    if (type === 'attachment') return 'attachment';
+    return 'function';
+}
+
+function _buildReferencesSection(refsList) {
+    const functions = new Map();
+    const documents = new Map();
+    const attachments = new Map();
+
+    (refsList || []).forEach(ref => {
+        if (!ref) return;
+        const name = ref.name || ref.file || '';
+        if (!name) return;
+        const kind = _refKind(ref);
+        if (kind === 'function') {
+            const key = `${ref.id || ''}|${name}|${ref.file || ''}`;
+            if (!functions.has(key)) functions.set(key, ref);
+        } else if (kind === 'document') {
+            if (!documents.has(name)) documents.set(name, ref);
+        } else if (!attachments.has(name)) {
+            attachments.set(name, ref);
+        }
+    });
+
+    if (!functions.size && !documents.size && !attachments.size) return [];
+
+    const lines = ['---', '', '## 📚 Kaynaklar', ''];
+
+    if (functions.size) {
+        const byFile = new Map();
+        functions.forEach(ref => {
+            const file = ref.file || '(dosya bilgisi yok)';
+            if (!byFile.has(file)) byFile.set(file, []);
+            byFile.get(file).push(ref);
+        });
+
+        lines.push('### Fonksiyonlar');
+        lines.push('');
+
+        [...byFile.keys()].sort((a, b) => a.localeCompare(b, 'tr')).forEach(file => {
+            const items = byFile.get(file);
+            const size = Math.max(...items.map(r => Number(r.file_size) || 0));
+            const tooLarge = size > MD_REF_MAX_FILE_BYTES || items.length > MD_REF_MAX_FUNCS_PER_FILE;
+            if (tooLarge) {
+                const reason = size > MD_REF_MAX_FILE_BYTES
+                    ? `çok büyük dosya, ${_formatBytes(size)}`
+                    : `${items.length} fonksiyon`;
+                lines.push(`- \`${file}\` — ${reason}; fonksiyonlar tek tek listelenmedi.`);
+            } else {
+                items
+                    .slice()
+                    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'tr'))
+                    .forEach(ref => lines.push(`- \`${ref.name}\` — \`${file}\``));
+            }
+        });
+        lines.push('');
+    }
+
+    if (documents.size) {
+        lines.push('### Dokümanlar');
+        lines.push('');
+        [...documents.keys()]
+            .sort((a, b) => a.localeCompare(b, 'tr'))
+            .forEach(name => lines.push(`- \`${name}\``));
+        lines.push('');
+    }
+
+    if (attachments.size) {
+        lines.push('### Sohbete Yüklenen Dosyalar');
+        lines.push('');
+        [...attachments.keys()]
+            .sort((a, b) => a.localeCompare(b, 'tr'))
+            .forEach(name => lines.push(`- \`${name}\``));
+        lines.push('');
+    }
+
+    return lines;
 }
 
 function downloadChatMarkdown() {
@@ -670,6 +765,16 @@ function downloadChatMarkdown() {
             lines.push('');
         }
     });
+
+    // GELIS30: tüm sohbetin kaynaklarını dosya sonuna ekle
+    const allRefs = [];
+    chatHistory.forEach(msg => {
+        if (msg.refs && msg.refs.length) allRefs.push(...msg.refs);
+    });
+    const refLines = _buildReferencesSection(allRefs);
+    if (refLines.length) {
+        lines.push(...refLines);
+    }
 
     const stamp = new Date().toISOString().slice(0, 10);
     _downloadMarkdownFile(lines.join('\n'), `sohbet-${_slugify(currentProjectName)}-${stamp}.md`);
@@ -1261,7 +1366,7 @@ async function sendChatMessage() {
                 mdBtn.className = 'chat-md-btn';
                 mdBtn.textContent = '📥 MD';
                 mdBtn.title = 'Bu yanıtı Markdown olarak indir';
-                mdBtn.onclick = () => downloadMessageMarkdown(replyText);
+                mdBtn.onclick = () => downloadMessageMarkdown(replyText, undefined, refs);
                 actionsEl.appendChild(mdBtn);
                 replyBubble.appendChild(actionsEl);
             }

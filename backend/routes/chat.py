@@ -292,6 +292,24 @@ def _build_context(
         )
         refs.append({'id': f.get('id'), 'name': qualified, 'file': file_name})
 
+    # GELIS30: attach source file size so the Markdown export can decide whether
+    # to list individual functions or only the file name (very large files).
+    ref_files = sorted({r['file'] for r in refs if r.get('file')})
+    if ref_files:
+        try:
+            placeholders = ','.join('?' * len(ref_files))
+            size_rows = db.execute_query(
+                f'''SELECT file_name, LENGTH(content) FROM source_files
+                    WHERE project_id = ? AND file_name IN ({placeholders})''',
+                [project_id] + ref_files
+            )
+            size_map = {row[0]: int(row[1] or 0) for row in size_rows}
+            for r in refs:
+                r['file_size'] = size_map.get(r.get('file'), 0)
+        except Exception:
+            for r in refs:
+                r.setdefault('file_size', 0)
+
     context_block = '\n'.join(context_lines) if context_lines else 'İlgili fonksiyon bulunamadı.'
 
     # Search doc_chunks for relevant document passages (GELIS8).
