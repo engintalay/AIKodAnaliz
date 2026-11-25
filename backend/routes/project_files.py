@@ -489,6 +489,10 @@ def _build_dalmap_text(sections: dict, file_name: str = '') -> str:
                     dbs = [_db_label(pt) for pt in _vt_targets(vt) if pt.get('table')]
                     if dbs:
                         line += ' → DB: ' + ', '.join(dbs)
+                    else:
+                        line += ' → DB: [tanımsız]'
+                else:
+                    line += ' [tanımsız VT]'
             fields = [_field_text(f, mark_pk=True) for f in (item.get('fields') or [])]
             if fields:
                 line += ' | alanlar: ' + ', '.join(fields)
@@ -506,9 +510,18 @@ def _build_dalmap_text(sections: dict, file_name: str = '') -> str:
             refs = [p.get('name') for p in (vt.get('proxy_tables') or []) if p.get('name')]
             if refs:
                 line += ' → PT: ' + ', '.join(refs)
-            dbs = [_db_label(pt) for pt in _vt_targets(vt) if pt.get('table')]
-            if dbs:
-                line += ' → DB: ' + ', '.join(dbs)
+                undefined = [r for r in refs if r not in pt_by_name]
+                if undefined:
+                    line += ' [tanımsız PT: ' + ', '.join(undefined) + ']'
+                dbs = [_db_label(pt) for pt in _vt_targets(vt) if pt.get('table')]
+                if dbs:
+                    line += ' → DB: ' + ', '.join(dbs)
+                else:
+                    line += ' → DB: [tanımsız]'
+            else:
+                # No PT reference: the config gives no DB mapping for this VT.
+                # State it explicitly so the model does not infer one.
+                line += ' → [eşleştirme yok: PT referansı tanımsız]'
             if vt.get('partition'):
                 line += f" [SHARDED: partition={vt.get('partition')}]"
             lines.append(line)
@@ -523,6 +536,8 @@ def _build_dalmap_text(sections: dict, file_name: str = '') -> str:
             line = f"PT: {pt.get('name', '')}"
             if pt.get('table'):
                 line += f" → DB: {pt.get('table')}"
+            else:
+                line += ' → DB: [tanımsız]'
             if pt.get('db'):
                 line += f" ({pt.get('db')})"
             fields = [_field_text(f) for f in (pt.get('fields') or [])]
@@ -546,6 +561,10 @@ def _build_dalmap_text(sections: dict, file_name: str = '') -> str:
                     dbs = [_db_label(pt) for pt in _vt_targets(vt) if pt.get('table')]
                     if dbs:
                         line += ' → DB: ' + ', '.join(dbs)
+                    else:
+                        line += ' → DB: [tanımsız]'
+                else:
+                    line += ' [tanımsız VT]'
             fields = [_field_text(f, mark_pk=True) for f in (cl.get('fields') or [])]
             if fields:
                 line += ' | alanlar: ' + ', '.join(fields)
@@ -562,6 +581,8 @@ def _build_dalmap_text(sections: dict, file_name: str = '') -> str:
             line = f"FUNCTION: {fn.get('name', '')}"
             if fn.get('table'):
                 line += f" → VT: {fn.get('table')}"
+                if fn.get('table') not in vt_by_name:
+                    line += ' [tanımsız VT]'
             params = [_field_text(p) for p in (fn.get('params') or [])]
             if params:
                 line += ' | parametreler: ' + ', '.join(params)

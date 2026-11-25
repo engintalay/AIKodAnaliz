@@ -205,5 +205,45 @@ class TestDalmapCollections(unittest.TestCase):
         self.assertIn("parent_oid [PK]", text)
 
 
+class TestDalmapUnresolvedMappings(unittest.TestCase):
+    """A VT without a PT reference must be reported as unmapped, not guessed."""
+
+    def test_vt_without_pt_reference_is_marked_unmapped(self):
+        sections = {
+            'proxy_tables': [
+                {'name': 'phhaciz_istek', 'table': 'HACIZ_ISTEK', 'db': 'EHACIZ',
+                 'fields': [{'id': 'vdkodu', 'column': 'VDKODU', 'type': 'string'}]},
+            ],
+            'virtual_tables': [
+                {'name': 'vhhaciz_istek', 'proxy_tables': [{'name': 'phhaciz_istek'}]},
+                {'name': 'vtakibat', 'proxy_tables': []},
+            ],
+            'classes': [], 'procedures': [], 'functions': [],
+        }
+        text = _build_dalmap_text(sections, 'dalMapConfig_TEST.xml')
+        self.assertIn('VT: vtakibat → [eşleştirme yok: PT referansı tanımsız]', text)
+        # No fabricated DB table for vtakibat
+        self.assertNotIn('vtakibat → PT', text)
+
+    def test_vt_with_undefined_pt_is_marked(self):
+        sections = {
+            'proxy_tables': [],
+            'virtual_tables': [{'name': 'vtx', 'proxy_tables': [{'name': 'phx'}]}],
+            'classes': [], 'procedures': [], 'functions': [],
+        }
+        text = _build_dalmap_text(sections, 'dalMapConfig_TEST.xml')
+        self.assertIn('VT: vtx → PT: phx [tanımsız PT: phx] → DB: [tanımsız]', text)
+
+    def test_class_with_undefined_vt_is_marked(self):
+        sections = {
+            'proxy_tables': [], 'virtual_tables': [],
+            'classes': [{'name': 'com.example.X', 'table': 'vmissing',
+                         'fields': [{'name': 'oid', 'column': 'oid', 'primarykey': 'true'}]}],
+            'procedures': [], 'functions': [],
+        }
+        text = _build_dalmap_text(sections, 'dalMapConfig_TEST.xml')
+        self.assertIn('CLASS: com.example.X → VT: vmissing [tanımsız VT]', text)
+
+
 if __name__ == "__main__":
     unittest.main()
