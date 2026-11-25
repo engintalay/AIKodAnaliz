@@ -304,6 +304,24 @@ def _parse_dalmap_xml(path: str) -> dict:
             params.append(entry)
         return params
 
+    def parse_collections(elem):
+        """Parse nested collection mappings under a CLASS/FUNCTION.
+
+        A collection entry maps a child object to another virtual table and
+        carries its own FIELD mappings. Any non-FIELD child element is treated
+        as a collection entry so different DALMap schema versions are handled.
+        """
+        items = []
+        for child in elem:
+            if child.tag == 'FIELD':
+                continue
+            entry = attrs(child)
+            entry['tag'] = child.tag
+            entry['fields'] = parse_fields(child)
+            entry['collections'] = parse_collections(child)
+            items.append(entry)
+        return items
+
     proxy_tables = []
     virtual_tables = []
     classes = []
@@ -333,6 +351,7 @@ def _parse_dalmap_xml(path: str) -> dict:
         for cl in class_root.findall('CLASS'):
             entry = attrs(cl)
             entry['fields'] = parse_fields(cl)
+            entry['collections'] = parse_collections(cl)
             classes.append(entry)
 
     proc_root = root.find('PROCEDURES')
@@ -347,6 +366,7 @@ def _parse_dalmap_xml(path: str) -> dict:
         for fn in func_root.findall('FUNCTION'):
             entry = attrs(fn)
             entry['params'] = parse_params(fn)
+            entry['collections'] = parse_collections(fn)
             functions.append(entry)
 
     # Build explicit mappings used by the UI / analysis:
@@ -388,12 +408,31 @@ def _build_dalmap_text(sections: dict, file_name: str = '') -> str:
 
     The chat assistant only retrieves context from doc_chunks, so DALMap
     configs must be flattened into text to become searchable.
+
+    DALMap structure and how it maps to Java code:
+      VIRTUALTABLES: VT name is the table name used in Java code. A VT points
+                     to one or more proxy tables (PT) and therefore to the
+                     physical DB table. A `partition` attribute means the table
+                     is horizontally partitioned (sharded).
+      PROXYTABLES:   PT name is referenced by VTs; `table` is the real DB table.
+                     FIELD id = Java field name, column = DB column name.
+      CLASSES:       CLASS name is the Java class; `table` references a VT.
+                     FIELD primarykey="true" marks mandatory (PK) fields.
+                     Nested collection entries map child objects to other VTs
+                     and describe DB-level table relations.
+      FUNCTIONS:     FUNCTION name is the Java method; `table` references a VT.
+      PROCEDURES:    SP name is the DB stored procedure; `id` is the name used
+                     in Java code. Only input PARAMs exist (id = Java side,
+                     column = SP parameter name); there is no return value.
     """
     proxy_tables = sections.get('proxy_tables') or []
     virtual_tables = sections.get('virtual_tables') or []
     classes = sections.get('classes') or []
     procedures = sections.get('procedures') or []
     functions = sections.get('functions') or []
+
+    pt_by_name = {p.get('name'): p for p in proxy_tables if p.get('name')}
+    vt_by_name = {v.get('name'): v for v in virtual_tables if v.get('name')}
 
     lines = []
     title = f'DALMap Konfigürasyonu: {file_name}' if file_name else 'DALMap Konfigürasyonu'
@@ -406,7 +445,10 @@ def _build_dalmap_text(sections: dict, file_name: str = '') -> str:
         f'{len(functions)} fonksiyon.'
     )
 
-    def _field_text(field: dict) -> str:
+    def _is_true(value) -> bool:
+        return str(value).strip().lower() in ('true', '1', 'yes')
+
+    def _field_text(field: dict, mark_pk: bool = False) -> str:
         name = field.get('id') or field.get('name') or field.get('text') or ''
         column = field.get('column') or ''
         ftype = field.get('type') or field.get('datatype') or ''
@@ -415,62 +457,135 @@ def _build_dalmap_text(sections: dict, file_name: str = '') -> str:
             text += f'({column})'
         if ftype:
             text += f':{ftype}'
+        if mark_pk and _is_true(field.get('primarykey', field.get('primaryKey'))):
+            text += ' [PK]'
         return text
 
-    if proxy_tables:
-        lines.append('')
-        lines.append('[PROXY TABLOLAR]')
-        for pt in proxy_tables:
-            head = f"PT {pt.get('name', '')}"
-            if pt.get('table'):
-                head += f" -> tablo: {pt.get('table')}"
-            if pt.get('db'):
-                head += f" (db: {pt.get('db')})"
-            fields = [_field_text(f) for f in (pt.get('fields') or [])]
-            if fields:
-                head += ' | alanlar: ' + ', '.join(fields)
-            lines.append(head)
+    def _vt_targets(vt: dict) -> list[dict]:
+        """Resolve a VT to the proxy table definitions it references."""
+        targets = []
+        for ref in (vt.get('proxy_tables') or []):
+            pt = pt_by_name.get(ref.get('name'))
+            if pt:
+                targets.append(pt)
+        return targets
 
+    def _db_label(pt: dict) -> str:
+        table = pt.get('table') or ''
+        if table and pt.get('db'):
+            return f'{table} ({pt["db"]})'
+        return table
+
+    def _append_collections(target_lines: list[str], items: list[dict], indent: int) -> None:
+        pad = ' ' * indent
+        for item in items:
+            tag = item.get('tag') or 'COLLECTION'
+            name = item.get('name') or item.get('id') or ''
+            line = f'{pad}{tag}: {name}'
+            if item.get('table'):
+                line += f" → VT: {item.get('table')}"
+                vt = vt_by_name.get(item.get('table'))
+                if vt:
+                    dbs = [_db_label(pt) for pt in _vt_targets(vt) if pt.get('table')]
+                    if dbs:
+                        line += ' → DB: ' + ', '.join(dbs)
+            fields = [_field_text(f, mark_pk=True) for f in (item.get('fields') or [])]
+            if fields:
+                line += ' | alanlar: ' + ', '.join(fields)
+            target_lines.append(line)
+            _append_collections(target_lines, item.get('collections') or [], indent + 2)
+
+    # ------------------------------------------------------------------
+    # VIRTUALTABLES: Java tablo adı (VT) → proxy tablo (PT) → DB tablosu
+    # ------------------------------------------------------------------
     if virtual_tables:
         lines.append('')
-        lines.append('[SANAL TABLOLAR]')
+        lines.append('=== VIRTUALTABLES (Java tablo adı ↔ DB tablosu) ===')
         for vt in virtual_tables:
+            line = f"VT: {vt.get('name', '')}"
             refs = [p.get('name') for p in (vt.get('proxy_tables') or []) if p.get('name')]
-            line = f"VT {vt.get('name', '')}"
             if refs:
-                line += ' -> proxy tablolar: ' + ', '.join(refs)
+                line += ' → PT: ' + ', '.join(refs)
+            dbs = [_db_label(pt) for pt in _vt_targets(vt) if pt.get('table')]
+            if dbs:
+                line += ' → DB: ' + ', '.join(dbs)
+            if vt.get('partition'):
+                line += f" [SHARDED: partition={vt.get('partition')}]"
             lines.append(line)
 
-    if classes:
+    # ------------------------------------------------------------------
+    # PROXYTABLES: PT adı → DB tablosu, FIELD id (Java) ↔ column (DB)
+    # ------------------------------------------------------------------
+    if proxy_tables:
         lines.append('')
-        lines.append('[SINIFLAR]')
-        for cl in classes:
-            line = f"CLASS {cl.get('name', '')}"
-            if cl.get('table'):
-                line += f" -> tablo: {cl.get('table')}"
-            fields = [_field_text(f) for f in (cl.get('fields') or [])]
+        lines.append('=== PROXYTABLES (PT ↔ DB tablosu ve alan eşleştirmeleri) ===')
+        for pt in proxy_tables:
+            line = f"PT: {pt.get('name', '')}"
+            if pt.get('table'):
+                line += f" → DB: {pt.get('table')}"
+            if pt.get('db'):
+                line += f" ({pt.get('db')})"
+            fields = [_field_text(f) for f in (pt.get('fields') or [])]
             if fields:
                 line += ' | alanlar: ' + ', '.join(fields)
             lines.append(line)
 
-    if procedures:
+    # ------------------------------------------------------------------
+    # CLASSES: Java class → VT, PK alanları, collection eşleştirmeleri
+    # ------------------------------------------------------------------
+    if classes:
         lines.append('')
-        lines.append('[PROSEDÜRLER]')
-        for sp in procedures:
-            params = [p.get('id') or p.get('name') or p.get('text') or '' for p in (sp.get('params') or [])]
-            line = f"SP {sp.get('name', '')}"
-            if params:
-                line += ' | parametreler: ' + ', '.join(str(p) for p in params if p)
+        lines.append('=== CLASSES (Java class ↔ VT ve collection eşleştirmeleri) ===')
+        for cl in classes:
+            line = f"CLASS: {cl.get('name', '')}"
+            vt_name = cl.get('table')
+            if vt_name:
+                line += f" → VT: {vt_name}"
+                vt = vt_by_name.get(vt_name)
+                if vt:
+                    dbs = [_db_label(pt) for pt in _vt_targets(vt) if pt.get('table')]
+                    if dbs:
+                        line += ' → DB: ' + ', '.join(dbs)
+            fields = [_field_text(f, mark_pk=True) for f in (cl.get('fields') or [])]
+            if fields:
+                line += ' | alanlar: ' + ', '.join(fields)
             lines.append(line)
+            _append_collections(lines, cl.get('collections') or [], 2)
 
+    # ------------------------------------------------------------------
+    # FUNCTIONS: Java method → VT, parametre eşleştirmeleri
+    # ------------------------------------------------------------------
     if functions:
         lines.append('')
-        lines.append('[FONKSİYONLAR]')
+        lines.append('=== FUNCTIONS (Java method ↔ VT) ===')
         for fn in functions:
-            params = [p.get('id') or p.get('name') or p.get('text') or '' for p in (fn.get('params') or [])]
-            line = f"FUNCTION {fn.get('name', '')}"
+            line = f"FUNCTION: {fn.get('name', '')}"
+            if fn.get('table'):
+                line += f" → VT: {fn.get('table')}"
+            params = [_field_text(p) for p in (fn.get('params') or [])]
             if params:
-                line += ' | parametreler: ' + ', '.join(str(p) for p in params if p)
+                line += ' | parametreler: ' + ', '.join(params)
+            lines.append(line)
+            _append_collections(lines, fn.get('collections') or [], 2)
+
+    # ------------------------------------------------------------------
+    # PROCEDURES: DB SP adı ↔ Java çağrı adı (id), input parametreler
+    # ------------------------------------------------------------------
+    if procedures:
+        lines.append('')
+        lines.append('=== PROCEDURES (DB SP ↔ Java çağrısı, sadece input parametreler) ===')
+        for sp in procedures:
+            line = f"PROC: {sp.get('name', '')}"
+            meta = []
+            if sp.get('id') and sp.get('id') != sp.get('name'):
+                meta.append(f"id: {sp.get('id')}")
+            if sp.get('db'):
+                meta.append(f"db: {sp.get('db')}")
+            if meta:
+                line += ' (' + ', '.join(meta) + ')'
+            params = [_field_text(p) for p in (sp.get('params') or [])]
+            if params:
+                line += ' | parametreler: ' + ', '.join(params)
             lines.append(line)
 
     return '\n'.join(lines).strip()
@@ -678,7 +793,7 @@ def _rebuild_existing_documents_rag(project_id: int) -> dict:
     try:
         import json as _json
         dalmap_rows = db.execute_query(
-            'SELECT file_name, sections_json FROM dalmap_files WHERE project_id = ?',
+            'SELECT file_name, file_path, sections_json FROM dalmap_files WHERE project_id = ?',
             (project_id,)
         )
         for row in dalmap_rows or []:
@@ -686,10 +801,19 @@ def _rebuild_existing_documents_rag(project_id: int) -> dict:
             dm_name = dm.get('file_name') or ''
             if not dm_name:
                 continue
-            try:
-                sections = _json.loads(dm.get('sections_json') or '{}')
-            except Exception:
-                sections = {}
+            sections = {}
+            # Prefer re-parsing the XML so parser improvements (collections,
+            # partition, PK flags) are reflected on rebuild.
+            dm_path = dm.get('file_path') or ''
+            if dm_path:
+                abs_path = dm_path if os.path.isabs(dm_path) else os.path.join(UPLOAD_DIR, dm_path)
+                if os.path.exists(abs_path):
+                    sections = _parse_dalmap_xml(abs_path)
+            if not sections:
+                try:
+                    sections = _json.loads(dm.get('sections_json') or '{}')
+                except Exception:
+                    sections = {}
             summary = _build_dalmap_text(sections, dm_name)
             if not summary:
                 continue

@@ -116,6 +116,94 @@ class TestDalmapParser(unittest.TestCase):
         self.assertIn("dalMapConfig_EMPTY.xml", text)
         self.assertIn("0 proxy tablo", text)
 
+    def test_build_dalmap_text_resolves_vt_to_db_table(self):
+        """VT -> PT -> physical DB table chain must be visible in the summary."""
+        result = _parse_dalmap_xml(self.path)
+        text = _build_dalmap_text(result, "dalMapConfig_EHACIZ.xml")
+        self.assertIn("VT: vhhaciz_istek → PT: phhaciz_istek → DB: HACIZ_ISTEK (EHACIZ)", text)
+        self.assertIn("CLASS: tr.gov.example.EHaciz → VT: vehaciz", text)
+
+    def test_build_dalmap_text_marks_primary_key_fields(self):
+        result = _parse_dalmap_xml(self.path)
+        text = _build_dalmap_text(result, "dalMapConfig_EHACIZ.xml")
+        self.assertIn("oid [PK]", text)
+        self.assertNotIn("tutar [PK]", text)
+
+    def test_build_dalmap_text_procedure_id_and_param_columns(self):
+        result = _parse_dalmap_xml(self.path)
+        text = _build_dalmap_text(result, "dalMapConfig_EHACIZ.xml")
+        self.assertIn("PROC: BORC_SORGU", text)
+        self.assertIn("db: ehaciz_sp", text)
+        self.assertIn("parametreler: vkn:string", text)
+
+
+COLLECTION_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<DAL-MAPCONFIG>
+  <PROXYTABLES>
+    <PT name="phparent" table="PARENT_T" db="DB1">
+      <FIELD id="oid" type="string" column="OID" dbType="char" />
+    </PT>
+    <PT name="phchild" table="CHILD_T" db="DB1">
+      <FIELD id="oid" type="string" column="OID" dbType="char" />
+      <FIELD id="parent_oid" type="string" column="PARENT_OID" dbType="char" />
+    </PT>
+  </PROXYTABLES>
+  <VIRTUALTABLES>
+    <VT name="vparent" partition="true">
+      <PT name="phparent" />
+    </VT>
+    <VT name="vchild">
+      <PT name="phchild" />
+    </VT>
+  </VIRTUALTABLES>
+  <CLASSES>
+    <CLASS name="com.example.Parent" table="vparent" methods="java">
+      <FIELD name="oid" column="oid" primarykey="true" />
+      <COLLECTION name="children" table="vchild">
+        <FIELD name="oid" column="oid" primarykey="true" />
+        <FIELD name="parent_oid" column="parent_oid" primarykey="true" />
+      </COLLECTION>
+    </CLASS>
+  </CLASSES>
+  <FUNCTIONS />
+  <PROCEDURES />
+</DAL-MAPCONFIG>
+"""
+
+
+class TestDalmapCollections(unittest.TestCase):
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".xml")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(COLLECTION_XML)
+
+    def tearDown(self):
+        try:
+            os.remove(self.path)
+        except OSError:
+            pass
+
+    def test_collection_parsed(self):
+        result = _parse_dalmap_xml(self.path)
+        cls = result["classes"][0]
+        self.assertEqual(len(cls["collections"]), 1)
+        coll = cls["collections"][0]
+        self.assertEqual(coll["tag"], "COLLECTION")
+        self.assertEqual(coll["name"], "children")
+        self.assertEqual(coll["table"], "vchild")
+        self.assertEqual(len(coll["fields"]), 2)
+
+    def test_partition_marked_as_sharded(self):
+        result = _parse_dalmap_xml(self.path)
+        text = _build_dalmap_text(result, "dalMapConfig_COLL.xml")
+        self.assertIn("[SHARDED: partition=true]", text)
+
+    def test_collection_rendered_with_vt_and_db(self):
+        result = _parse_dalmap_xml(self.path)
+        text = _build_dalmap_text(result, "dalMapConfig_COLL.xml")
+        self.assertIn("COLLECTION: children → VT: vchild → DB: CHILD_T (DB1)", text)
+        self.assertIn("parent_oid [PK]", text)
+
 
 if __name__ == "__main__":
     unittest.main()
