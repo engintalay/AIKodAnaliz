@@ -383,6 +383,125 @@ def _parse_dalmap_xml(path: str) -> dict:
     }
 
 
+def _build_dalmap_text(sections: dict, file_name: str = '') -> str:
+    """Build a readable text summary of a DALMap config for RAG indexing.
+
+    The chat assistant only retrieves context from doc_chunks, so DALMap
+    configs must be flattened into text to become searchable.
+    """
+    proxy_tables = sections.get('proxy_tables') or []
+    virtual_tables = sections.get('virtual_tables') or []
+    classes = sections.get('classes') or []
+    procedures = sections.get('procedures') or []
+    functions = sections.get('functions') or []
+
+    lines = []
+    title = f'DALMap Konfigürasyonu: {file_name}' if file_name else 'DALMap Konfigürasyonu'
+    lines.append(title)
+    lines.append(
+        f'Özet: {len(proxy_tables)} proxy tablo (PT), '
+        f'{len(virtual_tables)} sanal tablo (VT), '
+        f'{len(classes)} sınıf (CLASS), '
+        f'{len(procedures)} prosedür (SP), '
+        f'{len(functions)} fonksiyon.'
+    )
+
+    def _field_text(field: dict) -> str:
+        name = field.get('id') or field.get('name') or field.get('text') or ''
+        column = field.get('column') or ''
+        ftype = field.get('type') or field.get('datatype') or ''
+        text = str(name)
+        if column and column != name:
+            text += f'({column})'
+        if ftype:
+            text += f':{ftype}'
+        return text
+
+    if proxy_tables:
+        lines.append('')
+        lines.append('[PROXY TABLOLAR]')
+        for pt in proxy_tables:
+            head = f"PT {pt.get('name', '')}"
+            if pt.get('table'):
+                head += f" -> tablo: {pt.get('table')}"
+            if pt.get('db'):
+                head += f" (db: {pt.get('db')})"
+            fields = [_field_text(f) for f in (pt.get('fields') or [])]
+            if fields:
+                head += ' | alanlar: ' + ', '.join(fields)
+            lines.append(head)
+
+    if virtual_tables:
+        lines.append('')
+        lines.append('[SANAL TABLOLAR]')
+        for vt in virtual_tables:
+            refs = [p.get('name') for p in (vt.get('proxy_tables') or []) if p.get('name')]
+            line = f"VT {vt.get('name', '')}"
+            if refs:
+                line += ' -> proxy tablolar: ' + ', '.join(refs)
+            lines.append(line)
+
+    if classes:
+        lines.append('')
+        lines.append('[SINIFLAR]')
+        for cl in classes:
+            line = f"CLASS {cl.get('name', '')}"
+            if cl.get('table'):
+                line += f" -> tablo: {cl.get('table')}"
+            fields = [_field_text(f) for f in (cl.get('fields') or [])]
+            if fields:
+                line += ' | alanlar: ' + ', '.join(fields)
+            lines.append(line)
+
+    if procedures:
+        lines.append('')
+        lines.append('[PROSEDÜRLER]')
+        for sp in procedures:
+            params = [p.get('id') or p.get('name') or p.get('text') or '' for p in (sp.get('params') or [])]
+            line = f"SP {sp.get('name', '')}"
+            if params:
+                line += ' | parametreler: ' + ', '.join(str(p) for p in params if p)
+            lines.append(line)
+
+    if functions:
+        lines.append('')
+        lines.append('[FONKSİYONLAR]')
+        for fn in functions:
+            params = [p.get('id') or p.get('name') or p.get('text') or '' for p in (fn.get('params') or [])]
+            line = f"FUNCTION {fn.get('name', '')}"
+            if params:
+                line += ' | parametreler: ' + ', '.join(str(p) for p in params if p)
+            lines.append(line)
+
+    return '\n'.join(lines).strip()
+
+
+def _index_dalmap_rag(project_id: int, file_name: str, text: str) -> int:
+    """Store DALMap summary text as doc_chunks so chat/RAG can retrieve it."""
+    chunks = _chunk_text(text)
+    if not chunks:
+        return 0
+
+    db.execute_update(
+        'DELETE FROM doc_chunks WHERE project_id = ? AND file_name = ?',
+        (project_id, file_name)
+    )
+
+    rows = [
+        {'content': chunk, 'page_start': None, 'page_end': None}
+        for chunk in chunks
+    ]
+    for idx, chunk in enumerate(rows):
+        db.execute_insert(
+            '''INSERT INTO doc_chunks (project_id, file_name, chunk_index, content, page_start, page_end)
+               VALUES (?, ?, ?, ?, ?, ?)''',
+            (project_id, file_name, idx, chunk['content'], chunk.get('page_start'), chunk.get('page_end'))
+        )
+
+    _embed_doc_chunks_async(project_id, file_name, rows)
+    return len(rows)
+
+
 def _process_dalmap_file(project_id: int, file_path: str, rel_path: str, file_name: str) -> bool:
     """Process DALMap file and store its summary for later use."""
     try:
@@ -411,6 +530,16 @@ def _process_dalmap_file(project_id: int, file_path: str, rel_path: str, file_na
                 json.dumps(sections, ensure_ascii=False),
             )
         )
+
+        # Index the DALMap summary into doc_chunks so the chat assistant can
+        # retrieve it (chat only searches doc_chunks, not dalmap_files).
+        try:
+            summary = _build_dalmap_text(sections, file_name)
+            chunk_count = _index_dalmap_rag(project_id, file_name, summary)
+            logger.info(f"DALMap RAG indexing: {file_name} -> {chunk_count} chunks")
+        except Exception as e:
+            logger.warning(f"DALMap RAG indexing failed for {file_name}: {e}")
+
         return True
     except Exception as e:
         logger.warning(f"DALMap file processing error {rel_path}: {e}")
@@ -543,6 +672,31 @@ def _rebuild_existing_documents_rag(project_id: int) -> dict:
         _embed_doc_chunks_async(project_id, file_name, chunks)
         documents_processed += 1
         chunks_created += len(chunks)
+
+    # DALMap configs live in dalmap_files, not project_documents; re-index them
+    # as well so a RAG rebuild does not drop them from chat retrieval.
+    try:
+        import json as _json
+        dalmap_rows = db.execute_query(
+            'SELECT file_name, sections_json FROM dalmap_files WHERE project_id = ?',
+            (project_id,)
+        )
+        for row in dalmap_rows or []:
+            dm = dict(row)
+            dm_name = dm.get('file_name') or ''
+            if not dm_name:
+                continue
+            try:
+                sections = _json.loads(dm.get('sections_json') or '{}')
+            except Exception:
+                sections = {}
+            summary = _build_dalmap_text(sections, dm_name)
+            if not summary:
+                continue
+            chunks_created += _index_dalmap_rag(project_id, dm_name, summary)
+            documents_processed += 1
+    except Exception as e:
+        logger.warning(f"DALMap RAG rebuild error (project={project_id}): {e}")
 
     return {
         'documents_processed': documents_processed,

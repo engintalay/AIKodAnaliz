@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from backend.routes.project_files import _is_dalmap_file, _parse_dalmap_xml
+from backend.routes.project_files import _is_dalmap_file, _parse_dalmap_xml, _build_dalmap_text
 
 
 SAMPLE_XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -98,6 +98,23 @@ class TestDalmapParser(unittest.TestCase):
         self.assertEqual(mappings["classes"][0]["table"], "vehaciz")
         self.assertEqual(mappings["virtual_tables"][0]["proxy_tables"], ["phhaciz_istek"])
         self.assertEqual(mappings["proxy_tables"][0]["table"], "HACIZ_ISTEK")
+
+    def test_build_dalmap_text_contains_searchable_terms(self):
+        """DALMap summary must expose table/field/procedure names for RAG."""
+        result = _parse_dalmap_xml(self.path)
+        text = _build_dalmap_text(result, "dalMapConfig_EHACIZ.xml")
+        self.assertIn("dalMapConfig_EHACIZ.xml", text)
+        self.assertIn("phhaciz_istek", text)
+        self.assertIn("HACIZ_ISTEK", text)
+        self.assertIn("oid(OID):string", text)
+        self.assertIn("vhhaciz_istek", text)
+        self.assertIn("BORC_SORGU", text)
+        self.assertIn("2 proxy tablo", text)
+
+    def test_build_dalmap_text_handles_empty_sections(self):
+        text = _build_dalmap_text({}, "dalMapConfig_EMPTY.xml")
+        self.assertIn("dalMapConfig_EMPTY.xml", text)
+        self.assertIn("0 proxy tablo", text)
 
 
 if __name__ == "__main__":
