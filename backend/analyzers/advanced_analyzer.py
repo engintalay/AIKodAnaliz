@@ -16,6 +16,8 @@ try:
 except ImportError:
     SQLPARSE_AVAILABLE = False
 
+from backend.analyzers.sql_objects import analyze_sql
+
 # Tree-Sitter is MANDATORY
 try:
     from tree_sitter import Language, Parser
@@ -147,83 +149,8 @@ class AdvancedCodeAnalyzer:
         return self._analyze_with_tree_sitter(file_path, content, lang_name)
     
     def _analyze_sql(self, file_path: str, content: str) -> Dict:
-        """Analyze SQL using sqlparse"""
-        functions = []
-        entry_points = []
-        dependencies = []
-        
-        try:
-            statements = sqlparse.parse(content)
-            
-            for stmt in statements:
-                stmt_raw = str(stmt)
-                stmt_str = stmt_raw.upper()
-
-                # Support CREATE / ALTER / CREATE OR ALTER / CREATE OR REPLACE
-                object_match = re.search(
-                    r'\b(?:CREATE|ALTER)(?:\s+OR\s+ALTER|\s+OR\s+REPLACE)?\s+'
-                    r'(PROCEDURE|FUNCTION|VIEW|TRIGGER)\s+([^\s(]+)',
-                    stmt_str,
-                    re.IGNORECASE
-                )
-                if not object_match:
-                    continue
-
-                obj_type = object_match.group(1).lower()
-                raw_name = object_match.group(2).strip()
-                # SQL Server names can be like [SCHEMA].[PROC]; normalize to SCHEMA.PROC
-                obj_name = raw_name.replace('].[', '.').replace('[', '').replace(']', '').strip('`"')
-
-                params = []
-                if obj_type in ['procedure', 'function']:
-                    params_match = re.search(r'\(([^)]+)\)', stmt_raw, re.IGNORECASE)
-                    if params_match:
-                        params_str = params_match.group(1)
-                        params = [p.strip().split()[0] for p in params_str.split(',') if p.strip()]
-
-                line_num = content[:content.find(stmt_raw)].count('\n') + 1 if stmt_raw in content else 1
-
-                func_info = {
-                    'name': obj_name,
-                    'type': obj_type,
-                    'start_line': line_num,
-                    'end_line': line_num + stmt_raw.count('\n'),
-                    'parameters': params,
-                    'return_type': None,
-                    'signature': ' '.join(stmt_raw.split()[:6]) + '...',
-                    'is_entry': obj_type == 'trigger',
-                    'class_name': None,
-                    'package_name': file_path
-                }
-                functions.append(func_info)
-
-                if obj_type == 'trigger':
-                    entry_points.append(func_info)
-            
-            # Extract table dependencies from SELECT/INSERT/UPDATE/DELETE
-            for stmt in statements:
-                stmt_type = stmt.get_type()
-                if stmt_type in ['SELECT', 'INSERT', 'UPDATE', 'DELETE']:
-                    table_pattern = r'(?:FROM|JOIN|INTO|UPDATE)\s+([\w.]+)'
-                    for match in re.finditer(table_pattern, str(stmt), re.IGNORECASE):
-                        table_name = match.group(1)
-                        if table_name.upper() not in ['SELECT', 'WHERE', 'SET', 'VALUES']:
-                            if table_name not in dependencies:
-                                dependencies.append(table_name)
-        
-        except Exception as e:
-            return {
-                'functions': [],
-                'entry_points': [],
-                'dependencies': [],
-                'error': str(e)
-            }
-        
-        return {
-            'functions': functions,
-            'entry_points': entry_points,
-            'dependencies': dependencies
-        }
+        """Analyze SQL using the shared sql_objects module."""
+        return analyze_sql(file_path, content)
     
     def _analyze_with_tree_sitter(self, file_path: str, content: str, language: str) -> Dict:
         """Analyze code using Tree-Sitter for precise AST parsing"""

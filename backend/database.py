@@ -1,7 +1,18 @@
 import sqlite3
 import os
 from datetime import datetime
-from config.config import DATABASE_PATH
+from config.config import (
+    DATABASE_PATH,
+    AI_PROVIDER,
+    LMSTUDIO_API_URL,
+    AI_API_KEY,
+    EMBEDDING_MODEL as DEFAULT_EMBEDDING_MODEL,
+    EMBEDDING_API_URL,
+    EMBEDDING_API_KEY,
+    LMSTUDIO_DEFAULT_MODEL,
+    CONTEXT_LIMIT_TOKENS,
+    AI_SUMMARY_MAX_TOKENS,
+)
 
 class Database:
     def __init__(self):
@@ -196,6 +207,8 @@ class Database:
                     items_per_page INTEGER DEFAULT 20,
                     default_filter TEXT,
                     ai_api_url TEXT,
+                    ai_api_key TEXT,
+                    ai_model TEXT,
                     preferences TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id)
@@ -281,6 +294,23 @@ class Database:
                 )
             ''')
 
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS doc_chunks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id INTEGER NOT NULL,
+                    file_name TEXT NOT NULL,
+                    chunk_index INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    embedding TEXT,
+                    model_name TEXT,
+                    page_start INTEGER,
+                    page_end INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                    UNIQUE(project_id, file_name, chunk_index)
+                )
+            ''')
+
             # FTS5 for document search (GELIS8)
             cursor.execute('''
                 CREATE VIRTUAL TABLE IF NOT EXISTS fts_documents
@@ -298,13 +328,29 @@ class Database:
             existing_columns = {row[1] for row in cursor.fetchall()}
             if 'ai_api_url' not in existing_columns:
                 cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_api_url TEXT')
+            if 'ai_api_key' not in existing_columns:
+                cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_api_key TEXT')
+            if 'ai_model' not in existing_columns:
+                cursor.execute('ALTER TABLE user_settings ADD COLUMN ai_model TEXT')
+
+            # Migration: Add updated_at column to functions table if not exists
+            cursor.execute("PRAGMA table_info(functions)")
+            func_columns = {row[1] for row in cursor.fetchall()}
+            if 'updated_at' not in func_columns:
+                cursor.execute('ALTER TABLE functions ADD COLUMN updated_at TIMESTAMP')
+
+            cursor.execute("PRAGMA table_info(doc_chunks)")
+            doc_chunk_columns = {row[1] for row in cursor.fetchall()}
+            if 'page_start' not in doc_chunk_columns:
+                cursor.execute('ALTER TABLE doc_chunks ADD COLUMN page_start INTEGER')
+            if 'page_end' not in doc_chunk_columns:
+                cursor.execute('ALTER TABLE doc_chunks ADD COLUMN page_end INTEGER')
 
             # Add sections_json to dalmap_files if missing (GELIS9)
             cursor.execute("PRAGMA table_info(dalmap_files)")
             dalmap_columns = {row[1] for row in cursor.fetchall()}
             if 'sections_json' not in dalmap_columns:
                 cursor.execute('ALTER TABLE dalmap_files ADD COLUMN sections_json TEXT')
-
             # Create demo users if not exist
             cursor.execute("SELECT COUNT(*) FROM users WHERE username = ?", ("admin",))
             if cursor.fetchone()[0] == 0:
@@ -337,7 +383,9 @@ class Database:
                 
                 # Initialize AI settings with default values
                 default_settings = [
-                    ('api_url', 'http://localhost:1234/v1', 'string'),
+                    ('provider', AI_PROVIDER or 'lmstudio', 'string'),
+                    ('api_url', LMSTUDIO_API_URL or 'http://localhost:1234/v1', 'string'),
+                    ('api_key', AI_API_KEY or '', 'string'),
                     ('temperature', '0.7', 'float'),
                     ('top_p', '0.9', 'float'),
                     ('max_tokens', '1000', 'integer'),
@@ -345,12 +393,44 @@ class Database:
                     ('frequency_penalty', '0', 'float'),
                     ('presence_penalty', '0', 'float'),
                     ('retry_count', '3', 'integer'),
+                    ('model_name', LMSTUDIO_DEFAULT_MODEL or '', 'string'),
+                    ('context_limit', str(CONTEXT_LIMIT_TOKENS), 'integer'),
+                    ('embedding_model', DEFAULT_EMBEDDING_MODEL, 'string'),
+                    ('embedding_api_url', EMBEDDING_API_URL or '', 'string'),
+                    ('embedding_api_key', EMBEDDING_API_KEY or '', 'string'),
+                    ('summary_max_tokens', str(AI_SUMMARY_MAX_TOKENS), 'integer'),
                 ]
                 for setting_name, setting_value, data_type in default_settings:
                     cursor.execute('''
                         INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)
                         VALUES (?, ?, ?)
                     ''', (setting_name, setting_value, data_type))
+
+            # Ensure provider setting exists for existing databases too.
+            cursor.execute('''
+                INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)
+                VALUES (?, ?, ?)
+            ''', ('provider', AI_PROVIDER or 'lmstudio', 'string'))
+
+            cursor.execute('''
+                INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)
+                VALUES (?, ?, ?)
+            ''', ('api_url', LMSTUDIO_API_URL or 'http://localhost:1234/v1', 'string'))
+
+            # API key + embedding (GELIS23) defaults for existing databases too.
+            for setting_name, setting_value, data_type in [
+                ('api_key', AI_API_KEY or '', 'string'),
+                ('model_name', LMSTUDIO_DEFAULT_MODEL or '', 'string'),
+                ('context_limit', str(CONTEXT_LIMIT_TOKENS), 'integer'),
+                ('embedding_model', DEFAULT_EMBEDDING_MODEL, 'string'),
+                ('embedding_api_url', EMBEDDING_API_URL or '', 'string'),
+                ('embedding_api_key', EMBEDDING_API_KEY or '', 'string'),
+                ('summary_max_tokens', str(AI_SUMMARY_MAX_TOKENS), 'integer'),
+            ]:
+                cursor.execute('''
+                    INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)
+                    VALUES (?, ?, ?)
+                ''', (setting_name, setting_value, data_type))
             
             conn.commit()
     

@@ -1,6 +1,7 @@
 // API URL: Use current hostname/port dynamically, but override /api path on root
 const API_URL = `${window.location.protocol}//${window.location.host}/api`;
 let currentProjectId = null;
+let currentProjectName = '';
 let currentUser = null;
 let cy = null;
 
@@ -143,6 +144,8 @@ async function loadProjects() {
             // Restrict Delete & Reanalyze to admin and project owners
             const canManage = currentUser && (currentUser.role === 'admin' || project.admin_id === currentUser.id);
 
+            actionButtons += `<button onclick="event.stopPropagation(); exportProjectWeb(${project.id})" class="btn btn-secondary">📤 Dışa Aktar</button>`;
+
             if (canManage) {
                 actionButtons += `
                     <button onclick="event.stopPropagation(); reanalyzeProject(${project.id})" class="btn btn-secondary">🔄 Tekrar Analiz Et</button>
@@ -182,6 +185,10 @@ async function viewProject(projectId) {
     currentProjectId = projectId;
     console.log('viewProject called with projectId:', projectId);
 
+    // GELIS29: attachments are chat/project scoped; drop local list on switch.
+    chatAttachments = [];
+    renderChatAttachments();
+
     try {
         const response = await fetch(`${API_URL}/projects/${projectId}`);
 
@@ -191,6 +198,7 @@ async function viewProject(projectId) {
 
         const project = await response.json();
 
+        currentProjectName = project.name || '';
         document.getElementById('projectTitle').textContent = project.name;
         document.getElementById('projectDescriptionInput').value = project.description || '';
         showSection('projectDetailSection');
@@ -383,7 +391,9 @@ async function startBulkAiAnalysis() {
         const taskId = 'bulk_ai_' + Date.now();
         const extraCriteria = (document.getElementById('bulkAiExtraCriteria')?.value || '').trim();
         const extraQuestion = (document.getElementById('bulkAiExtraQuestion')?.value || '').trim();
-        const response = await startTrackedAnalysis(
+        
+        // Call startTrackedAnalysis from admin-functions.js
+        const response = await window.startTrackedAnalysis(
             taskId,
             `Toplu AI Ozeti: Proje #${currentProjectId}`,
             () => fetch(`${API_URL}/analysis/project/${currentProjectId}/bulk-ai-summary?task_id=${taskId}`, {
@@ -391,7 +401,8 @@ async function startBulkAiAnalysis() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     extra_criteria: extraCriteria,
-                    extra_question: extraQuestion
+                    extra_question: extraQuestion,
+                    force: true
                 })
             })
         );
@@ -422,12 +433,608 @@ let chatStreaming = false;
 let ragSearchResults = [];   // latest RAG search results
 let ragSearchBestScore = 0;   // best score from last RAG search (0-1)
 let ragSelectedFunctionIds = new Set();
+let ragSelectedDocumentKeys = new Set();
+let chatExpanded = false;
+// GELIS29: chat-scoped attachments (not added to the project/RAG index)
+let chatAttachments = [];   // { id, name, size, chars }
+let chatUploading = false;
+
+function _formatBytes(bytes) {
+    const n = Number(bytes) || 0;
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function triggerChatFileUpload() {
+    if (!currentProjectId) {
+        showError('Proje Seçilmedi', 'Önce bir proje açın.');
+        return;
+    }
+    const input = document.getElementById('chatFileInput');
+    if (input) {
+        input.value = '';
+        input.click();
+    }
+}
+
+async function handleChatFileSelect(event) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+    await uploadChatFiles(files);
+    event.target.value = '';
+}
+
+async function uploadChatFiles(files) {
+    if (!currentProjectId || chatUploading) return;
+
+    chatUploading = true;
+    const attachBtn = document.getElementById('chatAttachBtn');
+    if (attachBtn) {
+        attachBtn.disabled = true;
+        attachBtn.textContent = '⏳ Yükleniyor...';
+    }
+
+    try {
+        const formData = new FormData();
+        files.forEach(file => formData.append('files', file, file.name));
+
+        const response = await fetch(`${API_URL}/chat/project/${currentProjectId}/attachments`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ error: response.statusText }));
+            throw new Error(err.error || 'Dosya yüklenemedi');
+        }
+
+        const data = await response.json();
+        const results = data.attachments || [];
+        const errors = [];
+
+        results.forEach(item => {
+            if (item.error) {
+                errors.push(`${item.name}: ${item.error}`);
+                return;
+            }
+            if (!chatAttachments.some(a => a.id === item.id)) {
+                chatAttachments.push(item);
+            }
+        });
+
+        renderChatAttachments();
+
+        if (errors.length) {
+            showError('Bazı Dosyalar Yüklenemedi', errors.join('\n'));
+        }
+        if (results.some(item => item.id)) {
+            showSuccess('Dosya Eklendi', 'Dosya(lar) bu sohbete eklendi. Projeye eklenmedi.');
+        }
+    } catch (error) {
+        showError('Dosya Yükleme Hatası', error.message);
+    } finally {
+        chatUploading = false;
+        if (attachBtn) {
+            attachBtn.disabled = false;
+            attachBtn.textContent = '📄 Dosya Ekle';
+        }
+    }
+}
+
+function renderChatAttachments() {
+    const container = document.getElementById('chatAttachments');
+    if (!container) return;
+
+    if (!chatAttachments.length) {
+        container.style.display = 'none';
+        container.innerHTML = '';
+        return;
+    }
+
+    container.style.display = 'flex';
+    container.innerHTML = chatAttachments.map(item => `
+        <span class="chat-attachment-chip" title="${_escapeHtml(item.name)} — ${_formatBytes(item.size)}">
+            📄 ${_escapeHtml(item.name)}
+            <span class="chat-attachment-size">${_formatBytes(item.size)}</span>
+            <button type="button" class="chat-attachment-remove"
+                onclick="removeChatAttachment('${item.id}')" title="Dosyayı kaldır">✕</button>
+        </span>
+    `).join('');
+}
+
+async function removeChatAttachment(attachmentId) {
+    if (!currentProjectId || !attachmentId) return;
+
+    chatAttachments = chatAttachments.filter(a => a.id !== attachmentId);
+    renderChatAttachments();
+
+    try {
+        await fetch(`${API_URL}/chat/project/${currentProjectId}/attachments/${attachmentId}`, {
+            method: 'DELETE'
+        });
+    } catch (error) {
+        console.warn('Attachment delete failed:', error);
+    }
+}
+
+async function clearChatAttachments() {
+    const hadAttachments = chatAttachments.length > 0;
+    chatAttachments = [];
+    renderChatAttachments();
+
+    if (!hadAttachments || !currentProjectId) return;
+    try {
+        await fetch(`${API_URL}/chat/project/${currentProjectId}/attachments/clear`, {
+            method: 'POST'
+        });
+    } catch (error) {
+        console.warn('Attachment clear failed:', error);
+    }
+}
+
+// ------------------------------------------------------------------
+// GELIS29: Markdown export helpers
+// ------------------------------------------------------------------
+
+function _slugify(value) {
+    return String(value || 'sohbet')
+        .toLowerCase()
+        .replace(/[çğıöşü]/g, ch => ({ 'ç': 'c', 'ğ': 'g', 'ı': 'i', 'ö': 'o', 'ş': 's', 'ü': 'u' }[ch] || ch))
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60) || 'sohbet';
+}
+
+function _downloadMarkdownFile(content, filename) {
+    const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+function _markdownTimestamp(ts) {
+    if (!ts) return '';
+    try {
+        return new Date(ts).toLocaleString('tr-TR');
+    } catch {
+        return '';
+    }
+}
+
+async function downloadMessageMarkdown(text, index, refs) {
+    const content = String(text || '').trim();
+    if (!content) {
+        showError('Boş Yanıt', 'İndirilecek içerik yok.');
+        return;
+    }
+    const lines = [content];
+    const refLines = await _buildReferencesSection(refs || []);
+    if (refLines.length) {
+        lines.push('');
+        lines.push(...refLines);
+    }
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const suffix = Number.isInteger(index) ? `-${index + 1}` : '';
+    _downloadMarkdownFile(lines.join('\n') + '\n', `yanit${suffix}-${stamp}.md`);
+}
+
+// GELIS30/GELIS31: Markdown kaynakça üretimi.
+// Fonksiyonlar tam gövdesiyle kod bloğu içinde eklenir; ancak kaynak dosya çok
+// büyükse veya dosyadan çok fazla fonksiyon referans verilmişse yalnızca dosya
+// adı yazılır. Dokümanlar link olarak, sohbete yüklenen dosyalar isimle eklenir.
+const MD_REF_MAX_FILE_BYTES = 200 * 1024;
+const MD_REF_MAX_FUNCS_PER_FILE = 20;
+const MD_REF_MAX_SOURCE_FUNCS = 40;
+
+const MD_LANG_MAP = {
+    java: 'java', sql: 'sql', xml: 'xml', xsl: 'xml', xslt: 'xml', wsdl: 'xml',
+    xsd: 'xml', jrxml: 'xml', json: 'json', yml: 'yaml', yaml: 'yaml',
+    properties: 'properties', gradle: 'groovy', groovy: 'groovy',
+    python: 'python', py: 'python', javascript: 'javascript', js: 'javascript',
+    typescript: 'typescript', ts: 'typescript', html: 'html', css: 'css',
+    sh: 'bash', bash: 'bash', c: 'c', cpp: 'cpp', cs: 'csharp', go: 'go',
+    php: 'php', rb: 'ruby', kt: 'kotlin', kotlin: 'kotlin', pb: 'powershell'
+};
+
+function _mdCodeLang(language) {
+    const key = String(language || '').toLowerCase().trim();
+    return MD_LANG_MAP[key] || key || 'text';
+}
+
+function _refKind(ref) {
+    const type = ref && ref.type;
+    if (type === 'document') return 'document';
+    if (type === 'attachment') return 'attachment';
+    return 'function';
+}
+
+async function _fetchFunctionSources(ids) {
+    const unique = [...new Set((ids || []).map(Number).filter(n => Number.isFinite(n) && n > 0))];
+    if (!unique.length) return new Map();
+    try {
+        const res = await fetch(`${API_URL}/analysis/functions/source`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: unique })
+        });
+        if (!res.ok) return new Map();
+        const data = await res.json();
+        const map = new Map();
+        (data.functions || []).forEach(fn => map.set(Number(fn.id), fn));
+        return map;
+    } catch (err) {
+        console.warn('Fonksiyon kaynakları alınamadı:', err);
+        return new Map();
+    }
+}
+
+function _documentLink(name) {
+    const base = String(name || '').split('/').pop();
+    if (!currentProjectId || !base) return '';
+    return `${API_URL}/projects/${currentProjectId}/docs/file/${encodeURIComponent(base)}`;
+}
+
+async function _buildReferencesSection(refsList) {
+    const functions = new Map();
+    const documents = new Map();
+    const attachments = new Map();
+
+    (refsList || []).forEach(ref => {
+        if (!ref) return;
+        const name = ref.name || ref.file || '';
+        if (!name) return;
+        const kind = _refKind(ref);
+        if (kind === 'function') {
+            const key = `${ref.id || ''}|${name}|${ref.file || ''}`;
+            if (!functions.has(key)) functions.set(key, ref);
+        } else if (kind === 'document') {
+            if (!documents.has(name)) documents.set(name, ref);
+        } else if (!attachments.has(name)) {
+            attachments.set(name, ref);
+        }
+    });
+
+    if (!functions.size && !documents.size && !attachments.size) return [];
+
+    const lines = ['---', '', '## 📚 Kaynaklar', ''];
+
+    if (functions.size) {
+        const byFile = new Map();
+        functions.forEach(ref => {
+            const file = ref.file || '(dosya bilgisi yok)';
+            if (!byFile.has(file)) byFile.set(file, []);
+            byFile.get(file).push(ref);
+        });
+
+        const detailRefs = [];
+        const fileOnly = [];
+
+        [...byFile.keys()].sort((a, b) => a.localeCompare(b, 'tr')).forEach(file => {
+            const items = byFile.get(file);
+            const size = Math.max(...items.map(r => Number(r.file_size) || 0));
+            if (size > MD_REF_MAX_FILE_BYTES || items.length > MD_REF_MAX_FUNCS_PER_FILE) {
+                fileOnly.push({ file, items, size });
+            } else {
+                detailRefs.push(...items);
+            }
+        });
+
+        const sourceIds = detailRefs
+            .map(r => Number(r.id))
+            .filter(n => Number.isFinite(n) && n > 0)
+            .slice(0, MD_REF_MAX_SOURCE_FUNCS);
+        const sources = await _fetchFunctionSources(sourceIds);
+
+        lines.push('### Fonksiyonlar');
+        lines.push('');
+
+        fileOnly.forEach(({ file, items, size }) => {
+            const reason = size > MD_REF_MAX_FILE_BYTES
+                ? `çok büyük dosya, ${_formatBytes(size)}`
+                : `${items.length} fonksiyon`;
+            lines.push(`- \`${file}\` — ${reason}; fonksiyonlar tek tek listelenmedi.`);
+        });
+        if (fileOnly.length) lines.push('');
+
+        detailRefs
+            .slice()
+            .sort((a, b) => String(a.name).localeCompare(String(b.name), 'tr'))
+            .forEach(ref => {
+                const file = ref.file || '(dosya bilgisi yok)';
+                const src = sources.get(Number(ref.id));
+                if (src && src.source_code && src.source_code.trim()) {
+                    lines.push(`#### \`${ref.name}\` — \`${file}\``);
+                    lines.push('');
+                    lines.push('```' + _mdCodeLang(src.language));
+                    lines.push(src.source_code.replace(/\s+$/, ''));
+                    lines.push('```');
+                    lines.push('');
+                } else {
+                    lines.push(`- \`${ref.name}\` — \`${file}\``);
+                }
+            });
+        lines.push('');
+    }
+
+    if (documents.size) {
+        lines.push('### Dokümanlar');
+        lines.push('');
+        [...documents.keys()]
+            .sort((a, b) => a.localeCompare(b, 'tr'))
+            .forEach(name => {
+                const url = _documentLink(name);
+                lines.push(url ? `- [\`${name}\`](${url})` : `- \`${name}\``);
+            });
+        lines.push('');
+    }
+
+    if (attachments.size) {
+        lines.push('### Sohbete Yüklenen Dosyalar');
+        lines.push('');
+        [...attachments.keys()]
+            .sort((a, b) => a.localeCompare(b, 'tr'))
+            .forEach(name => lines.push(`- \`${name}\``));
+        lines.push('');
+    }
+
+    return lines;
+}
+
+async function downloadChatMarkdown() {
+    if (!chatHistory.length) {
+        showError('Boş Sohbet', 'İndirilecek sohbet geçmişi yok.');
+        return;
+    }
+
+    const lines = [];
+    const title = currentProjectName ? `Sohbet Geçmişi – ${currentProjectName}` : 'Sohbet Geçmişi';
+    lines.push(`# ${title}`);
+    lines.push('');
+    lines.push(`> Dışa aktarma: ${new Date().toLocaleString('tr-TR')}`);
+    lines.push('');
+
+    if (chatAttachments.length) {
+        lines.push('## Bu Sohbete Yüklenen Dosyalar');
+        lines.push('');
+        chatAttachments.forEach(item => {
+            lines.push(`- \`${item.name}\` (${_formatBytes(item.size)})`);
+        });
+        lines.push('');
+    }
+
+    chatHistory.forEach((msg, idx) => {
+        const isUser = msg.role === 'user';
+        const ts = _markdownTimestamp(msg.ts);
+        lines.push(`## ${isUser ? '👤 Kullanıcı' : '🤖 Asistan'}${ts ? ` — ${ts}` : ''}`);
+        lines.push('');
+
+        if (msg.attachments && msg.attachments.length) {
+            lines.push(`**Ekli dosyalar:** ${msg.attachments.map(a => `\`${a.name}\``).join(', ')}`);
+            lines.push('');
+        }
+
+        lines.push(String(msg.content || '').trim());
+        lines.push('');
+
+        if (msg.refs && msg.refs.length) {
+            const refNames = msg.refs
+                .map(r => r.name || r.file || '')
+                .filter(Boolean)
+                .map(name => `\`${name}\``);
+            if (refNames.length) {
+                lines.push(`**Kaynaklar:** ${refNames.join(', ')}`);
+                lines.push('');
+            }
+        }
+
+        if (idx < chatHistory.length - 1) {
+            lines.push('---');
+            lines.push('');
+        }
+    });
+
+    // GELIS30: tüm sohbetin kaynaklarını dosya sonuna ekle
+    const allRefs = [];
+    chatHistory.forEach(msg => {
+        if (msg.refs && msg.refs.length) allRefs.push(...msg.refs);
+    });
+    const refLines = await _buildReferencesSection(allRefs);
+    if (refLines.length) {
+        lines.push(...refLines);
+    }
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    _downloadMarkdownFile(lines.join('\n'), `sohbet-${_slugify(currentProjectName)}-${stamp}.md`);
+}
+
+function _docSelectionKey(fileName, chunkIndex) {
+    return JSON.stringify([String(fileName || ''), Number(chunkIndex || 0)]);
+}
+
+function _docSelectionFromKey(key) {
+    try {
+        const [fileName, chunkIndex] = JSON.parse(key);
+        return { file_name: String(fileName || ''), chunk_index: Number(chunkIndex || 0) };
+    } catch {
+        return null;
+    }
+}
 
 function initChatTab() {
     // Scroll to bottom on tab switch
     const msgs = document.getElementById('chatMessages');
     if (msgs) msgs.scrollTop = msgs.scrollHeight;
+    _updateChatLayoutButtons();
 }
+
+function _normalizeMarkdownForParagraphs(text) {
+    const normalized = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = normalized.split('\n');
+    const output = [];
+    const paragraph = [];
+    let inCodeBlock = false;
+
+    const flushParagraph = () => {
+        if (paragraph.length) {
+            output.push(paragraph.map(x => x.trim()).filter(Boolean).join(' '));
+            paragraph.length = 0;
+        }
+    };
+
+    for (const line of lines) {
+        const stripped = line.trim();
+
+        if (stripped.startsWith('```')) {
+            flushParagraph();
+            output.push(line);
+            inCodeBlock = !inCodeBlock;
+            continue;
+        }
+
+        if (inCodeBlock) {
+            output.push(line);
+            continue;
+        }
+
+        const isOrderedList = /^\d+\.\s/.test(stripped);
+        const isMarkdownBlock =
+            stripped.startsWith('#') ||
+            stripped.startsWith('>') ||
+            stripped.startsWith('- ') ||
+            stripped.startsWith('* ') ||
+            stripped.startsWith('+ ') ||
+            stripped.startsWith('|') ||
+            stripped.startsWith('---') ||
+            isOrderedList;
+
+        if (!stripped) {
+            flushParagraph();
+            output.push('');
+            continue;
+        }
+
+        if (isMarkdownBlock) {
+            flushParagraph();
+            output.push(line);
+            continue;
+        }
+
+        paragraph.push(line);
+    }
+
+    flushParagraph();
+    return output.join('\n');
+}
+
+function _stripAssistantMeta(text) {
+    let cleaned = String(text || '');
+    cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    cleaned = cleaned.replace(/<\|channel\|>\s*(assistant|final)\b/gi, '');
+    cleaned = cleaned.replace(/<\|channel\|>\s*(thought|analysis)\b[\s\S]*?(?=<\|channel\|>\s*final\b|$)/gi, '');
+    cleaned = cleaned.replace(/<\|[^>]+\|>/g, '');
+    return cleaned.trim();
+}
+
+function _improveAssistantStructure(text) {
+    let cleaned = String(text || '');
+    // Headings that got glued to previous sentence.
+    cleaned = cleaned.replace(/([^\n])\s*(#{1,6}\s+)/g, '$1\n\n$2');
+    // Bullet markers that are inline in the same sentence.
+    cleaned = cleaned.replace(/\s+\*\s+(?=\*\*|[A-Za-z0-9ÇĞİÖŞÜçğıöşü])/g, '\n- ');
+    // Numeric sections merged into text.
+    cleaned = cleaned.replace(/([^\n])\s+(\d+\.\s+\*\*)/g, '$1\n\n$2');
+    // Broken separator patterns.
+    cleaned = cleaned.replace(/:---+/g, ':\n\n---\n');
+    // Keep blank lines controlled for markdown parser.
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+    return cleaned.trim();
+}
+
+function _escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function _renderAssistantMarkdown(el, text) {
+    if (!el) return;
+
+    const sanitized = _improveAssistantStructure(_stripAssistantMeta(text));
+    const normalized = _normalizeMarkdownForParagraphs(sanitized);
+    try {
+        if (typeof marked !== 'undefined') {
+            el.innerHTML = marked.parse(normalized);
+            return;
+        }
+    } catch (mdErr) {
+        console.warn('Markdown render error:', mdErr);
+    }
+
+    const paragraphs = normalized
+        .split(/\n\s*\n/g)
+        .map(p => p.trim())
+        .filter(Boolean);
+    el.innerHTML = paragraphs.map(p => `<p>${_escapeHtml(p)}</p>`).join('');
+}
+
+function _getChatContainer() {
+    return document.getElementById('chatContainer');
+}
+
+function _updateChatLayoutButtons() {
+    const expandBtn = document.getElementById('chatExpandBtn');
+    const fullscreenBtn = document.getElementById('chatFullscreenBtn');
+    const container = _getChatContainer();
+
+    if (expandBtn) {
+        expandBtn.textContent = chatExpanded ? '↩ Normal Görünüm' : '⤢ Sohbeti Genişlet';
+    }
+
+    if (fullscreenBtn) {
+        const isContainerFullscreen = !!container && document.fullscreenElement === container;
+        fullscreenBtn.textContent = isContainerFullscreen ? '🗗 Tam Ekrandan Çık' : '🖥 Tam Ekran';
+    }
+}
+
+function toggleChatExpanded() {
+    const container = _getChatContainer();
+    if (!container) return;
+
+    chatExpanded = !chatExpanded;
+    container.classList.toggle('chat-expanded', chatExpanded);
+
+    const msgs = document.getElementById('chatMessages');
+    if (msgs) msgs.scrollTop = msgs.scrollHeight;
+    _updateChatLayoutButtons();
+}
+
+async function toggleChatFullscreen() {
+    const container = _getChatContainer();
+    if (!container) return;
+
+    try {
+        if (document.fullscreenElement === container) {
+            await document.exitFullscreen();
+        } else {
+            await container.requestFullscreen();
+        }
+    } catch (err) {
+        console.warn('Fullscreen unsupported or blocked:', err);
+    }
+
+    _updateChatLayoutButtons();
+}
+
+document.addEventListener('fullscreenchange', _updateChatLayoutButtons);
 
 function runRagSearch() {
     const input = document.getElementById('ragSearchInput');
@@ -441,6 +1048,7 @@ function runRagSearch() {
 
     // Clear previous selection when a new search is run
     ragSelectedFunctionIds.clear();
+    ragSelectedDocumentKeys.clear();
 
     fetch(`${API_URL}/rag/project/${currentProjectId}/search?q=${encodeURIComponent(query)}`)
         .then(res => res.json())
@@ -462,6 +1070,7 @@ function clearRagSearchResults() {
     ragSearchResults = [];
     ragSearchBestScore = 0;
     ragSelectedFunctionIds.clear();
+    ragSelectedDocumentKeys.clear();
     const resultsContainer = document.getElementById('ragSearchResults');
     const resultsList = document.getElementById('ragSearchResultsList');
     if (resultsContainer) resultsContainer.style.display = 'none';
@@ -470,13 +1079,18 @@ function clearRagSearchResults() {
 
 function clearRagSelection() {
     ragSelectedFunctionIds.clear();
+    ragSelectedDocumentKeys.clear();
     renderRagSearchResults();
 }
 
 function selectAllRagResults() {
     ragSearchResults.forEach(r => {
-        if (r && r.id) {
+        const isDoc = (r && (r.result_type || 'function') === 'document');
+        if (r && r.id && !isDoc) {
             ragSelectedFunctionIds.add(r.id);
+        }
+        if (r && isDoc) {
+            ragSelectedDocumentKeys.add(_docSelectionKey(r.file_name || '', r.doc_chunk_index || 0));
         }
     });
     renderRagSearchResults();
@@ -487,6 +1101,16 @@ function toggleRagSelection(functionId) {
         ragSelectedFunctionIds.delete(functionId);
     } else {
         ragSelectedFunctionIds.add(functionId);
+    }
+    renderRagSearchResults();
+}
+
+function toggleRagDocSelection(fileName, chunkIndex) {
+    const key = _docSelectionKey(fileName, chunkIndex);
+    if (ragSelectedDocumentKeys.has(key)) {
+        ragSelectedDocumentKeys.delete(key);
+    } else {
+        ragSelectedDocumentKeys.add(key);
     }
     renderRagSearchResults();
 }
@@ -507,14 +1131,19 @@ function renderRagSearchResults() {
         '<div style="color:#c0392b; margin-bottom:8px; font-size:13px;">Bu arama için yeterli bağlam bulunamadı. Lütfen daha genel ya da farklı bir arama yapın.</div>' :
         '') +
         ragSearchResults.map(r => {
+            const isDoc = (r.result_type || 'function') === 'document';
             const qualified = r.class_name ? `${r.class_name}.${r.function_name}` : r.function_name;
-            const selected = ragSelectedFunctionIds.has(r.id);
+            const selected = !!r.id && ragSelectedFunctionIds.has(r.id);
+            const docSelected = isDoc && ragSelectedDocumentKeys.has(_docSelectionKey(r.file_name || '', r.doc_chunk_index || 0));
             const score = r.score != null ? ` (score: ${Number(r.score).toFixed(3)})` : '';
+            const actionBtn = isDoc
+                ? `<button class="btn btn-sm" onclick='toggleRagDocSelection(${JSON.stringify(r.file_name || '')}, ${Number(r.doc_chunk_index || 0)})'>${docSelected ? '✓ Seçili Dok.' : 'Dokümanı Seç'}</button>`
+                : `<button class="btn btn-sm" onclick="toggleRagSelection(${r.id})">${selected ? '✓ Seçili' : 'Seç'}</button>`;
             return `
                 <div class="rag-result-item">
                     <div class="rag-result-meta">
                         <div><strong>${qualified}</strong>${score}</div>
-                        <button class="btn btn-sm" onclick="toggleRagSelection(${r.id})">${selected ? '✓ Seçili' : 'Seç'}</button>
+                        ${actionBtn}
                     </div>
                     <p style="margin:4px 0 0 0;" title="${r.file_name || ''}">Dosya: ${r.file_name || 'bilinmiyor'}</p>
                     ${r.ai_summary ? `<p style="margin:4px 0 0 0; color:#555;">Özet: ${r.ai_summary}</p>` : ''}
@@ -524,8 +1153,8 @@ function renderRagSearchResults() {
 }
 
 function askAiWithRagSelection() {
-    if (!ragSelectedFunctionIds.size) {
-        showError('Seçim Yok', 'Önce bir veya daha fazla RAG sonucu seçin.');
+    if (!ragSelectedFunctionIds.size && !ragSelectedDocumentKeys.size) {
+        showError('Seçim Yok', 'Önce en az bir fonksiyon veya doküman sonucu seçin.');
         return;
     }
 
@@ -538,10 +1167,22 @@ function askAiWithRagSelection() {
         return r.class_name ? `${r.class_name}.${r.function_name}` : r.function_name;
     }).filter(Boolean);
 
+    const selectedDocs = Array.from(ragSelectedDocumentKeys)
+        .map(_docSelectionFromKey)
+        .filter(Boolean)
+        .map(d => d.file_name);
+
     if (input && !input.value.trim()) {
-        input.value = selectedNames.length > 0
-            ? `Bu fonksiyonlar hakkında ne söyleyebilirsin? ${selectedNames.join(', ')}`
-            : 'Bu seçilen fonksiyonlar hakkında ne söyleyebilirsin?';
+        const parts = [];
+        if (selectedNames.length > 0) {
+            parts.push(`fonksiyonlar: ${selectedNames.join(', ')}`);
+        }
+        if (selectedDocs.length > 0) {
+            parts.push(`dokümanlar: ${selectedDocs.join(', ')}`);
+        }
+        input.value = parts.length > 0
+            ? `Bu seçilen kaynaklara göre açıkla: ${parts.join(' | ')}`
+            : 'Bu seçilen kaynaklar hakkında ne söyleyebilirsin?';
     }
 
     // Send message with selection context
@@ -569,6 +1210,7 @@ function _appendChatBubble(role, text) {
 
 function clearChatHistory() {
     chatHistory = [];
+    clearChatAttachments();
     const msgs = document.getElementById('chatMessages');
     if (!msgs) return;
     msgs.innerHTML = `<div class="chat-bubble chat-bubble-assistant">Konuşma sıfırlandı. Yeni bir soru sorabilirsiniz.</div>`;
@@ -622,6 +1264,15 @@ function viewFunctionFromChat(functionId) {
     setTimeout(() => tryScroll(10), 200);
 }
 
+function viewDocumentFromChat(fileName, pageStart) {
+    if (!currentProjectId) return;
+    let url = `${API_URL}/projects/${currentProjectId}/docs/file/${encodeURIComponent(fileName)}`;
+    if (fileName.toLowerCase().endsWith('.pdf') && pageStart) {
+        url += `#page=${pageStart}`;
+    }
+    window.open(url, '_blank');
+}
+
 
 async function sendChatMessage() {
     if (chatStreaming) return;
@@ -652,11 +1303,20 @@ async function sendChatMessage() {
 
     // Build history for backend (last 8 messages = 4 turns)
     const historySlice = chatHistory.slice(-8);
+    const attachmentsForMessage = chatAttachments.map(a => ({ id: a.id, name: a.name, size: a.size }));
 
     try {
         const payload = { message: text, history: historySlice };
+        if (attachmentsForMessage.length > 0) {
+            payload.attachments = attachmentsForMessage.map(a => a.id);
+        }
         if (ragSelectedFunctionIds.size > 0) {
             payload.context_function_ids = Array.from(ragSelectedFunctionIds);
+        }
+        if (ragSelectedDocumentKeys.size > 0) {
+            payload.context_documents = Array.from(ragSelectedDocumentKeys)
+                .map(_docSelectionFromKey)
+                .filter(Boolean);
         }
 
         const response = await fetch(`${API_URL}/chat/project/${currentProjectId}`, {
@@ -688,6 +1348,7 @@ async function sendChatMessage() {
         let streamDone = false;
         let currentEvent = 'message';
         let refs = [];
+        let streamError = null;
 
         try {
             while (!streamDone) {
@@ -714,6 +1375,35 @@ async function sendChatMessage() {
                         continue;
                     }
 
+                    // GELIS25: rate-limit beklemesi bildirimi.
+                    if (currentEvent === 'status') {
+                        let statusMessage = chunk;
+                        try {
+                            const status = JSON.parse(chunk);
+                            statusMessage = status.message || chunk;
+                        } catch (e) { }
+                        if (statusMessage && !replyText) {
+                            replyBubble.textContent = `⏳ ${statusMessage}`;
+                            msgs.scrollTop = msgs.scrollHeight;
+                        }
+                        currentEvent = 'message';
+                        continue;
+                    }
+
+                    // GELIS25: ayrıntılı hata + kalan bekleme süresi.
+                    if (currentEvent === 'error') {
+                        let errorMessage = chunk;
+                        let retryAfter = null;
+                        try {
+                            const errorPayload = JSON.parse(chunk);
+                            errorMessage = errorPayload.error || chunk;
+                            retryAfter = errorPayload.retry_after_seconds;
+                        } catch (e) { }
+                        streamError = { message: errorMessage, retryAfter };
+                        currentEvent = 'message';
+                        continue;
+                    }
+
                     if (chunk === '[DONE]') {
                         streamDone = true;
                         break;
@@ -729,13 +1419,29 @@ async function sendChatMessage() {
             if (!replyText) throw streamErr;
         } finally {
             replyBubble.classList.remove('chat-cursor');
+
+            if (streamError) {
+                const retryHint = _retryHint(streamError);
+                const errorText = `⚠️ Hata: ${streamError.message}${retryHint}`;
+                replyText = replyText ? `${replyText}\n\n${errorText}` : errorText;
+                replyBubble.textContent = replyText;
+            }
+
             // Render Markdown after stream completes
             if (replyText) {
-                try {
-                    if (typeof marked !== 'undefined') {
-                        replyBubble.innerHTML = marked.parse(replyText);
-                    }
-                } catch (mdErr) { /* keep textContent */ }
+                _renderAssistantMarkdown(replyBubble, replyText);
+
+                // GELIS29: per-message Markdown download
+                const actionsEl = document.createElement('div');
+                actionsEl.className = 'chat-msg-actions';
+                const mdBtn = document.createElement('button');
+                mdBtn.type = 'button';
+                mdBtn.className = 'chat-md-btn';
+                mdBtn.textContent = '📥 MD';
+                mdBtn.title = 'Bu yanıtı Markdown olarak indir';
+                mdBtn.onclick = () => downloadMessageMarkdown(replyText, undefined, refs);
+                actionsEl.appendChild(mdBtn);
+                replyBubble.appendChild(actionsEl);
             }
 
             // Render reference function chips
@@ -744,8 +1450,22 @@ async function sendChatMessage() {
                 refsEl.className = 'chat-refs';
                 refsEl.innerHTML = '<span class="chat-refs-label">📎 Kaynaklar:</span> ' +
                     refs.map(r => {
-                        const shortName = r.name.split('.').pop();
-                        return `<span class="chat-ref-chip" onclick="viewFunctionFromChat(${r.id})" title="${r.name}\n${r.file}">${shortName}</span>`;
+                        const refType = r.type || 'function';
+                        if (refType === 'document') {
+                            const label = r.name || r.file || 'Doküman';
+                            const shortName = label.split('/').pop();
+                            const location = r.location || `chunk ${Number(r.chunk_index || 0)}`;
+                            const pageStart = r.page_start || '';
+                            return `<span class="chat-ref-chip" onclick="viewDocumentFromChat(this.getAttribute('data-filename'), this.getAttribute('data-page'))" data-filename="${_escapeHtml(label)}" data-page="${pageStart}" title="${_escapeHtml(label)}\n${_escapeHtml(location)}">📄 ${_escapeHtml(shortName)} (${_escapeHtml(location)})</span>`;
+                        }
+
+                        if (refType === 'attachment') {
+                            const label = r.name || r.file || 'Dosya';
+                            return `<span class="chat-ref-chip chat-ref-attachment" title="Sohbete yüklenen dosya: ${_escapeHtml(label)}">📎 ${_escapeHtml(label)}</span>`;
+                        }
+
+                        const shortName = (r.name || '').split('.').pop();
+                        return `<span class="chat-ref-chip" onclick="viewFunctionFromChat(${r.id})" title="${_escapeHtml(r.name || '')}\n${_escapeHtml(r.file || '')}">${_escapeHtml(shortName)}</span>`;
                     }).join('');
                 msgs.appendChild(refsEl);
                 msgs.scrollTop = msgs.scrollHeight;
@@ -753,8 +1473,18 @@ async function sendChatMessage() {
         }
 
         // Store in history
-        chatHistory.push({ role: 'user', content: text });
-        chatHistory.push({ role: 'assistant', content: replyText });
+        chatHistory.push({
+            role: 'user',
+            content: text,
+            ts: Date.now(),
+            attachments: attachmentsForMessage
+        });
+        chatHistory.push({
+            role: 'assistant',
+            content: replyText,
+            ts: Date.now(),
+            refs: refs
+        });
 
     } catch (err) {
         typingEl.remove();
@@ -821,13 +1551,124 @@ function showSettings() {
 function showReport() {
     showSection('reportSection');
     loadReport();
-}
-
-function showAiJobs() {
-    showSection('aiJobsSection');
+    // Render analysis monitor to show active AI jobs
     if (typeof renderAnalysisMonitor === 'function') {
         renderAnalysisMonitor();
     }
+}
+
+function showAiJobs() {
+    console.log('[DEBUG] showAiJobs called');
+    console.log('[DEBUG] showAiJobs: analysisJobs defined =', typeof analysisJobs !== 'undefined');
+    console.log('[DEBUG] showAiJobs: renderAnalysisMonitor defined =', typeof renderAnalysisMonitor !== 'undefined');
+    console.log('[DEBUG] showAiJobs: window.pollAnalysisTask defined =', typeof window.pollAnalysisTask !== 'undefined');
+    showSection('aiJobsSection');
+    
+    // Ensure analysisJobs is available
+    if (typeof analysisJobs === 'undefined') {
+        console.log('[DEBUG] showAiJobs: analysisJobs not defined yet');
+        return;
+    }
+    
+    console.log('[DEBUG] showAiJobs: analysisJobs initial size =', analysisJobs.size);
+    
+    // Fetch active tasks from backend and populate analysisJobs
+    fetch(`${API_URL}/analysis/active-tasks`)
+        .then(r => r.json())
+        .then(data => {
+            console.log('[DEBUG] showAiJobs: active tasks from backend:', data);
+            if (data.tasks && data.tasks.length > 0) {
+                data.tasks.forEach(task => {
+                    if (!analysisJobs.has(task.task_id)) {
+                        const job = {
+                            taskId: task.task_id,
+                            label: task.task_id,
+                            status: task.status || 'started',
+                            progress: task.progress || 0,
+                            current_step: task.current_step || 'Analiz ediliyor...',
+                            metrics: task.metrics || {},
+                            createdAt: task.started_at ? new Date(task.started_at).getTime() : Date.now(),
+                            retentionMs: 45000,
+                            notFoundCount: 0,
+                            errorCount: 0,
+                            pollTimer: null,
+                        };
+                        analysisJobs.set(task.task_id, job);
+                        // Start polling for this job
+                        if (typeof window.pollAnalysisTask === 'function') {
+                            window.pollAnalysisTask(task.task_id);
+                        }
+                    }
+                });
+            }
+            console.log('[DEBUG] showAiJobs: analysisJobs size after fetch =', analysisJobs.size);
+            if (typeof renderAnalysisMonitor === 'function') {
+                console.log('[DEBUG] showAiJobs: calling renderAnalysisMonitor');
+                renderAnalysisMonitor();
+            }
+        })
+        .catch(err => {
+            console.error('[DEBUG] showAiJobs: error fetching active tasks:', err);
+            if (typeof renderAnalysisMonitor === 'function') {
+                renderAnalysisMonitor();
+            }
+        });
+    
+    // Also fetch global AI stats
+    fetch(`${API_URL}/analysis/global-ai-stats`)
+        .then(r => r.json())
+        .then(stats => {
+            const statsEl = document.getElementById('globalAiJobsStats');
+            if (statsEl) {
+                statsEl.innerHTML = `
+                    <strong>Toplam AI Çağrısı:</strong> ${stats.total_ai_calls || 0} |
+                    <strong>Toplam Token:</strong> ${stats.total_ai_prompt_tokens || 0} + ${stats.total_ai_completion_tokens || 0} |
+                    <strong>Toplam Süre:</strong> ${formatDuration(stats.total_ai_duration_seconds || 0)} |
+                    <strong>Ort. Süre:</strong> ${formatDuration(stats.total_avg_duration_seconds || 0)} |
+                    <strong>Son Çağrı:</strong> ${stats.last_ai_call ? new Date(stats.last_ai_call).toLocaleTimeString('tr-TR') : '-'}
+                `;
+            }
+        })
+        .catch(err => console.error('Global AI stats error:', err));
+    
+    // Fetch recent AI files
+    fetch(`${API_URL}/analysis/recent-files?limit=20`)
+        .then(r => r.json())
+        .then(data => {
+            const container = document.getElementById('recentAiFilesList');
+            if (!container) return;
+            
+            if (!data.files || data.files.length === 0) {
+                container.innerHTML = '<div style="color:#7f8c8d; padding:12px;">Henüz işlenmiş dosya yok.</div>';
+                return;
+            }
+            
+            container.innerHTML = data.files.map(file => {
+                const date = file.analyzed_at ? new Date(file.analyzed_at).toLocaleString('tr-TR') : '-';
+                return `
+                <div onclick="showFunctionDetails(${file.function_id})" 
+                     style="background:white; border:1px solid #e4ecf5; border-radius:4px; padding:10px; font-size:13px; cursor:pointer; transition:all 0.2s;"
+                     onmouseover="this.style.borderColor='#3498db'; this.style.boxShadow='0 2px 8px rgba(52,152,219,0.2)';"
+                     onmouseout="this.style.borderColor='#e4ecf5'; this.style.boxShadow='none';">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="font-weight:bold; color:#2c3e50;">${file.class_name ? file.class_name + '.' : ''}${file.function_name}</div>
+                        <div style="font-size:11px; color:#95a5a6;">${date}</div>
+                    </div>
+                    <div style="color:#7f8c8d; font-size:12px; margin-top:4px;">📁 ${file.project_name} / ${file.file_name}</div>
+                    <div style="color:#555; margin-top:6px; font-size:12px;">${file.ai_summary || '(özet yok)'}</div>
+                </div>
+            `}).join('');
+        })
+        .catch(err => console.error('Recent files error:', err));
+}
+
+function formatDuration(seconds) {
+    if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-';
+    const value = Number(seconds);
+    if (value < 60) return `${value.toFixed(1)} sn`;
+    const minutes = Math.floor(value / 60);
+    const remaining = Math.round(value % 60);
+    return `${minutes} dk ${remaining} sn`;
 }
 
 // ============================================
@@ -1401,6 +2242,14 @@ async function loadFunctions() {
         }
 
         const functions = await response.json();
+
+        // Ensure functions from @Service files are processed first so they appear at top
+        if (Array.isArray(functions)) {
+            functions.sort((a, b) => {
+                if ((a.is_service_file ? 1 : 0) === (b.is_service_file ? 1 : 0)) return 0;
+                return (a.is_service_file ? -1 : 1);
+            });
+        }
         console.log('Functions loaded, count:', functions.length);
 
         const list = document.getElementById('functionsList');
@@ -1448,11 +2297,15 @@ async function loadFunctions() {
                 clsDiv.style.borderLeft = '2px solid #3498db';
                 clsDiv.style.paddingLeft = '10px';
 
+                // Check if class has AI summary
+                const classHasSummary = funcs.some(f => f.ai_summary && f.ai_summary.trim() && !f.ai_summary.startsWith('⚠️') && !f.ai_summary.startsWith('Error:'));
+                const classColor = classHasSummary ? '#27ae60' : '#e74c3c';
+
                 // Allow class collapsing
                 const clsHeader = document.createElement('h4');
                 clsHeader.className = 'class-header';
-                clsHeader.style.cssText = 'color: #2980b9; margin: 10px 0 5px 0; cursor: pointer; user-select: none; display: flex; align-items: center;';
-                clsHeader.innerHTML = `<span style="margin-right: 5px;">▶</span> 🏷️ ${clsName}`;
+                clsHeader.style.cssText = `color: ${classColor}; margin: 10px 0 5px 0; cursor: pointer; user-select: none; display: flex; align-items: center;`;
+                clsHeader.innerHTML = `<span style="margin-right: 5px;">${classHasSummary ? '✅' : '❌'}</span> 🏷️ ${clsName}`;
 
                 const clsContent = document.createElement('div');
                 clsContent.className = 'class-content';
@@ -1472,11 +2325,21 @@ async function loadFunctions() {
                 clsDiv.appendChild(clsHeader);
                 clsDiv.appendChild(clsContent);
 
+                // Move functions that belong to @Service files to the top of the list
+                funcs.sort((a, b) => {
+                    if (a.is_service_file === b.is_service_file) return 0;
+                    return a.is_service_file ? -1 : 1;
+                });
+
+                // Check if any function in this class has summary
+                const classHasAnySummary = funcs.some(f => f.ai_summary && f.ai_summary.trim() && !f.ai_summary.startsWith('⚠️') && !f.ai_summary.startsWith('Error:'));
+
                 funcs.forEach(func => {
                     const called = Array.isArray(func.called_functions) ? func.called_functions : [];
                     const calledBy = Array.isArray(func.called_by_functions) ? func.called_by_functions : [];
                     const estimatedTokens = Number(func.ai_estimated_input_tokens || 0);
                     const codeMode = func.ai_code_mode || 'full';
+                    const hasSummary = func.ai_summary && func.ai_summary.trim() && !func.ai_summary.startsWith('⚠️') && !func.ai_summary.startsWith('Error:');
 
                     const item = document.createElement('div');
                     item.className = 'function-item searchable-item';
@@ -1487,10 +2350,14 @@ async function loadFunctions() {
                     item.dataset.called = JSON.stringify(called);
                     item.dataset.calledBy = JSON.stringify(calledBy);
 
+                    // Color based on analysis status
+                    const summaryColor = hasSummary ? '#27ae60' : '#e74c3c';
+                    const summaryIcon = hasSummary ? '✅' : '❌';
+
                     // Minimal HTML - dependencies lazy-loaded when class opens
                     item.innerHTML = `
-                        <h5>${func.function_name} <small>(${func.function_type})</small></h5>
-                        <p>${func.ai_summary || 'Özet henüz oluşturulmadı'}</p>
+                        <h5 style="color: ${summaryColor};">${summaryIcon} ${func.function_name} ${func.is_service_file ? '<span class="badge service-badge" style="background:#f39c12;color:#fff;padding:2px 6px;border-radius:12px;margin-left:8px;font-size:11px;">SERVICE</span>' : ''} <small>(${func.function_type})</small></h5>
+                        <p style="color: #666;">${func.ai_summary || 'Özet henüz oluşturulmadı'}</p>
                         <div class="function-meta">
                             Satırlar: ${func.start_line}-${func.end_line}
                             <br/><small>Dosya: ${func.file_path || 'Bilinmiyor'}</small>
@@ -1878,13 +2745,12 @@ async function generateAISummary() {
 
     const oldText = summaryArea.value;
     const trimmedExisting = (oldText || '').trim();
-    const hasExistingSummary =
-        trimmedExisting.length > 0 &&
-        trimmedExisting !== 'AI Yükleniyor... Lütfen bekleyin...';
+    const hasExistingSummary = trimmedExisting.length > 0 && trimmedExisting !== 'AI Yükleniyor... Lütfen bekleyin...';
 
+    // If summary exists, ask user if they want to regenerate
     if (hasExistingSummary) {
-        const shouldOverwrite = confirm('Bu fonksiyon için mevcut bir özet var. AI ile yeniden oluşturup mevcut özeti değiştirmek istiyor musunuz?');
-        if (!shouldOverwrite) {
+        const confirmOverwrite = confirm('Bu fonksiyon için mevcut bir AI özeti var. Tekrar oluşturmak istiyor musunuz?');
+        if (!confirmOverwrite) {
             return;
         }
     }
@@ -1964,7 +2830,8 @@ async function generateAISummary() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     extra_criteria: extraCriteria,
-                    extra_question: extraQuestion
+                    extra_question: extraQuestion,
+                    force: hasExistingSummary
                 })
             })
         );
@@ -1977,7 +2844,7 @@ async function generateAISummary() {
             progressText.textContent = 'AI analiz başlatıldı...';
         }
         if (progressDetails) {
-            progressDetails.innerHTML = '<div class="progress-detail">• LMStudio bağlantısı kontrol ediliyor...</div>';
+            progressDetails.innerHTML = '<div class="progress-detail">• AI sunucu bağlantısı kontrol ediliyor...</div>';
         }
 
         aiPolling = setInterval(poll, 1500);
@@ -2314,10 +3181,55 @@ async function loadFiles() {
 
         filterFiles();
         await loadDalmapFiles();
-        return;
+        updateDocumentsRagStatus();        return;
 
     } catch (error) {
         console.error('Dosyalar yükleme hatası:', error);
+        updateDocumentsRagStatus(true);
+    }
+}
+
+async function updateDocumentsRagStatus(isError = false) {
+    const statusEl = document.getElementById('docsRagStatus');
+    if (!statusEl) return;
+
+    if (!currentProjectId) {
+        statusEl.textContent = 'Doküman RAG durumu için önce bir proje seçin.';
+        return;
+    }
+
+    if (isError) {
+        statusEl.textContent = 'Doküman RAG durumu alınamadı.';
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/projects/${currentProjectId}/docs`);
+        if (!response.ok) {
+            statusEl.textContent = 'Doküman RAG durumu alınamadı.';
+            return;
+        }
+
+        const docs = await response.json();
+        if (!docs || docs.length === 0) {
+            statusEl.textContent = 'Henüz RAG’e alınmış doküman yok.';
+            return;
+        }
+
+        const totalDocs = docs.length;
+        const totalChunks = docs.reduce((sum, item) => sum + (Number(item.chunk_count) || 0), 0);
+        const embeddedChunks = docs.reduce((sum, item) => sum + (Number(item.embedded_count) || 0), 0);
+        const latestAddedAt = docs
+            .map(item => item.added_at)
+            .filter(Boolean)
+            .sort()
+            .slice(-1)[0];
+        const lastText = latestAddedAt ? new Date(latestAddedAt).toLocaleString('tr-TR') : '-';
+        const coverage = totalChunks > 0 ? Math.round((embeddedChunks / totalChunks) * 100) : 0;
+
+        statusEl.textContent = `Toplam ${totalDocs} doküman | ${totalChunks} chunk | ${embeddedChunks} embedding | Kapsama ${coverage}% | Son eklenme: ${lastText}`;
+    } catch (error) {
+        statusEl.textContent = 'Doküman RAG durumu alınamadı.';
     }
 }
 
@@ -2495,7 +3407,7 @@ function filterFiles() {
         return (`${d.file_name} ${d.file_path} ${d.document_type || ''}`).toLowerCase().includes(query);
     });
 
-    if (filteredSources.length === 0 && filteredDocs.length === 0) {
+        if (filteredSources.length === 0 && filteredDocs.length === 0) {
         const empty = document.createElement('p');
         empty.style.cssText = 'color:#666; padding:10px;';
         empty.textContent = 'Bu filtreye uyan dosya bulunamadı.';
@@ -2504,6 +3416,11 @@ function filterFiles() {
     }
 
     if (filteredSources.length > 0) {
+        // Bring files containing @Service to the top
+        filteredSources.sort((a, b) => {
+            if ((a.is_service ? 1 : 0) === (b.is_service ? 1 : 0)) return 0;
+            return (a.is_service ? -1 : 1);
+        });
         const header = document.createElement('h4');
         header.style.cssText = 'margin: 0 0 10px 0; color: #2c3e50; border-bottom: 1px solid #eee; padding-bottom: 6px;';
         header.textContent = `📄 Kaynak Dosyalar (${filteredSources.length})`;
@@ -2519,6 +3436,13 @@ function filterFiles() {
             const nameEl = document.createElement('h4');
             nameEl.style.margin = '0 0 2px 0';
             nameEl.textContent = file.file_name;
+            if (file.is_service) {
+                const badge = document.createElement('span');
+                badge.className = 'badge service-badge';
+                badge.style.cssText = 'background:#f39c12;color:#fff;padding:2px 6px;border-radius:12px;margin-left:8px;font-size:11px;';
+                badge.textContent = 'SERVICE';
+                nameEl.appendChild(badge);
+            }
             const pathEl = document.createElement('p');
             pathEl.style.cssText = 'font-size:12px; color:#666; margin:2px 0;';
             pathEl.textContent = file.file_path;
@@ -2551,6 +3475,8 @@ function filterFiles() {
         filteredDocs.forEach(doc => {
             const item = document.createElement('div');
             item.className = 'file-item';
+            item.style.cursor = 'pointer';
+            item.onclick = () => viewDocumentFromChat(doc.file_name);
             const nameEl = document.createElement('h4');
             nameEl.textContent = doc.file_name;
             const pathEl = document.createElement('p');
@@ -2588,11 +3514,10 @@ async function addFileToProject() {
     // Validate file type
     const fileName = file.name.toLowerCase();
     const validExtensions = ['.zip', '.war', '.jar', '.java', '.sql', '.py', '.js', '.ts', '.php', '.xml',
-                             '.pdf', '.doc', '.docx', '.txt', '.md'];
-    const isValid = validExtensions.some(ext => fileName.endsWith(ext));
+                             '.pdf', '.doc', '.docx', '.txt', '.md', '.xlsx', '.xls'];    const isValid = validExtensions.some(ext => fileName.endsWith(ext));
     
     if (!isValid) {
-        showError('Geçersiz Dosya Tipi', `Desteklenmeyen dosya tipi: ${file.name}\n\nDesteklenen: ZIP, WAR, JAR, Java, Python, JavaScript, SQL, PDF, DOC, DOCX, TXT, MD`);
+        showError('Geçersiz Dosya Tipi', `Desteklenmeyen dosya tipi: ${file.name}\n\nDesteklenen: ZIP, WAR, JAR, Java, Python, JavaScript, SQL, PDF, DOC, DOCX, TXT, MD, XLSX, XLS`);
         return;
     }
     
@@ -2676,6 +3601,48 @@ async function addFileToProject() {
     }
 }
 
+async function rebuildDocumentsRag() {
+    if (!currentProjectId) {
+        showError('Proje Seçilmedi', 'Önce bir proje seçin.');
+        return;
+    }
+
+    const ok = confirm('Mevcut doküman kayıtları tekrar chunklanıp RAG indeksine alınacak. Devam edilsin mi?');
+    if (!ok) return;
+
+    const btn = document.getElementById('rebuildDocsRagBtn');
+    const originalText = btn ? btn.textContent : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Yenileniyor...';
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/projects/${currentProjectId}/docs/rebuild-rag`, {
+            method: 'POST',
+        });
+        const result = await response.json().catch(() => ({}));
+
+        if (response.ok) {
+            const processed = result.documents_processed || 0;
+            const chunks = result.chunks_created || 0;
+            const skipped = result.documents_skipped || 0;
+            showSuccess('Doküman RAG Yenileme', `${processed} doküman işlendi, ${chunks} chunk oluşturuldu, ${skipped} doküman atlandı`);
+            loadFiles();
+            updateDocumentsRagStatus();
+        } else {
+            showError('Doküman RAG Yenileme Hatası', result.error || `HTTP ${response.status}`);
+        }
+    } catch (error) {
+        showError('Doküman RAG Yenileme Hatası', error.message || 'Bilinmeyen hata');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = originalText || '♻ Dokümanları RAG’e Yeniden Al';
+        }
+    }
+}
+
 async function analyzeFileById(fileId, fileName, btn) {
     if (!fileId || !currentProjectId) return;
     const original = btn.textContent;
@@ -2713,8 +3680,10 @@ async function analyzeFileById(fileId, fileName, btn) {
 async function loadSettings() {
     try {
         const apiUrlInput = document.getElementById('apiUrl');
+        const providerSelect = document.getElementById('aiProvider');
         const queueLimitInput = document.getElementById('globalAiQueueLimit');
         let userApiUrl = '';
+        let userModel = '';
         let userPreferences = {};
 
         // Load per-user settings first (includes ai_api_url)
@@ -2722,6 +3691,7 @@ async function loadSettings() {
         if (userSettingsResp.ok) {
             const userSettings = await userSettingsResp.json();
             userApiUrl = (userSettings.ai_api_url || '').trim();
+            userModel = (userSettings.ai_model || '').trim();
             try {
                 userPreferences = userSettings.preferences ? JSON.parse(userSettings.preferences) : {};
             } catch (_err) {
@@ -2736,6 +3706,14 @@ async function loadSettings() {
             if (typeof setGlobalAiQueueLimit === 'function') {
                 setGlobalAiQueueLimit(userPreferences.ai_queue_limit || 2);
             }
+            // GELIS23: show whether a per-user API key already exists (never prefill it)
+            const userKeyInput = document.getElementById('userApiKey');
+            if (userKeyInput) {
+                userKeyInput.value = '';
+                userKeyInput.placeholder = userSettings.ai_api_key_set
+                    ? 'Kayıtlı anahtar var — değişmez, doldurursanız değiştirilir'
+                    : 'Boş bırakılırsa değişmez';
+            }
         }
 
         // Load global AI parameters
@@ -2745,6 +3723,10 @@ async function loadSettings() {
         // Fallback to global api_url if user-specific value is empty
         if (apiUrlInput && !userApiUrl && settings.api_url !== undefined) {
             apiUrlInput.value = settings.api_url;
+        }
+
+        if (providerSelect) {
+            providerSelect.value = settings.provider || 'lmstudio';
         }
 
         // Load settings into form
@@ -2805,13 +3787,100 @@ async function loadSettings() {
             }
         }
 
+        // GELIS23: Embedding (RAG) settings + API key placeholders (keys are never prefilled)
+        const embeddingModelInput = document.getElementById('embeddingModel');
+        if (embeddingModelInput) {
+            embeddingModelInput.value = settings.embedding_model || '';
+        }
+        const embeddingUrlInput = document.getElementById('embeddingApiUrl');
+        if (embeddingUrlInput) {
+            embeddingUrlInput.value = settings.embedding_api_url || '';
+        }
+        const embeddingKeyInput = document.getElementById('embeddingApiKey');
+        if (embeddingKeyInput) {
+            embeddingKeyInput.value = '';
+            embeddingKeyInput.placeholder = settings.embedding_api_key_set
+                ? 'Kayıtlı anahtar var — değişmez, doldurursanız değiştirilir'
+                : 'Boş bırakılırsa değişmez';
+        }
+        const globalKeyInput = document.getElementById('globalApiKey');
+        if (globalKeyInput) {
+            globalKeyInput.value = '';
+            globalKeyInput.placeholder = settings.api_key_set
+                ? 'Kayıtlı anahtar var — değişmez, doldurursanız değiştirilir'
+                : 'Boş bırakılırsa değişmez';
+        }
+
+        // GELIS24: model selection (per-user, global fallback) + metadata
+        const modelInput = document.getElementById('aiModel');
+        const savedModel = userModel || settings.model_name || '';
+        if (modelInput) {
+            setModelSelectValue(savedModel);
+        }
+        window._aiModelMetadata = {};
+        window._aiModelBaseline = {
+            model: savedModel,
+            maxTokens: settings.max_tokens
+        };
+        updateModelInfo();
+
+        // Baseline for change detection in saveLMSettings (test-before-save only for changes)
+        window._aiEmbeddingBaseline = {
+            model: settings.embedding_model || '',
+            url: settings.embedding_api_url || '',
+            chatApiUrl: apiUrlInput ? apiUrlInput.value.trim() : ''
+        };
+
         console.log('Settings loaded from database:', settings);
+
+        // GELIS24: model listesini ayarlar açıldığında sessizce yükle
+        bindModelAutoLoad();
+        if (apiUrlInput && apiUrlInput.value.trim()) {
+            loadModels(false);
+        }
     } catch (error) {
         console.error('Ayarlar yükleme hatası:', error);
     }
 }
 
+// GELIS24: API URL veya anahtar değiştiğinde model listesini yenile
+function bindModelAutoLoad() {
+    if (window._aiModelListenersBound) return;
+    window._aiModelListenersBound = true;
+    ['userApiKey', 'apiUrl'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('change', () => loadModels(false));
+        el.addEventListener('blur', () => loadModels(false));
+    });
+    const modelInput = document.getElementById('aiModel');
+    if (modelInput) {
+        modelInput.addEventListener('change', updateModelInfo);
+    }
+}
+
+// Seçili modeli dropdown'da göster; kayıtlı model listede yoksa geçici
+// bir seçenek olarak ekle (sunucu erişilemezken seçim kaybolmasın).
+function setModelSelectValue(value) {
+    const select = document.getElementById('aiModel');
+    if (!select) return;
+    const modelId = (value || '').trim();
+    if (!modelId) {
+        select.value = '';
+        return;
+    }
+    let option = Array.from(select.options).find(opt => opt.value === modelId);
+    if (!option) {
+        option = document.createElement('option');
+        option.value = modelId;
+        option.textContent = `${modelId} (kayıtlı)`;
+        select.appendChild(option);
+    }
+    select.value = modelId;
+}
+
 async function saveLMSettings() {
+    const providerValue = (document.getElementById('aiProvider')?.value || 'lmstudio').trim();
     const apiUrlValue = document.getElementById('apiUrl').value.trim();
     const queueLimitValue = parseInt(document.getElementById('globalAiQueueLimit').value, 10);
     const tempValue = parseFloat(document.getElementById('temperature').value);
@@ -2822,15 +3891,46 @@ async function saveLMSettings() {
     const presencePenaltyValue = parseFloat(document.getElementById('presencePenalty').value);
     const retryCountValue = parseInt(document.getElementById('retryCount').value);
 
+    // GELIS23: API keys + embedding fields
+    const userKeyValue = (document.getElementById('userApiKey')?.value || '').trim();
+    const globalKeyValue = (document.getElementById('globalApiKey')?.value || '').trim();
+    const embeddingKeyValue = (document.getElementById('embeddingApiKey')?.value || '').trim();
+    const clearKeys = document.getElementById('clearApiKeys')?.checked === true;
+    const embeddingModelValue = (document.getElementById('embeddingModel')?.value || '').trim();
+    const embeddingUrlValue = (document.getElementById('embeddingApiUrl')?.value || '').trim();
+    const modelValue = (document.getElementById('aiModel')?.value || '').trim();
+
     const settings = {
+        provider: { value: providerValue, type: 'string' },
         temperature: { value: tempValue, type: 'float' },
         top_p: { value: topPValue, type: 'float' },
         max_tokens: { value: maxTokensValue, type: 'integer' },
         timeout: { value: timeoutValue, type: 'integer' },
         frequency_penalty: { value: frequencyPenaltyValue, type: 'float' },
         presence_penalty: { value: presencePenaltyValue, type: 'float' },
-        retry_count: { value: retryCountValue, type: 'integer' }
+        retry_count: { value: retryCountValue, type: 'integer' },
+        embedding_model: { value: embeddingModelValue, type: 'string' },
+        embedding_api_url: { value: embeddingUrlValue, type: 'string' }
     };
+
+    // Model seçimi kullanıcı bazlıdır (user_settings.ai_model). Global
+    // varsayılanı (ai_settings.model_name) yalnızca admin değiştirebilir;
+    // normal kullanıcının seçimi diğer kullanıcıları etkilemez.
+    if (currentUser && currentUser.role === 'admin') {
+        settings.model_name = { value: modelValue, type: 'string' };
+    }
+
+    // API keys are only sent when typed or explicitly cleared (empty = unchanged)
+    if (globalKeyValue) {
+        settings.api_key = { value: globalKeyValue, type: 'string' };
+    } else if (clearKeys) {
+        settings.api_key = { value: '', type: 'string', clear: true };
+    }
+    if (embeddingKeyValue) {
+        settings.embedding_api_key = { value: embeddingKeyValue, type: 'string' };
+    } else if (clearKeys) {
+        settings.embedding_api_key = { value: '', type: 'string', clear: true };
+    }
 
     try {
         // Validate the AI server URL before saving
@@ -2838,9 +3938,38 @@ async function saveLMSettings() {
             throw new Error('Lütfen AI Sunucu URL’sini girin');
         }
 
-        const testResult = await testLMConnection(apiUrlValue);
+        const testResult = await testLMConnection(apiUrlValue, providerValue, userKeyValue);
         if (testResult.status !== 'connected') {
             throw new Error(`Bağlantı testi başarısız: ${testResult.message || 'Bilinmeyen hata'}`);
+        }
+
+        // GELIS24: model seçiliyse gerçek bir yanıt testi de yap.
+        // Uyarı niteliğindedir: test başarısız olsa da seçim kaydedilir.
+        let generationWarning = '';
+        if (modelValue) {
+            const genResult = await testGeneration(false);
+            if (genResult.status !== 'ok') {
+                generationWarning = genResult.error || 'Bilinmeyen hata';
+                console.warn('Yanıt testi başarısız (kayıt sürüyor):', generationWarning);
+            }
+        }
+
+        // DZT-3: embedding testi yalnız embedding ile ilgili bir ayar değiştiyse koşulur
+        const baseline = window._aiEmbeddingBaseline || {};
+        const embeddingChanged =
+            embeddingModelValue !== (baseline.model || '') ||
+            embeddingUrlValue !== (baseline.url || '') ||
+            embeddingKeyValue.length > 0 ||
+            userKeyValue.length > 0 ||
+            globalKeyValue.length > 0 ||
+            clearKeys ||
+            (!embeddingUrlValue && apiUrlValue !== (baseline.chatApiUrl || apiUrlValue));
+        if (embeddingChanged) {
+            const embResult = await testEmbedding(false);
+            if (!embResult.available) {
+                const detail = embResult.error || embResult.status_code || 'Bilinmeyen hata';
+                throw new Error(`Embedding testi başarısız: ${detail}`);
+            }
         }
 
         console.log('Saving settings:', settings);
@@ -2861,11 +3990,21 @@ async function saveLMSettings() {
             ai_queue_limit: Math.max(1, Math.min(8, queueLimitValue || 2))
         };
 
-        // Save per-user AI server URL
+        // Save per-user AI server URL (+ optional per-user API key/model)
+        const userSettingsPayload = {
+            ai_api_url: apiUrlValue,
+            ai_model: modelValue,
+            preferences: JSON.stringify(nextPreferences)
+        };
+        if (userKeyValue) {
+            userSettingsPayload.ai_api_key = userKeyValue;
+        } else if (clearKeys) {
+            userSettingsPayload.ai_api_key = '';
+        }
         const userSettingsResponse = await fetch(`${API_URL}/users/settings`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ai_api_url: apiUrlValue, preferences: JSON.stringify(nextPreferences) })
+            body: JSON.stringify(userSettingsPayload)
         });
 
         if (!userSettingsResponse.ok) {
@@ -2879,7 +4018,8 @@ async function saveLMSettings() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     value: setting.value,
-                    type: setting.type
+                    type: setting.type,
+                    ...(setting.clear ? { clear: true } : {})
                 })
             });
 
@@ -2894,19 +4034,47 @@ async function saveLMSettings() {
             setGlobalAiQueueLimit(nextPreferences.ai_queue_limit);
         }
 
-        showSuccess('Başarılı', 'Ayarlar kaydedildi ve sisteme uygulandı');
+        // Reset key inputs + refresh baseline after successful save
+        const keyInputs = ['userApiKey', 'globalApiKey', 'embeddingApiKey'];
+        keyInputs.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        if (clearKeys) {
+            const clearBox = document.getElementById('clearApiKeys');
+            if (clearBox) clearBox.checked = false;
+        }
+        window._aiEmbeddingBaseline = {
+            model: embeddingModelValue,
+            url: embeddingUrlValue,
+            chatApiUrl: apiUrlValue
+        };
+        loadSettings();
+
+        if (generationWarning) {
+            showWarning('Ayarlar kaydedildi', `Model seçimi kaydedildi ancak yanıt testi başarısız: ${generationWarning}`);
+        } else {
+            showSuccess('Başarılı', 'Ayarlar kaydedildi ve sisteme uygulandı');
+        }
     } catch (error) {
         console.error('Ayarlar Kaydetme Hatası:', error);
         showError('Ayarlar Kaydetme Hatası', 'Ayarlar kaydedilirken hata oluştu: ' + error.message);
     }
 }
 
-async function testLMConnection(apiUrl) {
+async function testLMConnection(apiUrl, providerOverride, apiKey) {
+    const provider = (providerOverride || document.getElementById('aiProvider')?.value || 'lmstudio').trim();
+    const targetUrl = (typeof apiUrl === 'string' && apiUrl)
+        ? apiUrl
+        : (document.getElementById('apiUrl')?.value || '').trim();
+
     try {
-        const response = await fetch(`${API_URL}/ai-settings/lmstudio/test`, {
+        const body = { api_url: targetUrl, provider };
+        if (apiKey) body.api_key = apiKey;
+        const response = await fetch(`${API_URL}/ai-settings/provider/test`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ api_url: apiUrl })
+            body: JSON.stringify(body)
         });
         const result = await response.json();
 
@@ -2917,7 +4085,7 @@ async function testLMConnection(apiUrl) {
             resultDiv.textContent = '✓ Bağlantı başarılı!';
             resultDiv.className = 'success';
         } else {
-            resultDiv.textContent = '✗ Bağlantı başarısız: ' + result.message;
+            resultDiv.textContent = '✗ Bağlantı başarısız: ' + result.message + _retryHint(result);
             resultDiv.className = 'error';
         }
 
@@ -2929,6 +4097,226 @@ async function testLMConnection(apiUrl) {
             resultDiv.className = 'error';
         }
         return { status: 'error', message: error.message || String(error) };
+    }
+}
+
+// GELIS25: rate-limit hatalarında kalan bekleme süresini metne ekler.
+function _retryHint(result) {
+    const raw = result ? (result.retry_after_seconds ?? result.retryAfter) : null;
+    const seconds = Number(raw);
+    if (!seconds || seconds <= 0) return '';
+    return ` — yaklaşık ${Math.ceil(seconds)} sn sonra tekrar deneyin`;
+}
+
+// GELIS24: model listesi + meta veri istekleri için ortak gövde.
+// Kayıtlı anahtarlar sunucuda zaten mevcut olduğundan yalnızca kullanıcının
+// bu oturumda yazdığı anahtar gönderilir (global anahtar farklı URL'ye sızmaz).
+function _modelRequestPayload() {
+    const payload = {};
+    const apiUrl = (document.getElementById('apiUrl')?.value || '').trim();
+    const provider = (document.getElementById('aiProvider')?.value || 'lmstudio').trim();
+    const userKey = (document.getElementById('userApiKey')?.value || '').trim();
+    if (apiUrl) payload.api_url = apiUrl;
+    if (provider) payload.provider = provider;
+    if (userKey) payload.api_key = userKey;
+    return payload;
+}
+
+async function loadModels(showUi = true) {
+    const infoDiv = document.getElementById('modelInfo');
+    if (showUi && infoDiv) {
+        infoDiv.textContent = '⏳ Modeller yükleniyor...';
+        infoDiv.className = '';
+    }
+    try {
+        const response = await fetch(`${API_URL}/ai-settings/models`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(_modelRequestPayload())
+        });
+        const result = await response.json();
+        const models = Array.isArray(result.models) ? result.models : [];
+
+        const select = document.getElementById('aiModel');
+        const previous = select ? select.value : '';
+        if (select) {
+            select.innerHTML = '';
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = '— Model seçin —';
+            select.appendChild(placeholder);
+            models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.id;
+                const bits = [];
+                if (model.context_length) bits.push(`ctx ${model.context_length}`);
+                if (model.max_output_tokens) bits.push(`max çıktı ${model.max_output_tokens}`);
+                if (model.quantization) bits.push(model.quantization);
+                option.textContent = bits.length ? `${model.id} — ${bits.join(' · ')}` : model.id;
+                select.appendChild(option);
+            });
+        }
+
+        window._aiModelMetadata = {};
+        models.forEach(model => { window._aiModelMetadata[model.id] = model; });
+
+        // Mevcut seçimi koru. Kayıtlı model listede yoksa ilk gerçek modeli seç;
+        // liste hiç yüklenemediyse kayıtlı değeri kaybetme.
+        const baselineModel = (window._aiModelBaseline && window._aiModelBaseline.model) || '';
+        const keep = previous || baselineModel;
+        const keepExists = keep && models.some(model => model.id === keep);
+        if (keepExists) {
+            setModelSelectValue(keep);
+        } else if (models.length) {
+            setModelSelectValue(models[0].id);
+        } else if (keep) {
+            setModelSelectValue(keep);
+        }
+        updateModelInfo();
+
+        if (showUi && infoDiv) {
+            if (result.error) {
+                infoDiv.textContent = `✗ Modeller yüklenemedi: ${result.error}${_retryHint(result)}`;
+                infoDiv.className = 'error';
+            } else {
+                infoDiv.textContent = `✓ ${models.length} model bulundu (${result.api_url || ''})`;
+                infoDiv.className = 'success';
+            }
+        }
+        return result;
+    } catch (error) {
+        const result = { models: [], error: error.message || String(error) };
+        if (showUi && infoDiv) {
+            infoDiv.textContent = 'Hata: ' + result.error;
+            infoDiv.className = 'error';
+        }
+        return result;
+    }
+}
+
+// Seçili modelin meta verisini göster ve maxTokens üst sınırını uyarla.
+function updateModelInfo() {
+    const infoDiv = document.getElementById('modelInfo');
+    const modelInput = document.getElementById('aiModel');
+    const maxTokensInput = document.getElementById('maxTokens');
+    if (!infoDiv || !modelInput) return;
+
+    const modelId = (modelInput.value || '').trim();
+    if (!modelId) {
+        infoDiv.textContent = '';
+        return;
+    }
+    const meta = (window._aiModelMetadata || {})[modelId];
+    if (!meta) {
+        infoDiv.textContent = 'Model bilgisi yok — "Modelleri Yükle" ile meta verileri getirebilirsiniz.';
+        return;
+    }
+
+    const bits = [];
+    if (meta.context_length) bits.push(`Bağlam: ${meta.context_length}`);
+    if (meta.max_output_tokens) bits.push(`Maks. çıktı: ${meta.max_output_tokens}`);
+    if (meta.suggested_max_tokens) bits.push(`Önerilen max_tokens: ${meta.suggested_max_tokens}`);
+    if (meta.quantization) bits.push(`Kuantizasyon: ${meta.quantization}`);
+    if (meta.state) bits.push(`Durum: ${meta.state}`);
+    infoDiv.textContent = bits.join(' · ');
+
+    if (maxTokensInput && meta.suggested_max_tokens) {
+        maxTokensInput.max = String(meta.suggested_max_tokens);
+        if (parseInt(maxTokensInput.value, 10) > meta.suggested_max_tokens) {
+            maxTokensInput.value = meta.suggested_max_tokens;
+        }
+    }
+}
+
+// GELIS24: gerçek bir sohbet tamamlama isteği ile modeli doğrula.
+async function testGeneration(showUi = true) {
+    const resultDiv = document.getElementById('generationTestResult');
+    if (showUi && resultDiv) {
+        resultDiv.textContent = '⏳ Yanıt testi çalışıyor...';
+        resultDiv.className = '';
+    }
+
+    const payload = _modelRequestPayload();
+    const model = (document.getElementById('aiModel')?.value || '').trim();
+    if (model) payload.model = model;
+    payload.max_tokens = 256;
+
+    try {
+        const response = await fetch(`${API_URL}/ai-settings/generation/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+
+        if (showUi && resultDiv) {
+            if (result.status === 'ok') {
+                const note = result.reasoning_only ? ' (yanıt reasoning alanında)' : '';
+                resultDiv.textContent = `✓ Yanıt alındı (${result.model}, ${result.latency_ms} ms)${note}: ${result.reply}`;
+                resultDiv.className = 'success';
+            } else {
+                resultDiv.textContent = `✗ Yanıt testi başarısız (${result.model || model || 'model yok'}): ${result.error || 'bilinmeyen hata'}${_retryHint(result)}`;
+                resultDiv.className = 'error';
+            }
+        }
+        return result;
+    } catch (error) {
+        const result = { status: 'error', error: error.message || String(error) };
+        if (showUi && resultDiv) {
+            resultDiv.textContent = 'Hata: ' + result.error;
+            resultDiv.className = 'error';
+        }
+        return result;
+    }
+}
+
+// GELIS23: Embedding endpoint testi (model/URL/anahtar kombinasyonu).
+// showUi=false modu saveLMSettings test akışı için sessiz çalışır.
+async function testEmbedding(showUi = true) {
+    const payload = {};
+    const model = (document.getElementById('embeddingModel')?.value || '').trim();
+    const url = (document.getElementById('embeddingApiUrl')?.value || '').trim();
+    const embKey = (document.getElementById('embeddingApiKey')?.value || '').trim();
+    const userKey = (document.getElementById('userApiKey')?.value || '').trim();
+    const globalKey = (document.getElementById('globalApiKey')?.value || '').trim();
+
+    if (model) payload.embedding_model = model;
+    if (url) payload.embedding_api_url = url;
+    if (embKey) payload.embedding_api_key = embKey;
+    const chatKey = userKey || globalKey;
+    if (chatKey) payload.api_key = chatKey;
+
+    const resultDiv = document.getElementById('embeddingTestResult');
+    if (showUi && resultDiv) {
+        resultDiv.textContent = '⏳ Embedding test ediliyor...';
+        resultDiv.className = '';
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/ai-settings/embedding/test`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+
+        if (showUi && resultDiv) {
+            if (result.available) {
+                resultDiv.textContent = `✓ Embedding hazır: ${result.model} · boyut ${result.dim} · ${result.latency_ms} ms`;
+                resultDiv.className = 'success';
+            } else {
+                resultDiv.textContent = `✗ Embedding kullanılamıyor (${result.api_url}): ${result.error || result.status_code || 'bilinmeyen hata'}`;
+                resultDiv.className = 'error';
+            }
+        }
+        return result;
+    } catch (error) {
+        const result = { available: false, error: error.message || String(error) };
+        if (showUi && resultDiv) {
+            resultDiv.textContent = 'Hata: ' + result.error;
+            resultDiv.className = 'error';
+        }
+        return result;
     }
 }
 
@@ -3435,4 +4823,79 @@ function toggleCallGraphFullscreen() {
     setTimeout(() => {
         if (cyCallGraph) cyCallGraph.resize().fit();
     }, 200);
+}
+
+// ============================================
+// SECTION: Export / Import
+// ============================================
+
+async function exportProjectWeb(projectId) {
+    try {
+        showMessage('Dışa Aktarılıyor', '📤 Proje dışa aktarılıyor, lütfen bekleyin...', 'info');
+
+        const response = await fetch(`${API_URL}/projects/${projectId}/export`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Dışa aktarma başarısız');
+        }
+
+        // Get filename from Content-Disposition header
+        const filename = response.headers
+            .get('Content-Disposition')
+            .split('filename=')[1]
+            .split(';')[0]
+            .replace(/"/g, '') || 'project.aikodanaliz';
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        showSuccess('Başarılı', `📤 Proje dışa aktarıldı: ${filename}`);
+    } catch (error) {
+        showError('Dışa Aktarma Hatası', error.message);
+    }
+}
+
+async function importProject(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    try {
+        showMessage('İçe Aktarılıyor', '📥 Proje içe aktarılıyor, lütfen bekleyin...', 'info');
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch(`${API_URL}/projects/import`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'İçe aktarma başarısız');
+        }
+
+        const result = await response.json();
+        showSuccess('Başarılı', `📥 Proje başarıyla içe aktarıldı: ${result.project.name}`);
+
+        // Clear file input
+        event.target.value = '';
+
+        // Reload projects
+        loadProjects();
+    } catch (error) {
+        showError('İçe Aktarma Hatası', error.message);
+        // Clear file input
+        event.target.value = '';
+    }
 }

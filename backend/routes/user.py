@@ -335,7 +335,7 @@ def get_user_settings():
         
         rows = db.execute_query(
             '''SELECT u.id, u.username, u.role, u.full_name, u.email,
-                      s.theme, s.notifications_enabled, s.items_per_page, s.default_filter, s.ai_api_url, s.preferences
+                      s.theme, s.notifications_enabled, s.items_per_page, s.default_filter, s.ai_api_url, s.ai_api_key, s.ai_model, s.preferences
                FROM users u
                LEFT JOIN user_settings s ON u.id = s.user_id
                WHERE u.id = ?''',
@@ -346,6 +346,10 @@ def get_user_settings():
             return jsonify({'error': 'User not found'}), 404
         
         settings = dict(rows[0])
+        # Mask the per-user AI API key; expose only a set-flag (GELIS23)
+        raw_key = (settings.get('ai_api_key') or '')
+        settings['ai_api_key_set'] = bool(raw_key)
+        settings['ai_api_key'] = ('••••' + raw_key[-4:]) if raw_key else ''
         return jsonify(settings), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -400,6 +404,18 @@ def update_user_settings():
             settings_updates.append('ai_api_url = ?')
             settings_params.append((data['ai_api_url'] or '').strip() or None)
 
+        # Per-user AI API key (GELIS23). '' clears, masked echo/None keeps unchanged.
+        if 'ai_api_key' in data:
+            raw_key = data['ai_api_key']
+            if raw_key is not None and not str(raw_key).startswith('••••'):
+                settings_updates.append('ai_api_key = ?')
+                settings_params.append(str(raw_key).strip() or None)
+
+        # Per-user model selection (GELIS24). '' falls back to the global model.
+        if 'ai_model' in data:
+            settings_updates.append('ai_model = ?')
+            settings_params.append(str(data['ai_model'] or '').strip() or None)
+
         if 'preferences' in data:
             settings_updates.append('preferences = ?')
             settings_params.append(data['preferences'])
@@ -408,8 +424,8 @@ def update_user_settings():
             existing = db.execute_query('SELECT id FROM user_settings WHERE user_id = ?', [user_id])
             if not existing:
                 db.execute_insert(
-                    '''INSERT INTO user_settings (user_id, theme, notifications_enabled, items_per_page, default_filter, ai_api_url, preferences)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                    '''INSERT INTO user_settings (user_id, theme, notifications_enabled, items_per_page, default_filter, ai_api_url, ai_api_key, ai_model, preferences)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                     [
                         user_id,
                         data.get('theme', 'light'),
@@ -417,6 +433,8 @@ def update_user_settings():
                         data.get('items_per_page', 20),
                         data.get('default_filter'),
                         (data.get('ai_api_url') or '').strip() or None,
+                        str(data.get('ai_api_key') or '').strip() or None,
+                        str(data.get('ai_model') or '').strip() or None,
                         data.get('preferences')
                     ]
                 )

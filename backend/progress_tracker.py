@@ -1,7 +1,7 @@
 """Progress tracking for long-running operations"""
 import threading
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 class ProgressTracker:
     """Thread-safe progress tracker for upload and analysis operations"""
@@ -9,6 +9,13 @@ class ProgressTracker:
     def __init__(self):
         self._progress = {}
         self._lock = threading.Lock()
+        self._global_ai_stats = {
+            'total_ai_calls': 0,
+            'total_ai_prompt_tokens': 0,
+            'total_ai_completion_tokens': 0,
+            'total_ai_duration_seconds': 0.0,
+            'last_ai_call': None
+        }
     
     def start_task(self, task_id: str, total_steps: int = 100) -> None:
         """Initialize a new progress tracking task"""
@@ -96,6 +103,27 @@ class ProgressTracker:
 
             self._progress[task_id]['updated_at'] = datetime.now().isoformat()
     
+    def update_global_ai_stats(self, prompt_tokens: int, completion_tokens: int, duration_seconds: float) -> None:
+        """Update global AI statistics across all tasks"""
+        with self._lock:
+            self._global_ai_stats['total_ai_calls'] += 1
+            self._global_ai_stats['total_ai_prompt_tokens'] += prompt_tokens
+            self._global_ai_stats['total_ai_completion_tokens'] += completion_tokens
+            self._global_ai_stats['total_ai_duration_seconds'] += duration_seconds
+            self._global_ai_stats['last_ai_call'] = datetime.now().isoformat()
+    
+    def get_global_ai_stats(self) -> Dict[str, Any]:
+        """Get global AI statistics"""
+        with self._lock:
+            stats = self._global_ai_stats.copy()
+            if stats['total_ai_calls'] > 0:
+                stats['total_avg_duration_seconds'] = round(
+                    stats['total_ai_duration_seconds'] / stats['total_ai_calls'], 3
+                )
+            else:
+                stats['total_avg_duration_seconds'] = 0.0
+            return stats
+    
     def complete(self, task_id: str, success: bool = True, message: str = None) -> None:
         """Mark task as completed"""
         with self._lock:
@@ -118,6 +146,11 @@ class ProgressTracker:
         """Get current progress for a task"""
         with self._lock:
             return self._progress.get(task_id, None)
+    
+    def get_all_progress(self) -> Dict[str, Any]:
+        """Get progress for all active tasks"""
+        with self._lock:
+            return self._progress.copy()
     
     def cleanup(self, task_id: str) -> None:
         """Remove completed task from tracker"""

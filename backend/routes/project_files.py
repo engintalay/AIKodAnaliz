@@ -1,7 +1,7 @@
 """GELIS8: Add files to an existing project.
 
-Code files  (zip, war, java, sql, py, …) → source_files table + Tree-Sitter analysis + FTS5 update
-Document files (pdf, docx, txt)          → doc_chunks table + background embedding
+Code files  (zip, war, java, sql, py, …)    → source_files table + Tree-Sitter analysis + FTS5 update
+Document files (pdf, docx, txt, xlsx, xls)  → doc_chunks table + background embedding
 """
 import os
 import uuid
@@ -32,12 +32,11 @@ CODE_EXTENSIONS = {
     'css', 'scss', 'sass', 'less',
     'sh', 'bat', 'ps1',
     'rb', 'go', 'rs', 'c', 'cpp', 'h', 'cs',
-    'txt', 'md',
 }
 
 ARCHIVE_EXTENSIONS = {'zip', 'war'}
 
-DOC_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt', 'md'}
+DOC_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt', 'md', 'xlsx', 'xls'}
 
 SKIP_BINARY_EXTENSIONS = {
     'jar', 'class', 'exe', 'dll', 'so', 'dylib',
@@ -80,6 +79,11 @@ def _is_binary(path: str) -> bool:
 
 
 def _extract_text_pdf(path: str) -> str:
+    pages = _extract_pdf_pages(path)
+    return '\n'.join(page for page in pages if page)
+
+
+def _extract_pdf_pages(path: str) -> list[str]:
     try:
         import pypdf
         reader = pypdf.PdfReader(path)
@@ -89,10 +93,10 @@ def _extract_text_pdf(path: str) -> str:
                 parts.append(page.extract_text() or '')
             except Exception:
                 pass
-        return '\n'.join(parts)
+        return parts
     except Exception as e:
         logger.warning(f"PDF extraction failed {path}: {e}")
-        return ''
+        return []
 
 
 def _extract_text_docx(path: str) -> str:
@@ -102,6 +106,72 @@ def _extract_text_docx(path: str) -> str:
         return '\n'.join(p.text for p in doc.paragraphs)
     except Exception as e:
         logger.warning(f"DOCX extraction failed {path}: {e}")
+        return ''
+
+
+def _extract_text_excel(path: str) -> str:
+    """Extract readable text from Excel files (.xlsx/.xls)."""
+    ext = _ext(path)
+
+    if ext == 'xlsx':
+        try:
+            import openpyxl
+
+            wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+            parts = []
+            for sheet in wb.worksheets:
+                parts.append(f"[Sayfa] {sheet.title}")
+                for row in sheet.iter_rows(values_only=True):
+                    values = [str(v).strip() for v in row if v is not None and str(v).strip()]
+                    if values:
+                        parts.append("\t".join(values))
+            return "\n".join(parts)
+        except Exception as e:
+            logger.warning(f"XLSX extraction failed {path}: {e}")
+            return ''
+
+    if ext == 'xls':
+        try:
+            import xlrd
+
+            wb = xlrd.open_workbook(path)
+            parts = []
+            for sheet in wb.sheets():
+                parts.append(f"[Sayfa] {sheet.name}")
+                for r in range(sheet.nrows):
+                    values = []
+                    for c in range(sheet.ncols):
+                        val = sheet.cell_value(r, c)
+                        if val is None:
+                            continue
+                        sval = str(val).strip()
+                        if sval:
+                            values.append(sval)
+                    if values:
+                        parts.append("\t".join(values))
+            return "\n".join(parts)
+        except Exception as e:
+            logger.warning(f"XLS extraction failed {path}: {e}")
+            return ''
+
+    return ''
+
+
+def _extract_document_text(path: str, file_name: str, document_type: str | None = None) -> str:
+    """Extract readable text from a stored project document."""
+    ext = (document_type or _ext(file_name) or _ext(path) or '').lower()
+
+    if ext == 'pdf':
+        return _extract_text_pdf(path)
+    if ext == 'docx':
+        return _extract_text_docx(path)
+    if ext in ('xlsx', 'xls'):
+        return _extract_text_excel(path)
+
+    try:
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            return f.read()
+    except Exception:
         return ''
 
 
@@ -119,23 +189,64 @@ def _chunk_text(text: str, size: int = 800, overlap: int = 100) -> list[str]:
     return chunks
 
 
-def _embed_doc_chunks_async(project_id: int, file_name: str, chunks: list[str]):
+def _build_document_chunks(
+    path: str,
+    file_name: str,
+    document_type: str | None = None,
+    fallback_text: str = '',
+) -> tuple[str, list[dict]]:
+    """Extract document text and return chunk rows with optional page metadata."""
+    ext = (document_type or _ext(file_name) or _ext(path) or '').lower()
+
+    if ext == 'pdf':
+        pages = _extract_pdf_pages(path) if path and os.path.exists(path) else []
+        if not pages and fallback_text.strip():
+            text = fallback_text.strip()
+            return text, [
+                {'content': chunk, 'page_start': None, 'page_end': None}
+                for chunk in _chunk_text(text)
+            ]
+
+        text = '\n'.join(page for page in pages if page)
+        rows = []
+        for page_no, page_text in enumerate(pages, start=1):
+            for chunk in _chunk_text(page_text):
+                rows.append({
+                    'content': chunk,
+                    'page_start': page_no,
+                    'page_end': page_no,
+                })
+        return text, rows
+
+    text = _extract_document_text(path, file_name, document_type) if path and os.path.exists(path) else ''
+    if not text.strip():
+        text = fallback_text.strip()
+
+    return text, [
+        {'content': chunk, 'page_start': None, 'page_end': None}
+        for chunk in _chunk_text(text)
+    ]
+
+
+def _embed_doc_chunks_async(project_id: int, file_name: str, chunks: list):
     """Generate embeddings for doc_chunks in a background thread."""
-    from backend.rag_index import _get_embedding, EMBEDDING_MODEL
+    from backend.rag_index import _get_embedding, get_embedding_model
 
     def worker():
         import requests as _req
         session = _req.Session()
         session.trust_env = False
+        emb_model = get_embedding_model()
         for idx, chunk in enumerate(chunks):
             try:
-                vec = _get_embedding(chunk, session)
+                chunk_text = chunk.get('content') if isinstance(chunk, dict) else chunk
+                vec = _get_embedding(chunk_text, session)
                 if vec:
                     import json
                     db.execute_update(
                         '''UPDATE doc_chunks SET embedding = ?, model_name = ?
                            WHERE project_id = ? AND file_name = ? AND chunk_index = ?''',
-                        (json.dumps(vec), EMBEDDING_MODEL, project_id, file_name, idx)
+                        (json.dumps(vec), emb_model, project_id, file_name, idx)
                     )
             except Exception as e:
                 logger.warning(f"Doc chunk embed error [{file_name}#{idx}]: {e}")
@@ -263,19 +374,7 @@ def _process_dalmap_file(project_id: int, file_path: str, rel_path: str, file_na
 
 def _process_doc_file(project_id: int, path: str, file_name: str) -> int:
     """Extract text from doc file, store chunks. Returns chunk count."""
-    ext = _ext(file_name)
-    if ext == 'pdf':
-        text = _extract_text_pdf(path)
-    elif ext in ('docx',):
-        text = _extract_text_docx(path)
-    else:
-        try:
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                text = f.read()
-        except Exception:
-            text = ''
-
-    chunks = _chunk_text(text)
+    text, chunks = _build_document_chunks(path, file_name)
     if not chunks:
         return 0
 
@@ -287,14 +386,125 @@ def _process_doc_file(project_id: int, path: str, file_name: str) -> int:
 
     for idx, chunk in enumerate(chunks):
         db.execute_insert(
-            '''INSERT INTO doc_chunks (project_id, file_name, chunk_index, content)
-               VALUES (?, ?, ?, ?)''',
-            (project_id, file_name, idx, chunk)
+            '''INSERT INTO doc_chunks (project_id, file_name, chunk_index, content, page_start, page_end)
+               VALUES (?, ?, ?, ?, ?, ?)''',
+            (project_id, file_name, idx, chunk['content'], chunk.get('page_start'), chunk.get('page_end'))
         )
+
+    # GELIS20: Insert or update project_documents table to list and serve the document file later.
+    try:
+        file_type = _ext(file_name)
+        file_size = os.path.getsize(path) if os.path.exists(path) else 0
+        rel_path = os.path.relpath(path, UPLOAD_DIR)
+        
+        exists = db.execute_query(
+            'SELECT id FROM project_documents WHERE project_id = ? AND file_name = ?',
+            (project_id, file_name)
+        )
+        if exists:
+            db.execute_update(
+                '''UPDATE project_documents 
+                   SET file_path = ?, file_size = ?, extracted_text = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE project_id = ? AND file_name = ?''',
+                (rel_path, file_size, text, project_id, file_name)
+            )
+        else:
+            db.execute_insert(
+                '''INSERT INTO project_documents 
+                   (project_id, file_name, file_path, file_type, document_type, file_size, extracted_text, source_folder)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                (project_id, file_name, rel_path, file_type, file_type, file_size, text, 'documents')
+            )
+    except Exception as e:
+        logger.warning(f"Failed to record document metadata in project_documents: {e}")
 
     # Trigger async embedding
     _embed_doc_chunks_async(project_id, file_name, chunks)
     return len(chunks)
+
+
+def _rebuild_existing_documents_rag(project_id: int) -> dict:
+    """Rebuild doc_chunks + embeddings for already stored project_documents rows."""
+    rows = db.execute_query(
+        '''SELECT id, file_name, file_path, file_type, document_type, extracted_text, source_folder
+           FROM project_documents
+           WHERE project_id = ?
+           ORDER BY id ASC''',
+        (project_id,)
+    )
+
+    documents_processed = 0
+    chunks_created = 0
+    documents_skipped = 0
+
+    for row in rows or []:
+        doc = dict(row)
+        file_name = doc.get('file_name') or ''
+        file_path = doc.get('file_path') or ''
+        document_type = doc.get('document_type') or doc.get('file_type') or ''
+        extracted_text = ''
+
+        candidate_paths = []
+        if file_path:
+            candidate_paths.append(file_path if os.path.isabs(file_path) else os.path.join(UPLOAD_DIR, file_path))
+        if file_name:
+            source_folder = doc.get('source_folder') or 'documents'
+            candidate_paths.append(os.path.join(UPLOAD_DIR, f'project_{project_id}', source_folder, file_name))
+            candidate_paths.append(os.path.join(UPLOAD_DIR, f'project_{project_id}', 'documents', file_name))
+
+        for candidate in candidate_paths:
+            if candidate and os.path.exists(candidate):
+                extracted_text = _extract_document_text(candidate, file_name, document_type)
+                if extracted_text.strip():
+                    break
+
+        if not extracted_text.strip():
+            extracted_text = (doc.get('extracted_text') or '').strip()
+
+        if not extracted_text:
+            documents_skipped += 1
+            continue
+
+        build_path = ''
+        for candidate in candidate_paths:
+            if candidate and os.path.exists(candidate):
+                build_path = candidate
+                break
+
+        rebuilt_text, chunks = _build_document_chunks(build_path, file_name, document_type, fallback_text=extracted_text)
+        if not chunks:
+            documents_skipped += 1
+            continue
+
+        db.execute_update(
+            'DELETE FROM doc_chunks WHERE project_id = ? AND file_name = ?',
+            (project_id, file_name)
+        )
+        for idx, chunk in enumerate(chunks):
+            db.execute_insert(
+                '''INSERT INTO doc_chunks (project_id, file_name, chunk_index, content, page_start, page_end)
+                   VALUES (?, ?, ?, ?, ?, ?)''',
+                (project_id, file_name, idx, chunk['content'], chunk.get('page_start'), chunk.get('page_end'))
+            )
+
+        if rebuilt_text != (doc.get('extracted_text') or ''):
+            db.execute_update(
+                '''UPDATE project_documents
+                   SET extracted_text = ?, updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ? AND project_id = ?''',
+                (rebuilt_text, doc['id'], project_id)
+            )
+
+        _embed_doc_chunks_async(project_id, file_name, chunks)
+        documents_processed += 1
+        chunks_created += len(chunks)
+
+    return {
+        'documents_processed': documents_processed,
+        'chunks_created': chunks_created,
+        'documents_skipped': documents_skipped,
+        'total_documents': len(rows or []),
+    }
 
 
 # ------------------------------------------------------------------
@@ -583,4 +793,54 @@ def list_dalmap_files(project_id):
 
         return jsonify({'dalmaps': dalmaps, 'sql_tables': sql_tables, 'sql_procedures': sql_procedures}), 200
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/<int:project_id>/docs/rebuild-rag', methods=['POST'])
+@check_project_access('write')
+def rebuild_project_docs_rag(project_id):
+    """Rebuild doc_chunks and embeddings for already stored documents."""
+    user = get_user_from_session()
+    try:
+        stats = _rebuild_existing_documents_rag(project_id)
+        log_audit(
+            user,
+            'project_documents_rag_rebuilt',
+            'project',
+            project_id,
+            details=f"{stats['documents_processed']} documents, {stats['chunks_created']} chunks",
+            request=request,
+        )
+        return jsonify({
+            'message': 'Mevcut dokümanlar yeniden RAG’e alındı',
+            **stats,
+        }), 200
+    except Exception as e:
+        logger.error(f"Document RAG rebuild failed for project {project_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/<int:project_id>/docs/file/<filename>', methods=['GET'])
+@check_project_access('read')
+def serve_project_document(project_id, filename):
+    """Serve a project document file securely from UPLOAD_DIR."""
+    from flask import send_from_directory
+    try:
+        rows = db.execute_query(
+            'SELECT file_path FROM project_documents WHERE project_id = ? AND file_name = ?',
+            (project_id, filename)
+        )
+        if not rows:
+            return jsonify({'error': 'Doküman bulunamadı'}), 404
+        
+        file_path = rows[0][0]
+        full_path = os.path.join(UPLOAD_DIR, file_path)
+        if not os.path.exists(full_path):
+            return jsonify({'error': f'Doküman dosyası sunucuda bulunamadı: {file_path}'}), 404
+        
+        dir_name = os.path.dirname(full_path)
+        base_name = os.path.basename(full_path)
+        return send_from_directory(dir_name, base_name)
+    except Exception as e:
+        logger.error(f"Error serving document {filename} for project {project_id}: {e}")
         return jsonify({'error': str(e)}), 500

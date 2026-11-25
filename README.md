@@ -1,6 +1,20 @@
 # AIKodAnaliz - Yapay Zeka Destekli Kod Analiz Aracı
 
-Eski projeyi yeni teknolojiye dönüştürmek için kapsamlı dokümantasyon sağlayan web tabanlı kod analiz sistemi. Tree-sitter tabanlı hassas AST parsing ile kodunuzu derinlemesine analiz edin.
+Eski projeyi yeni teknolojiye dönüştürmek için kapsamlı dokümantasyon sağlayan web tabanlı kod analiz sistemi. Tree-sitter tabanlı hassas AST parsing ile kodunuzu derinlemesine analiz edin. AI özetleri, RAG destekli sohbet ve doküman arama ile projelerinizi doğal dilde sorgulayın.
+
+## 📚 Belgeler
+
+| Doküman | İçerik |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Sistem mimarisi, modüller, veri modeli, akışlar |
+| [API.md](API.md) | **Tüm REST endpoint referansı** (yetkiler dahil) |
+| [RAG_AND_CHAT.md](RAG_AND_CHAT.md) | RAG indeksi, doküman arama, AI sohbet rehberi |
+| [CONFIGURATION.md](CONFIGURATION.md) | `.env` değişkenleri, AI provider kurulumu, production listesi |
+| [EXPORT_IMPORT.md](EXPORT_IMPORT.md) | Proje taşıma (`.aikodanaliz` dosya biçimi) |
+| [DESKTOP_APP.md](DESKTOP_APP.md) | PyQt6 masaüstü uygulaması |
+| [ROLES_AND_PERMISSIONS.md](ROLES_AND_PERMISSIONS.md) | Rol ve yetki sistemi (RBAC) |
+| [DOCKER.md](DOCKER.md) | Docker ile kurulum |
+| [todo.md](todo.md) | Yapılacaklar / gelinen nokta |
 
 ## ✨ Özellikler
 
@@ -13,7 +27,7 @@ Eski projeyi yeni teknolojiye dönüştürmek için kapsamlı dokümantasyon sa�
 - ✅ **Tekrar Analiz**: Projeleri yeniden analiz edebilme (re-analysis)
 
 ### 🤖 Yapay Zeka
-- ✅ **LMStudio Entegrasyonu**: Lokal AI modeli desteği (localhost:1234)
+- ✅ **Lokal AI Provider Desteği**: LMStudio ve llama.cpp ile OpenAI-compatible entegrasyon
 - ✅ **Recursive AI Summary**: Alt fonksiyonların özetleriyle context-aware analiz
 - ✅ **Otomatik Bağımlılık Özeti**: Çağrılan fonksiyonlar önce özetlenir
 - ✅ **Türkçe Özet**: Tamamen Türkçe AI yanıtları (300s timeout)
@@ -34,6 +48,32 @@ Eski projeyi yeni teknolojiye dönüştürmek için kapsamlı dokümantasyon sa�
 - ✅ **Modal Kısayolları**: ESC ile kapat, F11 tam ekran
 - ✅ **Responsive Design**: Tüm ekran boyutlarında uyumlu
 
+### 🤖 AI Sohbet & RAG (GELIS2/4/11/15/16/20)
+- ✅ **Sohbet Sekmesi**: Proje kaynak kodu + AI özetleri + dokümanlar üzerinde doğal dil soruları
+- ✅ **Hibrit RAG Arama**: FTS5 BM25 + embedding kosinüs benzerliği (0.6/0.4), LIKE fallback
+- ✅ **Seçili Bağlam**: Soruya fonksiyon ve doküman parçası seçerek kapsam daraltma
+- ✅ **Kaynak Gösterimi**: Yanıttaki kaynaklar tıklanabilir (PDF'te ilgili sayfaya link)
+- ✅ **SSE Stream**: Yanıt token token akar; `think`/reasoning artıkları temizlenir
+- ✅ **RAG Ekranı**: Proje genelinde fonksiyon + doküman arama, skor/güven göstergesi
+
+### 📄 Doküman Desteği (GELIS5/8)
+- ✅ **PDF, DOCX, DOC, TXT, MD, XLSX, XLS** projeye eklenir, chunk'lanır, RAG'e girer
+- ✅ **Kod/Arşiv Ekleme**: Sonradan eklenen java/sql/py/js/ts/php + zip/war/jar arşivleri analize dahil
+- ✅ **Chunk Yönetimi**: Doküman başına chunk/embedding sayısı, tek tuşla RAG yeniden kurma
+
+### 🔐 Güvenlik & Yönetim (DZT-2, GELIS6)
+- ✅ **RBAC**: admin / developer / analyzer rolleri + proje bazlı izin verme-geri alma
+- ✅ **Audit Log**: Login, proje, dosya, sohbet, export gibi tüm işlemlerin kaydı + admin filtre ekranı
+- ✅ **Kullanıcı Yönetimi**: Admin paneli, parola değiştirme, kullanıcı bazlı AI sunucu adresi
+
+### 📦 Taşınabilirlik (GELIS18)
+- ✅ **Export/Import**: Analiz + özetler + RAG indeksi + dosyalar `.aikodanaliz` dosyasında
+- ✅ Tek tıkla dışa/içe aktarma (web ve masaüstü)
+
+### 🖥️ Masaüstü Uygulaması (GELIS17)
+- ✅ **PyQt6 istemcisi**: Tüm projeler üzerinden otomatik yönlendirmeli sohbet
+- ✅ Proje seçilmeden soru sorun → en ilgili proje otomatik bulunur
+
 ### 🔧 Teknik Özellikler
 - ✅ **Performans**: Browser memory 1.2GB → 300MB optimizasyonu
 - ✅ **Proxy-Free**: Tüm network istekleri proxy kullanmaz
@@ -45,7 +85,7 @@ Eski projeyi yeni teknolojiye dönüştürmek için kapsamlı dokümantasyon sa�
 
 ### Gereksinimler
 - **Python 3.8+** (Test edildi: Python 3.14.3)
-- **LMStudio** (http://localhost:1234) - Lokal AI modeli için
+- **Lokal AI Provider** - LMStudio veya llama.cpp tabanli OpenAI-compatible sunucu
 - **Git** (Git repository import için - opsiyonel)
 - **SQLite 3** (Python ile birlikte gelir)
 
@@ -84,6 +124,15 @@ start.bat
 
 Tarayıcıda açın: **http://localhost:5000**
 
+#### Masaüstü Uygulaması (Opsiyonel)
+
+Backend çalışırken masaüstü istemcisini başlatın (ayrıntılar: [DESKTOP_APP.md](DESKTOP_APP.md)):
+
+```bash
+./start_desktop.sh        # Linux/macOS
+start_desktop.bat         # Windows
+```
+
 ### Docker ile Kurulum
 
 Docker kullanmayı tercih ediyorsanız, detaylı bilgi için [DOCKER.md](DOCKER.md) dosyasına bakın.
@@ -92,12 +141,16 @@ Docker kullanmayı tercih ediyorsanız, detaylı bilgi için [DOCKER.md](DOCKER.
 docker-compose up -d
 ```
 
-### LMStudio Kurulumu
+### AI Provider Kurulumu
 
-1. **LMStudio İndir**: https://lmstudio.ai
-2. **Model Yükle**: Ayarlar → Models → İstediğiniz modeli indirin (örn: Mistral, Llama)
-3. **Server Başlat**: Local Server → Start Server (Port: 1234)
+1. **Provider Seçin**: LMStudio veya llama.cpp kullanın
+2. **Model Hazırlayın**: Sohbet modeli yükleyin veya başlatın
+3. **OpenAI-compatible Server Başlatın**: Varsayılan örnek adres `http://localhost:1234/v1`
 4. **Test Et**: AIKodAnaliz'de Ayarlar → Bağlantı Test
+
+Örnekler:
+- **LMStudio**: https://lmstudio.ai üzerinden model indirip Local Server başlatın
+- **llama.cpp**: OpenAI-compatible server modunda çalıştırın ve API URL'ini ayarlara girin
 
 **Sorun mu yaşıyorsunuz?** Proxy ayarlarınızı kontrol edin. Uygulama otomatik olarak proxy'yi bypass eder.
 
@@ -106,94 +159,94 @@ docker-compose up -d
 ```
 AIKodAnaliz/
 ├── backend/
-│   ├── app.py                      # Flask ana uygulaması
-│   ├── database.py                 # SQLite bağlantısı (WAL mode)
-│   ├── lmstudio_client.py          # AI entegrasyonu (proxy-free)
-│   ├── logger.py                   # Merkezi logging sistemi
+│   ├── app.py                      # Flask ana uygulaması (11 blueprint)
+│   ├── database.py                 # SQLite şeması (15 tablo + FTS5), migration, seed
+│   ├── lmstudio_client.py          # OpenAI-compatible AI istemcisi (proxy-free)
+│   ├── ai_client.py                # Provider-nötr dışa aktarım
+│   ├── rag_index.py                # RAG: FTS5 + embedding hibrit arama
+│   ├── permission_manager.py       # RBAC decorator'ları, proje izinleri
 │   ├── progress_tracker.py         # Real-time progress tracking
+│   ├── logger.py                   # Merkezi logging + audit log
 │   ├── analyzers/
-│   │   ├── advanced_analyzer.py    # Tree-sitter AST parser
+│   │   ├── advanced_analyzer.py    # Tree-sitter AST parser (+ sqlparse)
 │   │   └── code_analyzer.py        # Legacy analyzer (deprecated)
 │   └── routes/
-│       ├── project.py              # Proje yönetimi (upload/import/delete)
-│       ├── analysis.py             # Kod analizi (recursive AI summary)
-│       ├── user.py                 # Kullanıcı ve işaretler
-│       ├── ai_settings.py          # LMStudio ayarları
-│       └── diagram.py              # Diyagram verileri (entry points)
+│       ├── project.py              # Proje yönetimi (upload/import/add-file/git)
+│       ├── project_files.py        # Doküman chunk/RAG hattı, docs uçları
+│       ├── analysis.py             # Analiz + recursive/bulk AI özeti
+│       ├── chat.py                 # RAG destekli sohbet (SSE)
+│       ├── rag.py                  # İndeks build/status/arama
+│       ├── user.py                 # Kullanıcı, marks, ayarlar, izinler
+│       ├── ai_settings.py          # AI provider ayarları
+│       ├── diagram.py              # Diyagram verileri (entry points)
+│       ├── report.py               # AI özet kapsama raporu
+│       ├── admin_audit.py          # Audit log sorguları (admin)
+│       └── export_import.py        # .aikodanaliz export/import
+├── desktop_app/                    # PyQt6 masaüstü istemcisi (python -m desktop_app)
 ├── frontend/
-│   ├── index.html                  # Ana sayfa (modal, search, ESC support)
-│   ├── css/
-│   │   └── style.css               # Responsive design
-│   └── js/
-│       └── main.js                 # Frontend lojiği (lazy-load, git auto-fill)
-├── config/
-│   └── config.py                   # Konfigürasyon
-├── database/
-│   └── aikodanaliz.db              # SQLite database (auto-created)
-├── uploads/                        # Yüklenen ZIP projeleri
-├── tests/                          # Test dosyaları
-├── start.sh                        # Linux/macOS başlatma scripti
-├── start.bat                       # Windows başlatma scripti
-├── requirements.txt                # Python dependencies
-├── docker-compose.yml              # Docker konfigürasyonu
-└── README.md                       # Bu dosya
+│   ├── index.html                  # Ana sayfa (modallar, arama, ESC)
+│   ├── css/style.css               # Responsive tasarım
+│   ├── js/
+│   │   ├── main.js                 # Ana frontend mantığı (lazy-load, chat, RAG)
+│   │   └── admin-functions.js      # Admin paneli (kullanıcı, audit, ayarlar)
+│   └── lib/cytoscape.umd.js        # Grafik kütüphanesi
+├── config/config.py                # Merkezi konfigürasyon (.env)
+├── database/aikodanaliz.db         # SQLite (auto-created, WAL)
+├── uploads/                        # Yüklenen projeler + documents/
+├── tests/unit/                     # Unit testler (unittest + coverage)
+├── start.sh / start.bat            # Backend başlatıcı (Linux / Windows)
+├── start_desktop.sh / .bat / .cmd  # Masaüstü istemcisi başlatıcı
+├── requirements.txt                # Python bağımlılıkları
+├── .env.example                    # Yapılandırma şablonu → CONFIGURATION.md
+├── docker-compose.yml, Dockerfile  # Docker → DOCKER.md
+└── README.md                       # Bu dosya (+ API.md, ARCHITECTURE.md, ...)
 ```
 
 ## 🌐 API Endpoints
 
-### Projeler
-- `GET /api/projects` - Tüm projeleri listele
-- `GET /api/projects/<id>` - Proje detayları
-- `POST /api/projects/upload` - Proje yükle (ZIP)
-- `POST /api/projects/import-git` - Git repository'den import
-- `POST /api/projects/git-info` - Git URL'den branch listesi al (auto-fill için)
-- `GET /api/projects/<id>/files` - Proje dosyaları
-- `GET /api/projects/progress/<task_id>` - Real-time progress tracking
-- `DELETE /api/projects/<id>` - Projeyi sil (cascade delete)
+**Tam referans (tüm uçlar, parametreler, yetkiler): [API.md](API.md).** Özet gruplar:
 
-### Analiz
-- `POST /api/analysis/project/<id>?task_id=<uuid>` - Projeyi analiz et (tekrar analiz destekler)
-- `POST /api/analysis/function/<id>/ai-summary` - **Recursive AI özeti** (alt fonksiyonlar dahil)
-- `GET /api/analysis/function/<id>` - Fonksiyon detayları (qualified name, source code, dependencies)
-- `PUT /api/analysis/function/<id>/summary` - Manuel özet güncelle
-- `GET /api/analysis/project/<id>/functions` - Proje fonksiyonları
-- `GET /api/analysis/dependencies/<id>` - Fonksiyon bağlantıları
-- `GET /api/analysis/test-connection` - LMStudio bağlantı testi
+- `/api/projects` — listele/upload/update/delete, ZIP+Git import, **add-file** (kod/arşiv/doküman), progress, **export/import**
+- `/api/analysis` — analiz, recursive/bulk AI özeti, hatalı özet yönetimi, istatistikler
+- `/api/chat` — RAG destekli sohbet (**SSE stream**, kaynak refs'leri ile)
+- `/api/rag` — indeks build/status, birleşik fonksiyon+doküman araması
+- `/api/users` — login/session, marks, kullanıcı yönetimi, ayarlar, **proje izinleri**
+- `/api/ai-settings` — provider ayarları + bağlantı testi
+- `/api/diagram` — diyagram/callgraph verileri, PNG export
+- `/api/report` — AI özet kapsama raporu
+- `/api/admin/audit-logs` — denetim kayıtları (admin)
 
-### Kullanıcılar & İşaretler
-- `POST /api/users/register` - Yeni kullanıcı
-- `POST /api/users/login` - Giriş yap
-- `POST /api/users/marks` - İşaret ekle
-- `GET /api/users/marks/<project_id>` - Proje işaretleri
-- `PUT /api/users/marks/<id>/resolve` - İşareti çöz (Admin)
+> ⚠️ Kimlik doğrulama session cookie iledir; bazı uçlar auth gerektirmez — production notları için API.md "Bilinen Davranışlar" bölümüne bakın.
 
-### AI Ayarları
-- `GET /api/ai-settings` - Tüm ayarlar
-- `PUT /api/ai-settings/<setting>` - Ayar güncelle (temperature, max_tokens, etc.)
-- `POST /api/ai-settings/lmstudio/test` - Bağlantı testi
+## AI Provider Ayarı
 
-### Diyagram
-- `GET /api/diagram/project/<id>` - Diyagram verileri (nodes/edges, entry points)
-- `POST /api/diagram/export/png` - PNG olarak dışa aktar
+1. Ayarlar ekranında provider seçin: `LMStudio` veya `llama.cpp`
+2. Bir sohbet modeli hazırlayın
+3. Sunucu URL'sini girin (örnek: `http://localhost:1234/v1`)
+4. Bağlantıyı test edin ve ardından **Sıcaklık**, **Top P**, **Max Tokens** vb. yapılandırın
 
-## LMStudio Ayarı
-
-1. LMStudio yükleyin: https://lmstudio.ai
-2. Bir model yükleyin
-3. Sunucu başlatın (varsayılan: http://localhost:1234)
-4. Ayarlar sekmesinden **Sıcaklık**, **Top P**, **Max Tokens** vb. yapılandırın
+Tüm env değişkenleri, öncelik sırası ve production kontrol listesi: [CONFIGURATION.md](CONFIGURATION.md)
 
 ## 💾 Veritabanı Şeması
 
-- **users**: Kullanıcı hesapları (admin/viewer rolleri)
-- **projects**: Projeler (upload_date, Git metadata)
-- **source_files**: Kaynak kod dosyaları (language, content)
-- **functions**: Analiz edilen fonksiyonlar (qualified_name, class_name, package_name, ai_summary)
-- **function_calls**: Fonksiyon bağlantıları (caller → callee, call_type: qualified/unqualified)
-- **entry_points**: Başlangıç noktaları (@Service, @Controller, main methods)
+**15 tablo + 2 FTS5 sanal tablosu** (ayrıntılı ER şeması: [ARCHITECTURE.md](ARCHITECTURE.md)):
+
+- **users**: Kullanıcı hesapları (admin/developer/analyzer rolleri)
+- **projects**: Projeler (upload_date, Git metadata, sahip)
+- **source_files**: Kaynak kod dosyaları (language, content; `added_files/**` sonradan eklenenler)
+- **functions**: Analiz edilen fonksiyonlar (qualified name bileşenleri: class_name/package_name, ai_summary, updated_at)
+- **function_calls**: Fonksiyon bağlantıları (caller → callee, call_type)
+- **entry_points**: Başlangıç noktaları (@Service, @Controller, main, SQL trigger)
 - **user_marks**: Kullanıcı işaretleri/yorumları
 - **version_history**: Kod sürüm geçmişi
-- **ai_settings**: LMStudio yapılandırması (temperature, max_tokens, timeout)
+- **ai_settings**: Global AI provider yapılandırması (provider, api_url, api_key, temperature, top_p, max_tokens, timeout + embedding_model/embedding_api_url/embedding_api_key)
+- **project_permissions**: Proje bazlı erişim izinleri (read_only bayrağı)
+- **user_settings**: Kullanıcı tercihleri (tema, **ai_api_url + ai_api_key override**)
+- **audit_logs**: Denetim kayıtları (action, resource, ip)
+- **function_embeddings**: Fonksiyon vektörleri (JSON, nomic-embed 768 boyut)
+- **project_documents**: Eklenen dokümanlar (pdf/docx/xlsx/txt/md, extracted_text)
+- **doc_chunks**: Doküman parçaları (embedding, sayfa aralığı)
+- **fts_functions / fts_documents**: FTS5 tam metin indeksleri
 
 ### SQLite Optimizasyonları
 - **WAL Mode**: Concurrent read/write desteği
@@ -233,7 +286,7 @@ AIKodAnaliz/
 User: "🤖 AI Özeti Al" butonuna basar
 
 Progress Tracking:
-├─ [0%] LMStudio bağlantısı kontrol ediliyor...
+├─ [0%] AI sunucu bağlantısı kontrol ediliyor...
 ├─ [10%] ✓ Bağlantı başarılı
 ├─ [15%] Toplam 3 fonksiyon özetlenecek
 │
@@ -271,21 +324,40 @@ Progress Tracking:
 - **Interactive**: Node'lara tıklayarak detay görüntüle
 - **Lazy Load**: İlk 30 fonksiyon (performance optimization)
 
+### 6️⃣ AI Sohbet ve RAG 💬
+
+1. Proje detayında **Sohbet** sekmesine girin
+2. Sorunuzu yazın — sistem ilgili fonksiyon ve doküman parçalarını otomatik bağlar
+3. İsterseniz mesajdan önce **fonksiyon/doküman seçerek** kapsamı daraltın
+4. Yanıt akarken alttaki **kaynak linklerinden** ilgili fonksiyona/PDF sayfasına gidin
+5. **RAG Arama** ekranından "bul → sor" akışı: sonuç seç, sonra AI'a sor (ayrıntı: [RAG_AND_CHAT.md](RAG_AND_CHAT.md))
+
+> En iyi sonuç için: analiz → toplu AI özeti → RAG indeksini kur (build).
+
+### 7️⃣ Doküman Ekleme 📄
+
+**Dosyalar → Dosya Ekle** ile PDF/DOCX/XLSX/TXT/MD ekleyin → otomatik chunk'lanıp RAG'e girer; kod/zip/war eklerseniz analize dahil edilir. (GELIS8)
+
+### 8️⃣ Proje Taşıma (Export/Import) 📦
+
+Proje detayında **📤 Dışa Aktar** → `.aikodanaliz` dosyası; hedef kurulumda **📥 İçe Aktar**. AI özetleri ve RAG vektörleri de taşınır; FTS indeksi için import sonrası "RAG build" başlatmayı unutmayın. (Detay: [EXPORT_IMPORT.md](EXPORT_IMPORT.md))
+
 ## Geliştirilecek Özellikler
 
+Güncel yol haritası [todo.md](todo.md) dosyasındadır. Öne çıkanlar:
+
+- 🚧 **GELIS9**: DALMap (XML) dosya desteği — tablo↔uyumluluk bağı çözümlemesi
+- 🚧 **GELIS10**: Güvenlik riski taraması (fonksiyon/genel)
 - 🚧 PostgreSQL tam desteği
-- 🚧 Kullanıcı kimlik doğrulaması (JWT)
-- 🚧 Kaynak kodu görüntüleyici (syntax highlighting)
+- 🚧 Kullanıcı kimlik doğrulaması (JWT) + parola hash'leme
 - 🚧 Diff/Patch gösterimi
-- 🚧 Daha gelişmiş kod analizi
-- 🚧 API dokümantasyonu otomatik oluşturma
-- 🚧 Multi-model LM desteği
+- 🚧 CI (GitHub Actions) — test + coverage otomasyonu
 
 ## 🧪 Test ve Kalite Güvencesi
 
 ### Unit Test Paketi
 
-Proje kapsamlı bir unit test altyapısına sahiptir. Toplam **25 test** ile backend kodunun **%29'u** kapsanmaktadır.
+Proje **25 unit test** içerir. Güncel durum (Kasım 2026): 22 test geçiyor; `test_app_and_routes.py` içindeki **3 upload testi RBAC geçişi sonrası güncellenmediği için başarısız** (oturumsuz istek 401 alıyor — bkz. [todo.md](todo.md) DZT-14). Toplam coverage **~%19**; chat/RAG/export gibi yeni modüller henüz testsiz.
 
 #### Test Çalıştırma
 
@@ -325,25 +397,28 @@ open coverage_html/index.html  # Tarayıcıda aç
 | `test_app_and_routes.py` | 6 | Flask endpoints, upload validation |
 | `test_permission_manager.py` | 3 | Role-based access control |
 
-#### Coverage Özeti
+#### Coverage Özeti (Kasım 2026 ölçümü)
 
-**Yüksek Kapsam (>80%)**
-- ✅ `code_analyzer.py` - 89%
-- ✅ `progress_tracker.py` - 89%
-- ✅ `logger.py` - 84%
-- ✅ `app.py` - 83%
+**Yüksek Kapsam (>70%)**
+- ✅ `code_analyzer.py` - %89
+- ✅ `app.py` - %83
+- ✅ `progress_tracker.py` - %75
 
-**Orta Kapsam (40-80%)**
-- ⚠️ `database.py` - 67%
-- ⚠️ `routes/project.py` - 41%
+**Orta Kapsam (40-70%)**
+- ⚠️ `database.py` - %54
+- ⚠️ `logger.py` - %59
+- ⚠️ `permission_manager.py` - %44
 
-**Düşük Kapsam (<40%)** - Öncelikli İyileştirme Gerekiyor
-- ❌ `permission_manager.py` - 35%
-- ❌ `routes/analysis.py` - 8% (En kritik modül)
-- ❌ `routes/user.py` - 15%
-- ❌ `lmstudio_client.py` - 10%
+**Düşük Kapsam (<25%)** - Öncelikli İyileştirme Gerekiyor
+- ❌ `routes/project.py` - %13
+- ❌ `routes/user.py` - %15
+- ❌ `lmstudio_client.py` - %9
+- ❌ `rag_index.py` - %10
+- ❌ `routes/chat.py`, `routes/export_import.py`, `routes/analysis.py` - <%10
 
-📊 **Detaylı coverage raporu:** [COVERAGE_REPORT.md](COVERAGE_REPORT.md)
+**Toplam: %19** — yeni modüller (chat, RAG, export/import, audit) neredeyse hiç test edilmedi; `test_app_and_routes.py`'daki 3 upload testi auth eklendikten sonra güncellenmediği için başarısız (todo.md DZT-14).
+
+📊 **Eski detaylı rapor (Mart 2026, %29 dönemi):** [COVERAGE_REPORT.md](COVERAGE_REPORT.md)
 
 ### Sürekli Entegrasyon (CI)
 
@@ -355,7 +430,7 @@ open coverage_html/index.html  # Tarayıcıda aç
 ## Sorunlar & Destek
 
 Sorunlarla karşılaştığınızda;
-1. LMStudio'un çalıştığını kontrol edin
+1. AI provider sunucusunun çalıştığını kontrol edin
 2. Ayarlar > Bağlantı Test Et'i tıklayın
 3. Hata mesajını kontrol edin
 
@@ -366,4 +441,4 @@ MIT License
 ---
 
 **Geliştirici**: AI Kod Analiz Ekibi
-**İlk Sürüm**: Mart 2026
+**İlk Sürüm**: Mart 2026 · **Son güncelleme**: Kasım 2026

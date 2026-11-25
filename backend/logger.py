@@ -59,6 +59,14 @@ def log_upload(project_id: int, message: str, **kwargs):
     """Log upload progress"""
     logger.info(f"Upload [Project {project_id}]: {message} | {kwargs}")
 
+def log_file_analysis_start(project_id: int, file_id: int, file_name: str, language: str):
+    """Log file analysis start"""
+    logger.info(f"Analysis [Project {project_id}][File {file_id}] {file_name} ({language}) - Analiz başlatıldı")
+
+def log_file_analysis_complete(project_id: int, file_id: int, file_name: str, functions_count: int, language: str):
+    """Log file analysis completion"""
+    logger.info(f"Analysis [Project {project_id}][File {file_id}] {file_name} ({language}) - Analiz tamamlandı: {functions_count} fonksiyon")
+
 def log_ai_call(function_id: int, status: str, **kwargs):
     """Log AI API calls"""
     logger.info(f"AI Call [Function {function_id}]: {status} | {kwargs}")

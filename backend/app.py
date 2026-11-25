@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.config import DATABASE_PATH, UPLOAD_DIR, SECRET_KEY, FLASK_HOST, FLASK_PORT, FLASK_DEBUG
 from backend.database import db
-from backend.routes import project, analysis, user, ai_settings, diagram, report, admin_audit, chat, rag, project_files
+from backend.routes import project, analysis, user, ai_settings, diagram, report, admin_audit, chat, rag, project_files, export_import
 from backend.logger import logger
 
 # Setup Flask app with static and template folders
@@ -72,6 +72,7 @@ app.register_blueprint(admin_audit.bp)
 app.register_blueprint(chat.bp)
 app.register_blueprint(rag.bp)
 app.register_blueprint(project_files.bp)
+app.register_blueprint(export_import.bp)
 
 @app.route('/')
 def index():
