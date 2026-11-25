@@ -1043,3 +1043,129 @@ def serve_project_document(project_id, filename):
     except Exception as e:
         logger.error(f"Error serving document {filename} for project {project_id}: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+def _delete_upload_file(rel_path: str) -> bool:
+    """Delete a file inside UPLOAD_DIR safely (no path traversal).
+
+    Returns True when a file was removed, False otherwise.
+    """
+    if not rel_path:
+        return False
+    try:
+        upload_root = os.path.realpath(UPLOAD_DIR)
+        full_path = os.path.realpath(
+            rel_path if os.path.isabs(rel_path) else os.path.join(UPLOAD_DIR, rel_path)
+        )
+        if not (full_path == upload_root or full_path.startswith(upload_root + os.sep)):
+            logger.warning(f"Refusing to delete file outside upload dir: {rel_path}")
+            return False
+        if os.path.isfile(full_path):
+            os.remove(full_path)
+            return True
+    except Exception as e:
+        logger.warning(f"Failed to delete upload file {rel_path}: {e}")
+    return False
+
+
+@bp.route('/<int:project_id>/docs/file/<path:filename>', methods=['DELETE'])
+@check_project_access('write')
+def delete_project_document(project_id, filename):
+    """Delete a document/RAG file: DB rows, chunks and the physical file."""
+    user = get_user_from_session()
+    try:
+        rows = db.execute_query(
+            'SELECT id, file_path FROM project_documents WHERE project_id = ? AND file_name = ?',
+            (project_id, filename)
+        )
+        chunk_rows = db.execute_query(
+            'SELECT COUNT(*) FROM doc_chunks WHERE project_id = ? AND file_name = ?',
+            (project_id, filename)
+        )
+        chunk_count = int(chunk_rows[0][0]) if chunk_rows else 0
+
+        if not rows and chunk_count == 0:
+            return jsonify({'error': 'Doküman bulunamadı'}), 404
+
+        file_path = rows[0][1] if rows else ''
+
+        db.execute_update(
+            'DELETE FROM doc_chunks WHERE project_id = ? AND file_name = ?',
+            (project_id, filename)
+        )
+        db.execute_update(
+            'DELETE FROM project_documents WHERE project_id = ? AND file_name = ?',
+            (project_id, filename)
+        )
+
+        file_deleted = _delete_upload_file(file_path)
+
+        log_audit(
+            user,
+            'project_document_deleted',
+            'project',
+            project_id,
+            details=f"{filename} ({chunk_count} chunks, file_deleted={file_deleted})",
+            request=request,
+        )
+        return jsonify({
+            'message': 'Doküman silindi',
+            'file_name': filename,
+            'deleted_chunks': chunk_count,
+            'file_deleted': file_deleted,
+        }), 200
+    except Exception as e:
+        logger.error(f"Error deleting document {filename} for project {project_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@bp.route('/<int:project_id>/dalmaps/<int:dalmap_id>', methods=['DELETE'])
+@check_project_access('write')
+def delete_dalmap_file(project_id, dalmap_id):
+    """Delete a DALMap configuration: DB row, RAG chunks and the physical file."""
+    user = get_user_from_session()
+    try:
+        rows = db.execute_query(
+            'SELECT id, file_name, file_path FROM dalmap_files WHERE id = ? AND project_id = ?',
+            (dalmap_id, project_id)
+        )
+        if not rows:
+            return jsonify({'error': 'DALMap dosyası bulunamadı'}), 404
+
+        file_name = rows[0][1] or ''
+        file_path = rows[0][2] or ''
+
+        chunk_rows = db.execute_query(
+            'SELECT COUNT(*) FROM doc_chunks WHERE project_id = ? AND file_name = ?',
+            (project_id, file_name)
+        )
+        chunk_count = int(chunk_rows[0][0]) if chunk_rows else 0
+
+        db.execute_update(
+            'DELETE FROM doc_chunks WHERE project_id = ? AND file_name = ?',
+            (project_id, file_name)
+        )
+        db.execute_update(
+            'DELETE FROM dalmap_files WHERE id = ? AND project_id = ?',
+            (dalmap_id, project_id)
+        )
+
+        file_deleted = _delete_upload_file(file_path)
+
+        log_audit(
+            user,
+            'project_dalmap_deleted',
+            'project',
+            project_id,
+            details=f"{file_name} ({chunk_count} chunks, file_deleted={file_deleted})",
+            request=request,
+        )
+        return jsonify({
+            'message': 'DALMap dosyası silindi',
+            'file_name': file_name,
+            'deleted_chunks': chunk_count,
+            'file_deleted': file_deleted,
+        }), 200
+    except Exception as e:
+        logger.error(f"Error deleting DALMap {dalmap_id} for project {project_id}: {e}")
+        return jsonify({'error': str(e)}), 500

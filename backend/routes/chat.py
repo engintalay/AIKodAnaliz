@@ -256,6 +256,65 @@ def _locate_doc_reference(project_id: int, file_name: str, chunk_index: int, chu
     except Exception:
         return f'chunk {chunk_index}'
 
+def _build_file_inventory(project_id: int, max_names: int = 40) -> str:
+    """Compact inventory of indexed project files for the chat prompt.
+
+    The chat only receives retrieved chunks, so without an inventory the model
+    cannot tell which files exist and may claim a file is not indexed.
+    """
+    lines = []
+
+    try:
+        doc_rows = db.execute_query(
+            '''SELECT file_name, COUNT(*) AS chunk_count
+               FROM doc_chunks
+               WHERE project_id = ?
+               GROUP BY file_name
+               ORDER BY file_name''',
+            (project_id,)
+        )
+        if doc_rows:
+            items = [f"{r[0]} ({r[1]} chunk)" for r in doc_rows[:max_names]]
+            lines.append('Dokümanlar (RAG indeksli): ' + ', '.join(items))
+    except Exception:
+        pass
+
+    try:
+        dalmap_rows = db.execute_query(
+            'SELECT file_name FROM dalmap_files WHERE project_id = ? ORDER BY file_name',
+            (project_id,)
+        )
+        if dalmap_rows:
+            lines.append(
+                'DALMap konfigürasyonları: '
+                + ', '.join(r[0] for r in dalmap_rows[:max_names])
+            )
+    except Exception:
+        pass
+
+    try:
+        src = db.execute_query(
+            'SELECT COUNT(*) FROM source_files WHERE project_id = ?',
+            (project_id,)
+        )
+        total = int(src[0][0]) if src else 0
+        if total:
+            name_rows = db.execute_query(
+                '''SELECT DISTINCT file_name FROM source_files
+                   WHERE project_id = ? ORDER BY file_name LIMIT ?''',
+                (project_id, max_names)
+            )
+            names = [r[0] for r in name_rows]
+            suffix = f' (ilk {len(names)})' if total > len(names) else ''
+            lines.append(
+                f'Kaynak kod dosyaları: {total} dosya{suffix}: ' + ', '.join(names)
+            )
+    except Exception:
+        pass
+
+    return '\n'.join(lines)
+
+
 def _build_context(
     project_id: int,
     project_name: str,
@@ -411,6 +470,8 @@ def _build_context(
     if doc_parts:
         doc_block = '\n\n'.join(doc_parts[:3])
 
+    inventory_block = _build_file_inventory(project_id)
+
     system_prompt = (
         f"Sen '{project_name}' projesinin AI kod asistanısın. "
         "YALNIZCA Türkçe yanıt ver. "
@@ -425,6 +486,7 @@ def _build_context(
         f"{context_block}\n"
         "==========================="
         + (("\n\n=== PROJE DOKÜMANLARI ===\n" + doc_block + "\n========================") if doc_block else '')
+        + (("\n\n=== PROJE DOSYA ENVANTERİ ===\n" + inventory_block + "\n==============================") if inventory_block else '')
     )
     refs.extend(doc_refs)
     return system_prompt, context_block, refs

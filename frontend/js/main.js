@@ -3429,12 +3429,63 @@ async function loadDalmapFiles() {
                 openFileViewerModal(d.file_name || 'DALMap', mappedView);
             };
 
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-secondary';
+            deleteBtn.style.cssText = 'font-size:12px; color:#c0392b;';
+            deleteBtn.textContent = '🗑 Sil';
+            deleteBtn.onclick = (e) => { e.stopPropagation(); deleteDalmapFile(d.id, d.file_name); };
+
+            const actions = document.createElement('div');
+            actions.style.cssText = 'display:flex; gap:6px; flex-shrink:0;';
+            actions.appendChild(btn);
+            actions.appendChild(deleteBtn);
+
             item.appendChild(info);
-            item.appendChild(btn);
+            item.appendChild(actions);
             container.appendChild(item);
         });
     } catch (error) {
         container.innerHTML = `<div style="color:#c0392b;">Hata: ${error.message}</div>`;
+    }
+}
+
+async function deleteProjectDocument(fileName) {
+    if (!currentProjectId || !fileName) return;
+    if (!confirm(`"${fileName}" dokümanını ve RAG indeksini silmek istediğinizden emin misiniz?`)) return;
+
+    try {
+        const response = await fetch(
+            `${API_URL}/projects/${currentProjectId}/docs/file/${encodeURIComponent(fileName)}`,
+            { method: 'DELETE' }
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            alert(`Silme başarısız: ${data.error || response.status}`);
+            return;
+        }
+        await loadFiles();
+    } catch (error) {
+        alert(`Silme hatası: ${error.message}`);
+    }
+}
+
+async function deleteDalmapFile(dalmapId, fileName) {
+    if (!currentProjectId || !dalmapId) return;
+    if (!confirm(`"${fileName || 'DALMap'}" konfigürasyonunu ve RAG indeksini silmek istediğinizden emin misiniz?`)) return;
+
+    try {
+        const response = await fetch(
+            `${API_URL}/projects/${currentProjectId}/dalmaps/${dalmapId}`,
+            { method: 'DELETE' }
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            alert(`Silme başarısız: ${data.error || response.status}`);
+            return;
+        }
+        await loadFiles();
+    } catch (error) {
+        alert(`Silme hatası: ${error.message}`);
     }
 }
 
@@ -3525,8 +3576,10 @@ function filterFiles() {
         filteredDocs.forEach(doc => {
             const item = document.createElement('div');
             item.className = 'file-item';
-            item.style.cursor = 'pointer';
-            item.onclick = () => viewDocumentFromChat(doc.file_name);
+            item.style.cssText = 'display:flex; justify-content:space-between; align-items:flex-start; gap:8px;';
+            const infoDiv = document.createElement('div');
+            infoDiv.style.cssText = 'flex:1; cursor:pointer;';
+            infoDiv.onclick = () => viewDocumentFromChat(doc.file_name);
             const nameEl = document.createElement('h4');
             nameEl.textContent = doc.file_name;
             const pathEl = document.createElement('p');
@@ -3534,9 +3587,18 @@ function filterFiles() {
             pathEl.textContent = doc.file_path;
             const typeEl = document.createElement('small');
             typeEl.textContent = `Tip: ${doc.document_type || 'doküman'} • RAG`;
-            item.appendChild(nameEl);
-            item.appendChild(pathEl);
-            item.appendChild(typeEl);
+            infoDiv.appendChild(nameEl);
+            infoDiv.appendChild(pathEl);
+            infoDiv.appendChild(typeEl);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'btn btn-secondary';
+            deleteBtn.style.cssText = 'font-size:11px; padding:4px 8px; white-space:nowrap; flex-shrink:0; color:#c0392b;';
+            deleteBtn.textContent = '🗑 Sil';
+            deleteBtn.onclick = (e) => { e.stopPropagation(); deleteProjectDocument(doc.file_name); };
+
+            item.appendChild(infoDiv);
+            item.appendChild(deleteBtn);
             list.appendChild(item);
         });
     }
