@@ -5,12 +5,14 @@ from backend.analyzers.advanced_analyzer import AdvancedCodeAnalyzer
 from backend.progress_tracker import progress_tracker
 from backend.logger import logger, log_analysis, log_ai_call, log_error, log_audit, log_file_analysis_start, log_file_analysis_complete
 from backend.permission_manager import get_user_from_session
+from config.config import AI_SUMMARY_WORKERS, AI_SUMMARY_MAX_TOKENS
 import json
 import uuid
 import re
 import threading
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 CALL_NAME_PATTERN = re.compile(r'\b([A-Za-z_][A-Za-z0-9_]*)\s*\(')
 QUALIFIED_CALL_PATTERN = re.compile(r'(\w+)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(')  # receiver.method()
@@ -44,6 +46,27 @@ def _is_ai_error_response(summary_text):
     )
 
 
+# Paralel özetlemede aynı fonksiyonun iki kez üretilmesini engelleyen
+# süreç geneli sahiplenme (claim) kümesi.
+_summary_claims = set()
+_summary_claims_lock = threading.Lock()
+
+
+def _claim_summary(function_id):
+    """Fonksiyon özeti üretim hakkını alır; başka thread'de ise False döner."""
+    with _summary_claims_lock:
+        if function_id in _summary_claims:
+            return False
+        _summary_claims.add(function_id)
+        return True
+
+
+def _release_summary(function_id):
+    """Sahiplenilen özet üretim hakkını bırakır."""
+    with _summary_claims_lock:
+        _summary_claims.discard(function_id)
+
+
 def _load_ai_runtime_settings():
     """Load runtime AI generation parameters from ai_settings table."""
     ai_settings = {}
@@ -66,7 +89,8 @@ def _load_ai_runtime_settings():
     return {
         'temperature': ai_settings.get('temperature'),
         'top_p': ai_settings.get('top_p'),
-        'max_tokens': ai_settings.get('max_tokens')
+        'max_tokens': ai_settings.get('max_tokens'),
+        'summary_max_tokens': ai_settings.get('summary_max_tokens') or AI_SUMMARY_MAX_TOKENS,
     }
 
 
@@ -769,6 +793,26 @@ def analyze_project(project_id):
         return jsonify({'error': str(e)}), 500
 
 def _generate_ai_summary_recursive(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0, temperature=None, top_p=None, max_tokens=None, track_progress=True, extra_criteria=None, extra_question=None, force=False):
+    """Özet üretimini tek seferlik sahiplenme (claim) ile sarar.
+
+    Paralel toplu özetlemede aynı fonksiyonun iki thread tarafından aynı anda
+    üretilmesini engeller. Claim alınamazsa bu dal atlanır; havuz sonunda
+    kalanlar için ikinci bir süpürme yapılır.
+    """
+    if not _claim_summary(function_id):
+        logger.debug(f"Function {function_id} is already being summarized by another worker, skipping")
+        return None, processed
+    try:
+        return _generate_ai_summary_recursive_impl(
+            function_id, client, visited, depth, task_id, total_deps, processed,
+            temperature, top_p, max_tokens, track_progress,
+            extra_criteria, extra_question, force,
+        )
+    finally:
+        _release_summary(function_id)
+
+
+def _generate_ai_summary_recursive_impl(function_id, client, visited=None, depth=0, task_id=None, total_deps=0, processed=0, temperature=None, top_p=None, max_tokens=None, track_progress=True, extra_criteria=None, extra_question=None, force=False):
     """Recursively generate AI summaries for function and its dependencies
     
     Args:
@@ -1230,7 +1274,7 @@ def get_ai_summary(function_id):
         settings = _load_ai_runtime_settings()
         temperature = settings['temperature']
         top_p = settings['top_p']
-        max_tokens = settings['max_tokens']
+        max_tokens = settings['summary_max_tokens']
         payload = request.get_json(silent=True) or {}
         extra_criteria = (payload.get('extra_criteria') or '').strip()
         extra_question = (payload.get('extra_question') or '').strip()
@@ -1283,19 +1327,32 @@ def get_ai_summary(function_id):
             progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
         return jsonify({'error': str(e)}), 500
 
-def _bulk_generate_worker(project_id, task_id, client, temperature, top_p, max_tokens, extra_criteria=None, extra_question=None):
-    """Background worker for generating AI summaries for all missing functions."""
-    try:
-        # Find all functions in the project that lack a valid AI summary
-        query = '''
+def _fetch_missing_summary_functions(project_id):
+    """Özeti eksik/hatalı fonksiyonları döndürür."""
+    rows = db.execute_query(
+        '''
             SELECT id, function_name, class_name
             FROM functions 
             WHERE project_id = ? 
             AND (ai_summary IS NULL OR ai_summary = '' OR ai_summary LIKE '⚠️%' OR ai_summary LIKE 'Error:%')
-        '''
-        rows = db.execute_query(query, (project_id,))
-        missing_funcs = [dict(row) for row in rows]
-        
+            ORDER BY id
+        ''',
+        (project_id,)
+    )
+    return [dict(row) for row in rows]
+
+
+def _bulk_generate_worker(project_id, task_id, user_id, temperature, top_p, max_tokens,
+                          summary_max_tokens=None, extra_criteria=None, extra_question=None):
+    """Background worker for generating AI summaries for all missing functions.
+
+    Özetler ``AI_SUMMARY_WORKERS`` kadar thread ile paralel üretilir. Her thread
+    kendi ``LocalAIClient`` örneğini kullanır (thread-local); aynı fonksiyonun
+    iki kez üretilmesi claim mekanizmasıyla engellenir. Havuz bittikten sonra
+    hâlâ eksik kalan fonksiyonlar için tek bir süpürme turu daha çalıştırılır.
+    """
+    try:
+        missing_funcs = _fetch_missing_summary_functions(project_id)
         total_missing = len(missing_funcs)
         if total_missing == 0:
             progress_tracker.complete(task_id, success=True, message='Tüm fonksiyonların AI özeti zaten mevcut.')
@@ -1308,54 +1365,92 @@ def _bulk_generate_worker(project_id, task_id, client, temperature, top_p, max_t
             active_thread=threading.current_thread().name,
         )
 
-        logger.info(f"Starting bulk AI generation for project {project_id} - {total_missing} functions need summaries.")
-        processed_count = 0
-        
-        for func in missing_funcs:
+        logger.info(
+            f"Starting bulk AI generation for project {project_id} - {total_missing} functions "
+            f"need summaries ({AI_SUMMARY_WORKERS} workers)."
+        )
+
+        summary_tokens = summary_max_tokens or max_tokens
+        state = {'processed': 0, 'saved': 0}
+        state_lock = threading.Lock()
+        thread_local = threading.local()
+
+        def _thread_client():
+            client = getattr(thread_local, 'client', None)
+            if client is None:
+                client = LocalAIClient(user_id=user_id)
+                thread_local.client = client
+            return client
+
+        def _process(func):
             func_id = func['id']
             func_name = func['function_name']
             class_name = func.get('class_name')
             qualified_name = f"{class_name}.{func_name}" if class_name else func_name
 
-            progress = int((processed_count / total_missing) * 100)
-            progress_tracker.update(
-                task_id,
-                progress=progress,
-                step=f"Bulk Analiz: {processed_count}/{total_missing}",
-                detail=f"🤖 Sıradaki: {qualified_name}"
-            )
-            
             summary, _ = _generate_ai_summary_recursive(
-                function_id=func_id, 
-                client=client, 
-                task_id=task_id, 
+                function_id=func_id,
+                client=_thread_client(),
+                task_id=task_id,
                 total_deps=total_missing,
-                processed=processed_count,
-                temperature=temperature, 
-                top_p=top_p, 
-                max_tokens=max_tokens,
-                track_progress=False, # We handle our own progress tracking in the loop for the top-level
+                processed=0,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=summary_tokens,
+                track_progress=False,
                 extra_criteria=extra_criteria,
-                extra_question=extra_question
-            )
-            
-            # _generate_ai_summary_recursive actually saves the valid summaries for us.
-            processed_count += 1
-            
-            progress = int((processed_count / total_missing) * 100)
-            progress_tracker.update(
-                task_id,
-                progress=progress,
-                step=f"Bulk Analiz: {processed_count}/{total_missing}",
-                detail=f"✓ Tamamlandı: {qualified_name}"
+                extra_question=extra_question,
             )
 
+            with state_lock:
+                state['processed'] += 1
+                if summary and not _is_ai_error_response(summary):
+                    state['saved'] += 1
+                done = state['processed']
+                saved = state['saved']
+
+            progress_tracker.set_metrics(
+                task_id,
+                total_functions=total_missing,
+                completed_functions=done,
+                active_thread=threading.current_thread().name,
+            )
+            progress_tracker.update(
+                task_id,
+                progress=min(99, int((done / total_missing) * 100)),
+                step=f"Bulk Analiz: {done}/{total_missing}",
+                detail=f"✓ Tamamlandı: {qualified_name} ({saved} özet kaydedildi)"
+            )
+            return summary
+
+        workers = max(1, min(AI_SUMMARY_WORKERS, total_missing))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f'BulkAI-{project_id}') as pool:
+            list(pool.map(_process, missing_funcs))
+
+        # İkinci süpürme: paralel çalışmada claim nedeniyle atlanan veya hata
+        # alan fonksiyonlar sırayla değil, aynı havuzla tekrar denenir.
+        remaining = _fetch_missing_summary_functions(project_id)
+        if remaining:
+            logger.info(
+                f"Bulk AI generation sweep 2 for project {project_id} - "
+                f"{len(remaining)} functions still missing summaries."
+            )
+            sweep_workers = max(1, min(AI_SUMMARY_WORKERS, len(remaining)))
+            with ThreadPoolExecutor(max_workers=sweep_workers, thread_name_prefix=f'BulkAI2-{project_id}') as pool:
+                list(pool.map(_process, remaining))
+
         progress_tracker.complete(
-            task_id, 
-            success=True, 
-            message=f'Toplu özetleme tamamlandı. {processed_count} fonksiyon analiz edildi.'
+            task_id,
+            success=True,
+            message=(
+                f'Toplu özetleme tamamlandı. {state["processed"]} fonksiyon işlendi, '
+                f'{state["saved"]} özet kaydedildi.'
+            )
         )
-        logger.info(f"Bulk AI generation completed for project {project_id}")
+        logger.info(
+            f"Bulk AI generation completed for project {project_id}: "
+            f"{state['processed']} processed, {state['saved']} saved."
+        )
 
     except Exception as e:
         logger.error(f"Error in _bulk_generate_worker for project {project_id}: {e}")
@@ -1399,7 +1494,11 @@ def bulk_generate_ai_summaries(project_id):
         # Start the background thread
         thread = threading.Thread(
             target=_bulk_generate_worker,
-            args=(project_id, task_id, client, settings['temperature'], settings['top_p'], settings['max_tokens'], extra_criteria, extra_question),
+            args=(
+                project_id, task_id, user['id'] if user else None,
+                settings['temperature'], settings['top_p'], settings['max_tokens'],
+                settings['summary_max_tokens'], extra_criteria, extra_question,
+            ),
             daemon=True,
             name=f"BulkAI_{project_id}_{uuid.uuid4().hex[:6]}"
         )
@@ -1469,7 +1568,7 @@ def analyze_file_missing_functions(file_id):
         settings = _load_ai_runtime_settings()
         temperature = settings['temperature']
         top_p = settings['top_p']
-        max_tokens = settings['max_tokens']
+        max_tokens = settings['summary_max_tokens']
         
         # Analyze each function
         analyzed = 0
@@ -1657,7 +1756,7 @@ def reanalyze_error_summaries():
         settings = _load_ai_runtime_settings()
         temperature = settings['temperature']
         top_p = settings['top_p']
-        max_tokens = settings['max_tokens']
+        max_tokens = settings['summary_max_tokens']
 
         completed = 0
         success_count = 0

@@ -254,8 +254,8 @@ class LMStudioClient:
             content = message.get('reasoning_content') or message.get('reasoning') or ''
         return str(content).strip()
 
-    def _build_chat_payload(self, prompt, temperature, top_p, max_tokens):
-        return {
+    def _build_chat_payload(self, prompt, temperature, top_p, max_tokens, disable_thinking=False):
+        payload = {
             "model": self.model,
             "messages": self._normalize_messages([
                 {
@@ -264,7 +264,7 @@ class LMStudioClient:
                 },
                 {
                     "role": "system",
-                    "content": "Olabildiğince detaylı ve açıklayıcı ol. Teknik detaylara girmekten çekinme. Kodun ne yaptığını, nasıl çalıştığını, neden öyle yapıldığını anlat. Eğer kodda belirsizlikler varsa, mümkün olan en iyi tahminini yaparak bunları da açıklamaya çalış. Eğer kodun amacı veya işlevi hakkında kesin bir fikrin yoksa, bunu açıkça belirt ve olası senaryoları sıralayarak açıklamaya çalış. Kodun hangi problemleri çözmeye çalıştığını, hangi ihtiyaçlara hizmet ettiğini, hangi durumlarda kullanışlı olabileceğini anlat. Kodun güçlü ve zayıf yönlerini, potansiyel riskleri veya yan etkileri varsa bunları da açıklamaya çalış. Kodun nasıl geliştirilebileceği veya iyileştirilebileceği konusunda önerilerin varsa bunları da paylaş. Kodun genel bağlamını, kullanım senaryolarını ve teknik detaylarını mümkün olan en iyi şekilde açıklamaya çalış.  "
+                    "content": "Kısa, net ve tekrar etmeyen yanıtlar ver. Yalnızca istenen çıktıyı üret; düşünme sürecini veya planını yazma."
                 },
                 {"role": "user", "content": prompt}
             ]),
@@ -273,17 +273,34 @@ class LMStudioClient:
             "max_tokens": max_tokens,
             "stream": False
         }
+        if disable_thinking:
+            # Qwen3 ve benzeri reasoning modellerinde düşünme bloğunu kapatır;
+            # aksi halde token bütçesi düşünmeye gidip içerik boş kalabiliyor.
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        return payload
 
-    def _post_chat_with_model_fallback(self, prompt, temperature, top_p, max_tokens):
+    def _post_chat_with_model_fallback(self, prompt, temperature, top_p, max_tokens,
+                                       disable_thinking=False):
         """Send chat request; if model is invalid, auto-pick first available model and retry once."""
         self._ensure_not_rate_limited()
         response = self.session.post(
             f"{self.api_url}/chat/completions",
             headers={"Content-Type": "application/json"},
-            json=self._build_chat_payload(prompt, temperature, top_p, max_tokens),
+            json=self._build_chat_payload(prompt, temperature, top_p, max_tokens, disable_thinking),
             timeout=self.request_timeout
         )
         self._register_rate_limit(response)
+
+        if disable_thinking and self._is_unsupported_thinking_response(response):
+            # Sunucu chat_template_kwargs alanını tanımıyorsa düşünme kapatma
+            # isteğini düşürüp aynı isteği bir kez daha gönder.
+            response = self.session.post(
+                f"{self.api_url}/chat/completions",
+                headers={"Content-Type": "application/json"},
+                json=self._build_chat_payload(prompt, temperature, top_p, max_tokens, False),
+                timeout=self.request_timeout
+            )
+            self._register_rate_limit(response)
 
         if self._is_invalid_model_response(response):
             try:
@@ -293,7 +310,7 @@ class LMStudioClient:
                     response = self.session.post(
                         f"{self.api_url}/chat/completions",
                         headers={"Content-Type": "application/json"},
-                        json=self._build_chat_payload(prompt, temperature, top_p, max_tokens),
+                        json=self._build_chat_payload(prompt, temperature, top_p, max_tokens, disable_thinking),
                         timeout=self.request_timeout
                     )
                     self._register_rate_limit(response)
@@ -302,6 +319,14 @@ class LMStudioClient:
                 pass
 
         return response
+
+    @staticmethod
+    def _is_unsupported_thinking_response(response):
+        """Sunucu ``chat_template_kwargs`` alanını reddetti mi?"""
+        if response.status_code not in (400, 422):
+            return False
+        body = (getattr(response, 'text', '') or '').lower()
+        return 'chat_template_kwargs' in body or 'enable_thinking' in body
 
     def list_models(self) -> list:
         """Return model IDs from OpenAI-compatible /models endpoint."""
@@ -693,7 +718,7 @@ class LMStudioClient:
             extra_instructions += f"\nEk soru: {extra_question}\n"
 
         prompt = f"""Bu fonksiyonu analiz et ve SADECE TÜRKÇE yanıt ver.
-    Kısa, net ve tekrar etmeyen bir özet üret.
+    Kısa, net ve tekrar etmeyen bir özet üret. Özet en fazla 250 kelime olsun.
 
 Function Signature: {signature}
 
@@ -703,20 +728,20 @@ Code:
 ```{dependency_context}
 {extra_instructions}
 
-Kelime sınırı olmaksızın şunları açıkla:
-1. What the function does
-2. Input parameters and their purpose
-3. Return value/output
-4. Any side effects or important notes
+Şu başlıkları kısa maddeler halinde açıkla:
+1. Fonksiyonun görevi
+2. Parametreler ve amaçları
+3. Dönüş değeri / çıktı
+4. Yan etkiler veya önemli notlar
 
-Eğer "Ek soru" verildiyse, özetin sonunda "Ek Soru Yanıtı:" başlığı ile uzun ve detaylı cevap ver.
+Eğer "Ek soru" verildiyse, özetin sonunda "Ek Soru Yanıtı:" başlığı ile en fazla 100 kelimelik bir cevap ver.
 
 Summary:"""
         
         started_at = time.perf_counter()
 
         try:
-            response = self._post_chat_with_model_fallback(prompt, temp, tp, mt)
+            response = self._post_chat_with_model_fallback(prompt, temp, tp, mt, disable_thinking=True)
             duration_seconds = round(time.perf_counter() - started_at, 3)
             
             if response.status_code == 200:

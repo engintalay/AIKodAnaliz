@@ -348,7 +348,39 @@ class MessageNormalizationTests(unittest.TestCase):
         roles = [m['role'] for m in payload['messages']]
         self.assertEqual(roles, ['system', 'user'])
         self.assertIn('Türkçe', payload['messages'][0]['content'])
-        self.assertIn('detaylı', payload['messages'][0]['content'])
+        self.assertIn('Kısa', payload['messages'][0]['content'])
+        self.assertNotIn('chat_template_kwargs', payload)
+
+    def test_build_chat_payload_can_disable_thinking(self):
+        payload = self.client._build_chat_payload('kod', 0.1, 0.9, 100, disable_thinking=True)
+        self.assertEqual(payload['chat_template_kwargs'], {'enable_thinking': False})
+
+    def test_thinking_flag_is_dropped_when_server_rejects_it(self):
+        payloads = []
+
+        class FakeSession:
+            def post(self, *args, **kwargs):
+                payloads.append(kwargs.get('json'))
+                if 'chat_template_kwargs' in kwargs.get('json', {}):
+                    return FakeResponse(
+                        400,
+                        {'error': {'message': 'unknown field chat_template_kwargs'}},
+                        text='unknown field chat_template_kwargs',
+                    )
+                return FakeResponse(200, {
+                    'choices': [{'message': {'content': 'yanıt'}}],
+                    'usage': {},
+                })
+
+        self.client.session = FakeSession()
+        response = self.client._post_chat_with_model_fallback(
+            'kod', 0.1, 0.9, 100, disable_thinking=True
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(payloads), 2)
+        self.assertIn('chat_template_kwargs', payloads[0])
+        self.assertNotIn('chat_template_kwargs', payloads[1])
 
     def test_chat_payload_normalizes_system_messages(self):
         captured = {}

@@ -50,7 +50,7 @@
 
 ### Analizörler (backend/analyzers/)
 
-- **`advanced_analyzer.py` (~1037 satır) — ana analizör.** Tree-sitter **zorunlu** (regex fallback yok). Diller: Java, Python, JavaScript, TypeScript (tsx), PHP. SQL dosyaları `sqlparse` ile ayrıca işlenir (procedure/function/view/trigger + tablo bağımlılıkları; trigger = entry point). Çıktı: fonksiyonlar (`name, type, start/end_line, signature, parameters, return_type, class_name, package_name, is_entry`), entry_points, dependencies. Java'da Spring annotation'ları (`@RestController`, `@Service`, `@GetMapping`…) entry point olarak işaretlenir.
+- **`advanced_analyzer.py` (~1037 satır) — ana analizör.** Tree-sitter **zorunlu** (regex fallback yok). Diller: Java, Python, JavaScript, TypeScript (tsx), PHP. SQL dosyaları `sqlparse` ile ayrıca işlenir; nesne çıkarımı ortak `analyzers/sql_objects.py` modülündedir (procedure/function/view/trigger + **CREATE TABLE** ve **CREATE INDEX** + tablo bağımlılıkları; trigger = entry point). Tablo nesnelerinde `parameters` kolon adları, `signature` ise `CREATE TABLE <ad> (<n> kolon[, PK: ...])` biçimindedir; index nesneleri `CREATE [UNIQUE ...] INDEX <ad> ON <tablo> (<kolonlar>)` imzasıyla kaydedilir. Tırnaklı/köşeli adlar (`"dbo"."TABLO"`, `[SCHEMA].[PROC]`) normalize edilir; `ALTER TABLE`/`ALTER INDEX` yeni nesne sayılmaz. Çıktı: fonksiyonlar (`name, type, start/end_line, signature, parameters, return_type, class_name, package_name, is_entry`), entry_points, dependencies. Java'da Spring annotation'ları (`@RestController`, `@Service`, `@GetMapping`…) entry point olarak işaretlenir.
 - `code_analyzer.py` (450 satır) — legacy regex tabanlı analizör (geriye uyumluluk; yeni projelerde kullanılmıyor).
 
 ### Route blueprint'leri (backend/routes/) — 11 adet
@@ -86,7 +86,7 @@ users ──┬── projects (name UNIQUE, admin_id)
         │        └── fts_functions / fts_documents (FTS5 sanal tabloları)
         ├── project_permissions (UNIQUE(project_id,user_id), read_only)
         ├── user_settings (theme, ai_api_url + ai_api_key override, preferences)
-        ├── ai_settings (provider, api_url, api_key, temperature, top_p, max_tokens, timeout, embedding_model/api_url/api_key)
+        ├── ai_settings (provider, api_url, api_key, temperature, top_p, max_tokens, summary_max_tokens, timeout, embedding_model/api_url/api_key)
         └── audit_logs (action, resource, ip, created_at)
 ```
 
@@ -112,9 +112,10 @@ ZIP/WAR/Git URL → kaydet (uploads/project_<id>/) → source_files
 ```
 Hedef fonksiyon → özetlenmemiş callee'ler derinlemesine özetlenir
 → prompt = kod + bağımlılık özetleri (CONTEXT_LIMIT_TOKENS)
-→ OpenAI-uyumlu /v1/chat/completions (Türkçe sistem promptu)
+→ OpenAI-uyumlu /v1/chat/completions (Türkçe sistem promptu, thinking kapalı)
 → think/reasoning temizliği → ai_summary + updated_at → audit
 ```
+Toplu özetleme (`bulk-ai-summary`) `AI_SUMMARY_WORKERS` (vars. 3) kadar thread ile paralel çalışır; her thread kendi `LocalAIClient` örneğini kullanır ve aynı fonksiyonun iki kez üretilmesi süreç geneli claim setiyle engellenir. Havuz bittikten sonra eksik kalanlar için ikinci bir süpürme turu yapılır. Özet yanıtları `ai_settings.summary_max_tokens` (vars. 2048) ile sınırlanır; prompt en fazla ~250 kelime ister. `analyze_function` isteklerinde `chat_template_kwargs.enable_thinking=false` gönderilir; sunucu alanı reddederse istek bir kez parametresiz tekrarlanır.
 
 ### 3. Sohbet (RAG)
 ```

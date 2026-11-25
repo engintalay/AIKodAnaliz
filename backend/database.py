@@ -11,6 +11,7 @@ from config.config import (
     EMBEDDING_API_KEY,
     LMSTUDIO_DEFAULT_MODEL,
     CONTEXT_LIMIT_TOKENS,
+    AI_SUMMARY_MAX_TOKENS,
 )
 
 class Database:
@@ -375,6 +376,7 @@ class Database:
                     ('embedding_model', DEFAULT_EMBEDDING_MODEL, 'string'),
                     ('embedding_api_url', EMBEDDING_API_URL or '', 'string'),
                     ('embedding_api_key', EMBEDDING_API_KEY or '', 'string'),
+                    ('summary_max_tokens', str(AI_SUMMARY_MAX_TOKENS), 'integer'),
                 ]
                 for setting_name, setting_value, data_type in default_settings:
                     cursor.execute('''
@@ -401,6 +403,7 @@ class Database:
                 ('embedding_model', DEFAULT_EMBEDDING_MODEL, 'string'),
                 ('embedding_api_url', EMBEDDING_API_URL or '', 'string'),
                 ('embedding_api_key', EMBEDDING_API_KEY or '', 'string'),
+                ('summary_max_tokens', str(AI_SUMMARY_MAX_TOKENS), 'integer'),
             ]:
                 cursor.execute('''
                     INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)

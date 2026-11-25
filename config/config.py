@@ -35,6 +35,12 @@ LMSTUDIO_REQUEST_TIMEOUT = int(os.getenv('LMSTUDIO_REQUEST_TIMEOUT', '900'))
 # OpenAI-compatible sunucu API anahtarı (opsiyonel; boş = auth gönderilmez)
 AI_API_KEY = os.getenv('AI_API_KEY', '').strip()
 
+# ---- AI özet üretimi ----
+# Toplu özet üretiminde eşzamanlı LLM isteği sayısı (thread havuzu boyutu).
+AI_SUMMARY_WORKERS = max(1, int(os.getenv('AI_SUMMARY_WORKERS', '3')))
+# Özet yanıtı için üst token sınırı; kod analizi max_tokens'ından bağımsızdır.
+AI_SUMMARY_MAX_TOKENS = max(256, int(os.getenv('AI_SUMMARY_MAX_TOKENS', '2048')))
+
 # ---- LLM rate limit ----
 # 429/kota hatasında sunucu süre bildirmezse bu kadar saniye beklenir.
 LLM_RATE_LIMIT_COOLDOWN = int(os.getenv('LLM_RATE_LIMIT_COOLDOWN', '60'))

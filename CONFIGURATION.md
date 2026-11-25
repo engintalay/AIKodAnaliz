@@ -26,6 +26,8 @@ Tüm yapılandırma **proje kökündeki `.env`** dosyasından okunur (`python-do
 | `LMSTUDIO_TEMPERATURE` | `0.7` | Özet tutarlılığı için ~0.2–0.4 önerilir |
 | `LMSTUDIO_TOP_P` | `0.9` | |
 | `LMSTUDIO_REQUEST_TIMEOUT` | `900` | Saniye. Uzun özet/chat istekleri için geniş |
+| `AI_SUMMARY_WORKERS` | `3` | Toplu özetlemede paralel thread sayısı (min 1) |
+| `AI_SUMMARY_MAX_TOKENS` | `2048` | Özet yanıtı için token limiti (min 256); `ai_settings.summary_max_tokens` ile ezilebilir |
 | `AI_API_KEY` | *(boş)* | OpenAI-compatible sunucu API anahtarı. Doluysa tüm AI isteklerine `Authorization: Bearer <key>` eklenir |
 
 ### Embedding (RAG) — sohbetten bağımsızlandırılabilir (GELIS23)
@@ -43,6 +45,7 @@ Tüm yapılandırma **proje kökündeki `.env`** dosyasından okunur (`python-do
 | `model_name` | `ai_settings` (global) | Varsayılan sohbet modeli. Yeni ve mevcut DB'lere `LMSTUDIO_DEFAULT_MODEL` ile tohumlanır |
 | `context_limit` | `ai_settings` (global) | Prompt'a giren maks. bağlam. Yeni ve mevcut DB'lere `CONTEXT_LIMIT_TOKENS` ile tohumlanır |
 | `ai_model` | `user_settings` (kullanıcı bazlı) | Kullanıcının seçtiği model. Boş/NULL ise global `model_name` kullanılır |
+| `summary_max_tokens` | `ai_settings` (global) | AI özet yanıtı için token limiti. Yeni ve mevcut DB'lere `AI_SUMMARY_MAX_TOKENS` ile tohumlanır |
 
 Etkin model: **`user_settings.ai_model` > `ai_settings.model_name` > `LMSTUDIO_DEFAULT_MODEL`**.
 
