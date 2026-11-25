@@ -607,14 +607,14 @@ function _markdownTimestamp(ts) {
     }
 }
 
-function downloadMessageMarkdown(text, index, refs) {
+async function downloadMessageMarkdown(text, index, refs) {
     const content = String(text || '').trim();
     if (!content) {
         showError('Boş Yanıt', 'İndirilecek içerik yok.');
         return;
     }
     const lines = [content];
-    const refLines = _buildReferencesSection(refs || []);
+    const refLines = await _buildReferencesSection(refs || []);
     if (refLines.length) {
         lines.push('');
         lines.push(...refLines);
@@ -624,12 +624,28 @@ function downloadMessageMarkdown(text, index, refs) {
     _downloadMarkdownFile(lines.join('\n') + '\n', `yanit${suffix}-${stamp}.md`);
 }
 
-// GELIS30: Markdown kaynakça üretimi.
-// Fonksiyonlar tek tek listelenir; ancak kaynak dosya çok büyükse veya
-// dosyadan çok fazla fonksiyon referans verilmişse yalnızca dosya adı yazılır.
-// Dokümanlar (PDF/DOC/DOCX/TXT...) ve sohbete yüklenen dosyalar sadece isimle eklenir.
+// GELIS30/GELIS31: Markdown kaynakça üretimi.
+// Fonksiyonlar tam gövdesiyle kod bloğu içinde eklenir; ancak kaynak dosya çok
+// büyükse veya dosyadan çok fazla fonksiyon referans verilmişse yalnızca dosya
+// adı yazılır. Dokümanlar link olarak, sohbete yüklenen dosyalar isimle eklenir.
 const MD_REF_MAX_FILE_BYTES = 200 * 1024;
 const MD_REF_MAX_FUNCS_PER_FILE = 20;
+const MD_REF_MAX_SOURCE_FUNCS = 40;
+
+const MD_LANG_MAP = {
+    java: 'java', sql: 'sql', xml: 'xml', xsl: 'xml', xslt: 'xml', wsdl: 'xml',
+    xsd: 'xml', jrxml: 'xml', json: 'json', yml: 'yaml', yaml: 'yaml',
+    properties: 'properties', gradle: 'groovy', groovy: 'groovy',
+    python: 'python', py: 'python', javascript: 'javascript', js: 'javascript',
+    typescript: 'typescript', ts: 'typescript', html: 'html', css: 'css',
+    sh: 'bash', bash: 'bash', c: 'c', cpp: 'cpp', cs: 'csharp', go: 'go',
+    php: 'php', rb: 'ruby', kt: 'kotlin', kotlin: 'kotlin', pb: 'powershell'
+};
+
+function _mdCodeLang(language) {
+    const key = String(language || '').toLowerCase().trim();
+    return MD_LANG_MAP[key] || key || 'text';
+}
 
 function _refKind(ref) {
     const type = ref && ref.type;
@@ -638,7 +654,33 @@ function _refKind(ref) {
     return 'function';
 }
 
-function _buildReferencesSection(refsList) {
+async function _fetchFunctionSources(ids) {
+    const unique = [...new Set((ids || []).map(Number).filter(n => Number.isFinite(n) && n > 0))];
+    if (!unique.length) return new Map();
+    try {
+        const res = await fetch(`${API_URL}/analysis/functions/source`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: unique })
+        });
+        if (!res.ok) return new Map();
+        const data = await res.json();
+        const map = new Map();
+        (data.functions || []).forEach(fn => map.set(Number(fn.id), fn));
+        return map;
+    } catch (err) {
+        console.warn('Fonksiyon kaynakları alınamadı:', err);
+        return new Map();
+    }
+}
+
+function _documentLink(name) {
+    const base = String(name || '').split('/').pop();
+    if (!currentProjectId || !base) return '';
+    return `${API_URL}/projects/${currentProjectId}/docs/file/${encodeURIComponent(base)}`;
+}
+
+async function _buildReferencesSection(refsList) {
     const functions = new Map();
     const documents = new Map();
     const attachments = new Map();
@@ -670,25 +712,53 @@ function _buildReferencesSection(refsList) {
             byFile.get(file).push(ref);
         });
 
-        lines.push('### Fonksiyonlar');
-        lines.push('');
+        const detailRefs = [];
+        const fileOnly = [];
 
         [...byFile.keys()].sort((a, b) => a.localeCompare(b, 'tr')).forEach(file => {
             const items = byFile.get(file);
             const size = Math.max(...items.map(r => Number(r.file_size) || 0));
-            const tooLarge = size > MD_REF_MAX_FILE_BYTES || items.length > MD_REF_MAX_FUNCS_PER_FILE;
-            if (tooLarge) {
-                const reason = size > MD_REF_MAX_FILE_BYTES
-                    ? `çok büyük dosya, ${_formatBytes(size)}`
-                    : `${items.length} fonksiyon`;
-                lines.push(`- \`${file}\` — ${reason}; fonksiyonlar tek tek listelenmedi.`);
+            if (size > MD_REF_MAX_FILE_BYTES || items.length > MD_REF_MAX_FUNCS_PER_FILE) {
+                fileOnly.push({ file, items, size });
             } else {
-                items
-                    .slice()
-                    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'tr'))
-                    .forEach(ref => lines.push(`- \`${ref.name}\` — \`${file}\``));
+                detailRefs.push(...items);
             }
         });
+
+        const sourceIds = detailRefs
+            .map(r => Number(r.id))
+            .filter(n => Number.isFinite(n) && n > 0)
+            .slice(0, MD_REF_MAX_SOURCE_FUNCS);
+        const sources = await _fetchFunctionSources(sourceIds);
+
+        lines.push('### Fonksiyonlar');
+        lines.push('');
+
+        fileOnly.forEach(({ file, items, size }) => {
+            const reason = size > MD_REF_MAX_FILE_BYTES
+                ? `çok büyük dosya, ${_formatBytes(size)}`
+                : `${items.length} fonksiyon`;
+            lines.push(`- \`${file}\` — ${reason}; fonksiyonlar tek tek listelenmedi.`);
+        });
+        if (fileOnly.length) lines.push('');
+
+        detailRefs
+            .slice()
+            .sort((a, b) => String(a.name).localeCompare(String(b.name), 'tr'))
+            .forEach(ref => {
+                const file = ref.file || '(dosya bilgisi yok)';
+                const src = sources.get(Number(ref.id));
+                if (src && src.source_code && src.source_code.trim()) {
+                    lines.push(`#### \`${ref.name}\` — \`${file}\``);
+                    lines.push('');
+                    lines.push('```' + _mdCodeLang(src.language));
+                    lines.push(src.source_code.replace(/\s+$/, ''));
+                    lines.push('```');
+                    lines.push('');
+                } else {
+                    lines.push(`- \`${ref.name}\` — \`${file}\``);
+                }
+            });
         lines.push('');
     }
 
@@ -697,7 +767,10 @@ function _buildReferencesSection(refsList) {
         lines.push('');
         [...documents.keys()]
             .sort((a, b) => a.localeCompare(b, 'tr'))
-            .forEach(name => lines.push(`- \`${name}\``));
+            .forEach(name => {
+                const url = _documentLink(name);
+                lines.push(url ? `- [\`${name}\`](${url})` : `- \`${name}\``);
+            });
         lines.push('');
     }
 
@@ -713,7 +786,7 @@ function _buildReferencesSection(refsList) {
     return lines;
 }
 
-function downloadChatMarkdown() {
+async function downloadChatMarkdown() {
     if (!chatHistory.length) {
         showError('Boş Sohbet', 'İndirilecek sohbet geçmişi yok.');
         return;
@@ -771,7 +844,7 @@ function downloadChatMarkdown() {
     chatHistory.forEach(msg => {
         if (msg.refs && msg.refs.length) allRefs.push(...msg.refs);
     });
-    const refLines = _buildReferencesSection(allRefs);
+    const refLines = await _buildReferencesSection(allRefs);
     if (refLines.length) {
         lines.push(...refLines);
     }

@@ -1856,6 +1856,70 @@ def reanalyze_error_summaries():
             progress_tracker.complete(task_id, success=False, message=f'Hata: {str(e)}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@bp.route('/functions/source', methods=['POST'])
+def get_functions_source():
+    """Return full source code for the given function ids (Markdown export).
+
+    GELIS31: Sohbet Markdown çıktısında kaynak fonksiyonların tam gövdesini
+    gösterebilmek için toplu kaynak kodu döndürür.
+    """
+    data = request.get_json(silent=True) or {}
+    raw_ids = data.get('ids') or []
+    try:
+        ids = [int(i) for i in raw_ids][:200]
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Geçersiz id listesi'}), 400
+
+    if not ids:
+        return jsonify({'functions': []}), 200
+
+    try:
+        placeholders = ','.join('?' * len(ids))
+        rows = db.execute_query(
+            f'''SELECT f.id, f.function_name, f.class_name, f.package_name,
+                       f.signature, f.start_line, f.end_line,
+                       sf.file_name, sf.language, sf.content
+                FROM functions f
+                LEFT JOIN source_files sf ON f.file_id = sf.id
+                WHERE f.id IN ({placeholders})''',
+            ids
+        )
+
+        result = []
+        for row in rows:
+            item = dict(row)
+            content = item.pop('content', None) or ''
+            start_line = item.pop('start_line', None)
+            end_line = item.pop('end_line', None)
+
+            source_code = ''
+            if content and start_line and end_line:
+                lines = content.split('\n')
+                start = max(0, int(start_line) - 1)
+                end = min(len(lines), int(end_line))
+                source_code = '\n'.join(lines[start:end])
+
+            qualified = item['function_name']
+            if item.get('class_name'):
+                qualified = f"{item['class_name']}.{qualified}"
+            if item.get('package_name'):
+                qualified = f"{item['package_name']}.{qualified}"
+
+            result.append({
+                'id': item['id'],
+                'name': qualified,
+                'file': item.get('file_name') or '',
+                'language': item.get('language') or '',
+                'signature': item.get('signature') or '',
+                'source_code': source_code,
+            })
+
+        return jsonify({'functions': result}), 200
+    except Exception as e:
+        logger.error(f"Function source export failed: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @bp.route('/function/<int:function_id>', methods=['GET'])
 def get_function_details(function_id):
     """Get single function details including source code"""
