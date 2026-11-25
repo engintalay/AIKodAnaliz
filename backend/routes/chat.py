@@ -1,5 +1,6 @@
 """AI Chat routes – per-project conversational assistant."""
 import json
+import math
 import re
 from flask import Blueprint, request, jsonify, Response, stream_with_context
 from backend.database import db
@@ -289,6 +290,29 @@ def chat_with_project(project_id):
             # Send reference functions list first so the frontend can display links
             yield f"event:refs\ndata:{refs_json}\n\n"
 
+            # Rate limit beklemesi varsa önce kullanıcıya bildir, sonra bekle.
+            remaining = client.rate_limit_remaining()
+            if remaining > 0:
+                status_payload = json.dumps({
+                    'message': (
+                        f'Rate limit: yaklaşık {int(math.ceil(remaining))} '
+                        'saniye bekleniyor...'
+                    )
+                }, ensure_ascii=False)
+                yield f"event:status\ndata:{status_payload}\n\n"
+                remaining = client.wait_for_rate_limit()
+                if remaining > 0:
+                    error_payload = json.dumps({
+                        'error': (
+                            f'{client.provider_display} rate limit aktif; yaklaşık '
+                            f'{int(math.ceil(remaining))} saniye sonra tekrar deneyin.'
+                        ),
+                        'retry_after_seconds': remaining,
+                    }, ensure_ascii=False)
+                    yield f"event:error\ndata:{error_payload}\n\n"
+                    yield "data:[DONE]\n\n"
+                    return
+
             in_think = False
             in_reasoning_channel = False
 
@@ -373,7 +397,10 @@ def chat_with_project(project_id):
         except Exception as e:
             logger.error(f"Chat stream error: {e}")
             try:
-                yield f"data:⚠️ Hata: {str(e)}\n\n"
+                error_payload = json.dumps(
+                    {'error': str(e)}, ensure_ascii=False
+                )
+                yield f"event:error\ndata:{error_payload}\n\n"
                 yield "data:[DONE]\n\n"
             except GeneratorExit:
                 return

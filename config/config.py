@@ -35,6 +35,13 @@ LMSTUDIO_REQUEST_TIMEOUT = int(os.getenv('LMSTUDIO_REQUEST_TIMEOUT', '900'))
 # OpenAI-compatible sunucu API anahtarı (opsiyonel; boş = auth gönderilmez)
 AI_API_KEY = os.getenv('AI_API_KEY', '').strip()
 
+# ---- LLM rate limit ----
+# 429/kota hatasında sunucu süre bildirmezse bu kadar saniye beklenir.
+LLM_RATE_LIMIT_COOLDOWN = int(os.getenv('LLM_RATE_LIMIT_COOLDOWN', '60'))
+# Sonraki istek en fazla bu kadar saniye bekletilir; daha uzun beklemede
+# istek gönderilmez ve kalan süre kullanıcıya bildirilir.
+LLM_RATE_LIMIT_MAX_WAIT = int(os.getenv('LLM_RATE_LIMIT_MAX_WAIT', '120'))
+
 # ---- Embedding (RAG) ayarları ----
 # Embedding sohbet sağlayıcısından bağımsızlandırılabilir:
 #   EMBEDDING_API_URL boşsa sohbet api_url'i kullanılır.

@@ -920,6 +920,7 @@ async function sendChatMessage() {
         let streamDone = false;
         let currentEvent = 'message';
         let refs = [];
+        let streamError = null;
 
         try {
             while (!streamDone) {
@@ -946,6 +947,35 @@ async function sendChatMessage() {
                         continue;
                     }
 
+                    // GELIS25: rate-limit beklemesi bildirimi.
+                    if (currentEvent === 'status') {
+                        let statusMessage = chunk;
+                        try {
+                            const status = JSON.parse(chunk);
+                            statusMessage = status.message || chunk;
+                        } catch (e) { }
+                        if (statusMessage && !replyText) {
+                            replyBubble.textContent = `⏳ ${statusMessage}`;
+                            msgs.scrollTop = msgs.scrollHeight;
+                        }
+                        currentEvent = 'message';
+                        continue;
+                    }
+
+                    // GELIS25: ayrıntılı hata + kalan bekleme süresi.
+                    if (currentEvent === 'error') {
+                        let errorMessage = chunk;
+                        let retryAfter = null;
+                        try {
+                            const errorPayload = JSON.parse(chunk);
+                            errorMessage = errorPayload.error || chunk;
+                            retryAfter = errorPayload.retry_after_seconds;
+                        } catch (e) { }
+                        streamError = { message: errorMessage, retryAfter };
+                        currentEvent = 'message';
+                        continue;
+                    }
+
                     if (chunk === '[DONE]') {
                         streamDone = true;
                         break;
@@ -961,6 +991,14 @@ async function sendChatMessage() {
             if (!replyText) throw streamErr;
         } finally {
             replyBubble.classList.remove('chat-cursor');
+
+            if (streamError) {
+                const retryHint = _retryHint(streamError);
+                const errorText = `⚠️ Hata: ${streamError.message}${retryHint}`;
+                replyText = replyText ? `${replyText}\n\n${errorText}` : errorText;
+                replyBubble.textContent = replyText;
+            }
+
             // Render Markdown after stream completes
             if (replyText) {
                 _renderAssistantMarkdown(replyBubble, replyText);
@@ -3332,7 +3370,7 @@ async function testLMConnection(apiUrl, providerOverride, apiKey) {
             resultDiv.textContent = '✓ Bağlantı başarılı!';
             resultDiv.className = 'success';
         } else {
-            resultDiv.textContent = '✗ Bağlantı başarısız: ' + result.message;
+            resultDiv.textContent = '✗ Bağlantı başarısız: ' + result.message + _retryHint(result);
             resultDiv.className = 'error';
         }
 
@@ -3345,6 +3383,14 @@ async function testLMConnection(apiUrl, providerOverride, apiKey) {
         }
         return { status: 'error', message: error.message || String(error) };
     }
+}
+
+// GELIS25: rate-limit hatalarında kalan bekleme süresini metne ekler.
+function _retryHint(result) {
+    const raw = result ? (result.retry_after_seconds ?? result.retryAfter) : null;
+    const seconds = Number(raw);
+    if (!seconds || seconds <= 0) return '';
+    return ` — yaklaşık ${Math.ceil(seconds)} sn sonra tekrar deneyin`;
 }
 
 // GELIS24: model listesi + meta veri istekleri için ortak gövde.
@@ -3415,7 +3461,7 @@ async function loadModels(showUi = true) {
 
         if (showUi && infoDiv) {
             if (result.error) {
-                infoDiv.textContent = `✗ Modeller yüklenemedi: ${result.error}`;
+                infoDiv.textContent = `✗ Modeller yüklenemedi: ${result.error}${_retryHint(result)}`;
                 infoDiv.className = 'error';
             } else {
                 infoDiv.textContent = `✓ ${models.length} model bulundu (${result.api_url || ''})`;
@@ -3494,7 +3540,7 @@ async function testGeneration(showUi = true) {
                 resultDiv.textContent = `✓ Yanıt alındı (${result.model}, ${result.latency_ms} ms)${note}: ${result.reply}`;
                 resultDiv.className = 'success';
             } else {
-                resultDiv.textContent = `✗ Yanıt testi başarısız (${result.model || model || 'model yok'}): ${result.error || 'bilinmeyen hata'}`;
+                resultDiv.textContent = `✗ Yanıt testi başarısız (${result.model || model || 'model yok'}): ${result.error || 'bilinmeyen hata'}${_retryHint(result)}`;
                 resultDiv.className = 'error';
             }
         }

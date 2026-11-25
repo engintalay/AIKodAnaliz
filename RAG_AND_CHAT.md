@@ -108,8 +108,14 @@ Sohbet modeli şu sırayla çözülür: **`user_settings.ai_model`** (kullanıc�
 ### Yanıt akışı (SSE)
 
 - İlk olay `event:refs`: yanıtın dayandığı kaynaklar (JSON).
+- Rate limit beklemesi varsa `event:status` → `{message}` olayı ile kullanıcıya bildirilir, ardından sunucu bekler (GELIS25). Bekleme `LLM_RATE_LIMIT_MAX_WAIT` süresini aşarsa istek hiç gönderilmez.
 - Ardından token'lar `data:` satırlarıyla akar; bitiş `[DONE]`.
+- Hata `event:error` → `{error, retry_after_seconds?}` + `[DONE]` olarak gönderilir; `error` LLM'den gelen ayrıntılı mesajı taşır, `retry_after_seconds` rate-limit durumunda kalan bekleme süresidir. Arayüz hatayı ve "yaklaşık N sn sonra tekrar deneyin" ipucunu gösterir.
 - Modelin `think` / reasoning-kanal çıktıları sunucuda akıştan temizlenir (GELIS15) — kullanıcı yalnız nihai cevabı görür.
+
+### Rate limit ve hata ayrıntısı (GELIS25)
+
+LLM 429/kota hatası döndürdüğünde bekleme süresi `Retry-After` başlığından veya gövde ipuçlarından okunur; ipucu yoksa 60 sn varsayılır. Bekleme kaydı sunucu URL'si bazında süreç genelinde tutulur, böylece aynı sunucuya giden tüm kullanıcılar aynı beklemeden yararlanır. Diğer hatalarda (400/404/500 vb.) kullanıcıya gövdeden ayrıştırılmış ayrıntılı mesaj gösterilir. Ayrıntı: [CONFIGURATION.md](CONFIGURATION.md).
 
 ### Kaynak gösterimi (GELIS20)
 

@@ -63,6 +63,19 @@ Ayarlar ekranındaki **Model** alanı bir dropdown'dır: "Modelleri Yükle" list
 > **Öncelik sırası (model):** `user_settings.ai_model` > `ai_settings.model_name` > `LMSTUDIO_DEFAULT_MODEL`.
 > Not: Bazı dağıtımlarda `ai_settings` tablosuna tohumlanan `timeout` değeri env'den kısaysa o değeri kullanır — timeout sorunlarında önce UI ayarlarına bakın.
 
+### Rate limit ve hata ayrıntısı (GELIS25)
+
+| Değişken | Varsayılan | Açıklama |
+|---|---|---|
+| `LLM_RATE_LIMIT_COOLDOWN` | `60` | 429/kota hatasında sunucu süre bildirmezse bu kadar saniye beklenir |
+| `LLM_RATE_LIMIT_MAX_WAIT` | `120` | Sonraki istek en fazla bu kadar saniye bekletilir; daha uzun beklemede istek gönderilmez, kalan süre kullanıcıya bildirilir |
+
+- Hata gövdesi OpenAI (`error.message`), vLLM/FastAPI (`detail`), LiteLLM (`error`) ve düz metin biçimlerinden ayrıştırılır; kullanıcıya `HTTP <kod>` yerine okunabilir ayrıntı gösterilir.
+- Bekleme süresi önce `Retry-After` başlığından (saniye veya HTTP-date), yoksa gövdedeki `try again in 20s`, `retry after 30`, `"retry_after": 20` gibi ipuçlarından okunur.
+- 429 her zaman rate-limit sayılır; 500 asla sayılmaz; diğer kodlarda yalnız gövde `rate limit`, `quota exceeded`, `too many requests` gibi ifadeler içeriyorsa sayılır.
+- Bekleme kaydı süreç genelinde ve thread-safe'dir; anahtar sunucu URL'sidir. Aynı sunucuya giden tüm kullanıcılar beklemesi paylaşır.
+- Chat akışında bekleme `event:status`, ayrıntılı hata `event:error` (`{error, retry_after_seconds}`) olarak gönderilir; ayarlar ekranındaki model/bağlantı/yanıt testleri de `retry_after_seconds` bilgisini gösterir.
+
 ### Veritabanı
 
 | Değişken | Varsayılan | Açıklama |

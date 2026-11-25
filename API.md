@@ -154,6 +154,8 @@ Görev bellek-içidir; sunucu restart'ı veya süre aşımında `{status:'failed
 
 Provider değeri `lmstudio`, `llamacpp`, `vllm` veya `openai` olabilir; hepsi OpenAI-compatible çalışır. Provider görünen adı ve meta veri kaynağını belirler: `lmstudio`/`llamacpp` için `/api/v0/models` ve `/props` zenginleştirmeleri denenir; `vllm`/`openai` için yalnız `/v1/models` kullanılır. Ayarlar `ai_settings` tablosundan çözülür (5 sn cache), yoksa env default'larına düşer. Anahtar dolduysa tüm AI isteklerine `Authorization: Bearer <key>` eklenir. Bkz. [CONFIGURATION.md](CONFIGURATION.md).
 
+**Rate limit ve hata ayrıntısı (GELIS25):** LLM yanıtı hata döndürdüğünde kullanıcıya yalnız `HTTP <kod>` değil, gövdeden ayrıştırılan okunabilir ayrıntı gösterilir (OpenAI `error.message`, vLLM/FastAPI `detail`, LiteLLM `error`, düz metin). Hata rate-limit/kota kaynaklıysa bekleme süresi `Retry-After` başlığından (saniye veya HTTP-date) veya gövdedeki `try again in 20s` / `retry_after` ipuçlarından okunur; ipucu yoksa `LLM_RATE_LIMIT_COOLDOWN` (vars. 60 sn) kullanılır. Bekleme kaydı süreç genelinde ve thread-safe'dir, anahtarı sunucu URL'sidir; aynı sunucuya giden tüm kullanıcılar beklemesi paylaşır. Sonraki istekler en fazla `LLM_RATE_LIMIT_MAX_WAIT` (vars. 120 sn) bekletilir; daha uzun beklemede istek hiç gönderilmez ve kalan süre bildirilir. Bu uçların hata yanıtları `retry_after_seconds` alanı içerir. Bkz. [CONFIGURATION.md](CONFIGURATION.md).
+
 **Model seçimi (GELIS24):** Etkin model önce `user_settings.ai_model` (kullanıcı bazlı), boşsa `ai_settings.model_name` (global) değerinden çözülür. Model listesi ve meta verisi (`context_length`, `max_output_tokens`, `suggested_max_tokens`, üretim varsayılanları) `/api/ai-settings/models` ile alınır; `suggested_max_tokens` sağlayıcı çıktı limiti biliniyorsa o, değilse `min(context_length, 4096)` olur. Ayarlar ekranında model alanı bir **dropdown**'dur: "Modelleri Yükle" listeyi doldurur, kayıtlı model listede yoksa `(kayıtlı)` seçeneği olarak korunur. "Yanıt Testi" gerçek bir tamamlama isteğini çalıştırır. Kaydetme akışı bağlantı testine ek olarak model seçiliyse kısa bir yanıt testi de yapar; yanıt testi **uyarı niteliğindedir** (başarısız olsa da seçim kaydedilir). Global `model_name` yalnızca admin tarafından kaydedilir; normal kullanıcı yalnızca kendi `ai_model` değerini değiştirir.
 
 ## 6. Diyagram (`/api/diagram` — routes/diagram.py)
@@ -179,8 +181,10 @@ Ayrıntılı çalışma prensibi: [RAG_AND_CHAT.md](RAG_AND_CHAT.md).
   - `max_tokens` — opsiyonel
 - **Yanıt:** `text/event-stream`:
   1. İlk olay `event:refs` → JSON: kaynak listesi (`{id, name, file}` fonksiyonlar; `{type:'document', name, file, chunk_index, location, page_start}` dokümanlar — `location` PDF'te `sayfa X[-Y]`, metinde `satır X-Y`, xlsx'te `sayfa <ad>`).
-  2. Token olayları `data:<token>\n\n` (newline `\n` olarak kaçışlı).
-  3. Bitiş `data:[DONE]`; hata `data:⚠️ Hata: ...` + `[DONE]`.
+  2. Rate limit beklemesi gerekiyorsa `event:status` → JSON `{message}` (örn. "Rate limit: yaklaşık 30 saniye bekleniyor..."). Bekleme `LLM_RATE_LIMIT_MAX_WAIT` süresini aşarsa istek gönderilmez.
+  3. Token olayları `data:<token>\n\n` (newline `\n` olarak kaçışlı).
+  4. Bitiş `data:[DONE]`.
+  5. Hata `event:error` → JSON `{error, retry_after_seconds?}` + `data:[DONE]`. `error` gövdesi LLM'den gelen ayrıntılı mesajı taşır; `retry_after_seconds` yalnız rate-limit durumunda dolar.
 - Modelin `think`/reasoning kanal çıktıları sunucuda temizlenir (GELIS15). Kullanıcının `ai_api_url` override'ı varsa o sunucuya gidilir. Audit: `chat_message_sent` (mesajın ilk 100 karakteri).
 
 ### GET `/api/chat/project/<project_id>/search?q=...`

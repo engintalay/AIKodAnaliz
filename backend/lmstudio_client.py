@@ -1,4 +1,5 @@
 import os
+import math
 import requests
 import json
 import time
@@ -11,8 +12,17 @@ from config.config import (
     LMSTUDIO_REQUEST_TIMEOUT,
     CONTEXT_LIMIT_TOKENS,
     AI_API_KEY,
+    LLM_RATE_LIMIT_COOLDOWN,
+    LLM_RATE_LIMIT_MAX_WAIT,
 )
 from backend.database import db
+from backend.llm_errors import (
+    RateLimitCooldownError,
+    cooldown_registry,
+    detect_rate_limit,
+    extract_error_detail,
+    parse_retry_after,
+)
 
 class LMStudioClient:
     """Client for OpenAI-compatible local AI servers (LMStudio, llama.cpp)."""
@@ -143,6 +153,64 @@ class LMStudioClient:
             text = (response.text or '').lower()
         return ('invalid model' in text) or ('invalid model identifier' in text)
 
+    # ------------------------------------------------------------------
+    # Rate limit / hata yardımcıları
+    # ------------------------------------------------------------------
+    def _cooldown_key(self) -> str:
+        """Bekleme kaydının anahtarı: aynı sunucuya giden istekler paylaşır."""
+        return (self.api_url or '').rstrip('/')
+
+    def rate_limit_remaining(self) -> float:
+        """Aktif rate-limit beklemesinden kalan saniye (yoksa 0)."""
+        return cooldown_registry.remaining(self._cooldown_key())
+
+    def wait_for_rate_limit(self) -> float:
+        """Beklemeyi uygula; hâlâ bekleme gerekiyorsa kalan saniyeyi döndür."""
+        return cooldown_registry.wait(self._cooldown_key(), LLM_RATE_LIMIT_MAX_WAIT)
+
+    def _ensure_not_rate_limited(self):
+        """Aktif bekleme varsa uygula; üst sınırı aşıyorsa isteği engelle."""
+        remaining = self.wait_for_rate_limit()
+        if remaining <= 0:
+            return
+        reason = cooldown_registry.reason(self._cooldown_key())
+        message = (
+            f"{self.provider_display} rate limit aktif; yaklaşık "
+            f"{int(math.ceil(remaining))} saniye sonra tekrar deneyin."
+        )
+        if reason:
+            message += f" Sunucu mesajı: {reason}"
+        raise RateLimitCooldownError(message, remaining)
+
+    def _register_rate_limit(self, response):
+        """Yanıt rate-limit ise süreç geneli bekleme kaydını güncelle."""
+        if not detect_rate_limit(response):
+            return None
+        seconds = parse_retry_after(response)
+        if seconds is None:
+            seconds = LLM_RATE_LIMIT_COOLDOWN
+        try:
+            seconds = float(seconds)
+        except (TypeError, ValueError):
+            seconds = float(LLM_RATE_LIMIT_COOLDOWN)
+        # Çok kısa/çok uzun değerleri makul aralığa sıkıştır.
+        seconds = max(1.0, min(seconds, 3600.0))
+        cooldown_registry.set(
+            self._cooldown_key(), seconds, extract_error_detail(response)
+        )
+        return seconds
+
+    def _http_error_message(self, response, retry_after=None) -> str:
+        """Ayrıntılı HTTP hata metni (rate-limit ipucu dahil)."""
+        detail = extract_error_detail(response)
+        message = f"{self.provider_display} HTTP {response.status_code}: {detail}"
+        if retry_after:
+            message += (
+                f" — rate limit; yaklaşık {int(math.ceil(retry_after))} "
+                "saniye sonra tekrar deneyin."
+            )
+        return message
+
     def _build_chat_payload(self, prompt, temperature, top_p, max_tokens):
         return {
             "model": self.model,
@@ -165,12 +233,14 @@ class LMStudioClient:
 
     def _post_chat_with_model_fallback(self, prompt, temperature, top_p, max_tokens):
         """Send chat request; if model is invalid, auto-pick first available model and retry once."""
+        self._ensure_not_rate_limited()
         response = self.session.post(
             f"{self.api_url}/chat/completions",
             headers={"Content-Type": "application/json"},
             json=self._build_chat_payload(prompt, temperature, top_p, max_tokens),
             timeout=self.request_timeout
         )
+        self._register_rate_limit(response)
 
         if self._is_invalid_model_response(response):
             try:
@@ -183,6 +253,7 @@ class LMStudioClient:
                         json=self._build_chat_payload(prompt, temperature, top_p, max_tokens),
                         timeout=self.request_timeout
                     )
+                    self._register_rate_limit(response)
             except Exception:
                 # Keep original response if model list/retry fails.
                 pass
@@ -191,8 +262,11 @@ class LMStudioClient:
 
     def list_models(self) -> list:
         """Return model IDs from OpenAI-compatible /models endpoint."""
+        self._ensure_not_rate_limited()
         response = self.session.get(f"{self.api_url}/models", timeout=10)
-        response.raise_for_status()
+        retry_after = self._register_rate_limit(response)
+        if response.status_code != 200:
+            raise RuntimeError(self._http_error_message(response, retry_after))
         payload = response.json()
         models = payload.get('data', []) if isinstance(payload, dict) else []
         model_ids = []
@@ -311,9 +385,19 @@ class LMStudioClient:
             'error': None,
         }
         try:
+            self._ensure_not_rate_limited()
             response = self.session.get(f"{self.api_url}/models", timeout=10)
-            response.raise_for_status()
+            retry_after = self._register_rate_limit(response)
+            if response.status_code != 200:
+                result['error'] = self._http_error_message(response, retry_after)
+                if retry_after:
+                    result['retry_after_seconds'] = retry_after
+                return result
             payload = response.json()
+        except RateLimitCooldownError as exc:
+            result['error'] = str(exc)
+            result['retry_after_seconds'] = exc.retry_after_seconds
+            return result
         except Exception as exc:
             result['error'] = str(exc)
             return result
@@ -386,13 +470,16 @@ class LMStudioClient:
         }
 
         started_at = time.perf_counter()
+        retry_after = None
         try:
+            self._ensure_not_rate_limited()
             response = self.session.post(
                 f"{self.api_url}/chat/completions",
                 headers={"Content-Type": "application/json"},
                 json=payload,
                 timeout=self.request_timeout,
             )
+            retry_after = self._register_rate_limit(response)
             if self._is_invalid_model_response(response):
                 models = self.list_models()
                 if models:
@@ -404,6 +491,15 @@ class LMStudioClient:
                         json=payload,
                         timeout=self.request_timeout,
                     )
+                    retry_after = self._register_rate_limit(response)
+        except RateLimitCooldownError as exc:
+            return {
+                'status': 'error',
+                'model': self.model,
+                'latency_ms': int((time.perf_counter() - started_at) * 1000),
+                'error': str(exc),
+                'retry_after_seconds': exc.retry_after_seconds,
+            }
         except requests.exceptions.Timeout:
             return {
                 'status': 'error',
@@ -428,17 +524,16 @@ class LMStudioClient:
 
         latency_ms = int((time.perf_counter() - started_at) * 1000)
         if response.status_code != 200:
-            try:
-                detail = response.json()
-            except Exception:
-                detail = (response.text or '')[:500]
-            return {
+            error_result = {
                 'status': 'error',
                 'model': self.model,
                 'latency_ms': latency_ms,
                 'status_code': response.status_code,
-                'error': f'HTTP {response.status_code}: {detail}',
+                'error': self._http_error_message(response, retry_after),
             }
+            if retry_after:
+                error_result['retry_after_seconds'] = retry_after
+            return error_result
 
         try:
             data = response.json()
@@ -481,7 +576,9 @@ class LMStudioClient:
     def test_connection(self) -> dict:
         """Test connection to active provider endpoint."""
         try:
+            self._ensure_not_rate_limited()
             response = self.session.get(f"{self.api_url}/models", timeout=5)
+            retry_after = self._register_rate_limit(response)
             if response.status_code == 200:
                 return {
                     'status': 'connected',
@@ -489,11 +586,21 @@ class LMStudioClient:
                     'provider': self.provider,
                 }
             else:
-                return {
+                result = {
                     'status': 'error',
-                    'message': f'{self.provider_display} returned status {response.status_code}',
+                    'message': self._http_error_message(response, retry_after),
                     'provider': self.provider,
                 }
+                if retry_after:
+                    result['retry_after_seconds'] = retry_after
+                return result
+        except RateLimitCooldownError as exc:
+            return {
+                'status': 'error',
+                'message': str(exc),
+                'provider': self.provider,
+                'retry_after_seconds': exc.retry_after_seconds,
+            }
         except requests.exceptions.ConnectionError:
             return {
                 'status': 'error',
@@ -590,12 +697,18 @@ Summary:"""
                     'completion_tokens': 0,
                     'total_tokens': 0,
                 }
-                try:
-                    detail = response.json()
-                except Exception:
-                    detail = response.text
-                return f"Error: {self.provider_display} returned {response.status_code} - {detail}"
+                retry_after = self.rate_limit_remaining() or None
+                return f"Error: {self._http_error_message(response, retry_after)}"
         
+        except RateLimitCooldownError as e:
+            duration_seconds = round(time.perf_counter() - started_at, 3)
+            self.last_call_stats = {
+                'duration_seconds': duration_seconds,
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_tokens': 0,
+            }
+            return f"Error: {e}"
         except requests.exceptions.Timeout:
             duration_seconds = round(time.perf_counter() - started_at, 3)
             self.last_call_stats = {
@@ -651,8 +764,11 @@ Suggestions:"""
                 data = response.json()
                 return data['choices'][0]['message']['content'].strip()
             else:
-                return f"Error: {response.status_code}"
+                retry_after = self.rate_limit_remaining() or None
+                return f"Error: {self._http_error_message(response, retry_after)}"
         
+        except RateLimitCooldownError as e:
+            return f"Error: {e}"
         except Exception as e:
             return f"Error: {str(e)}"
 
@@ -686,12 +802,14 @@ Suggestions:"""
         }
 
         try:
+            self._ensure_not_rate_limited()
             response = self.session.post(
                 f"{self.api_url}/chat/completions",
                 headers={"Content-Type": "application/json"},
                 json=payload,
                 timeout=self.request_timeout,
             )
+            retry_after = self._register_rate_limit(response)
             if self._is_invalid_model_response(response):
                 models = self.list_models()
                 if models:
@@ -703,11 +821,14 @@ Suggestions:"""
                         json=payload,
                         timeout=self.request_timeout,
                     )
+                    retry_after = self._register_rate_limit(response)
             if response.status_code == 200:
                 data = response.json()
                 return data["choices"][0]["message"]["content"].strip()
             else:
-                return f"Error: {self.provider_display} returned {response.status_code}"
+                return f"Error: {self._http_error_message(response, retry_after)}"
+        except RateLimitCooldownError as e:
+            return f"Error: {e}"
         except requests.exceptions.Timeout:
             return f"Error: {self.provider_display} isteği zaman aşımına uğradı."
         except requests.exceptions.ConnectionError:
@@ -748,6 +869,7 @@ Suggestions:"""
 
         # Model auto-detect on first attempt
         try:
+            self._ensure_not_rate_limited()
             with self.session.post(
                 f"{self.api_url}/chat/completions",
                 headers={"Content-Type": "application/json"},
@@ -765,11 +887,14 @@ Suggestions:"""
                     return
                 
                 if response.status_code != 200:
-                    yield f"\n\n⚠️ {self.provider_display} hatası ({response.status_code}). Sunucuyu kontrol edin."
+                    retry_after = self._register_rate_limit(response)
+                    yield f"\n\n⚠️ {self._http_error_message(response, retry_after)}"
                     return
 
                 yield from self._parse_sse_stream(response)
 
+        except RateLimitCooldownError as e:
+            yield f"\n\n⚠️ {e}"
         except requests.exceptions.Timeout:
             yield f"\n\n⚠️ {self.provider_display} isteği zaman aşımına uğradı. Model yüklü mü kontrol edin."
         except requests.exceptions.ConnectionError:
@@ -780,6 +905,7 @@ Suggestions:"""
     def _chat_stream_inner(self, payload):
         """Re-attempt a stream with the updated payload (after model auto-fix)."""
         try:
+            self._ensure_not_rate_limited()
             with self.session.post(
                 f"{self.api_url}/chat/completions",
                 headers={"Content-Type": "application/json"},
@@ -787,7 +913,13 @@ Suggestions:"""
                 timeout=self.request_timeout,
                 stream=True,
             ) as response:
+                if response.status_code != 200:
+                    retry_after = self._register_rate_limit(response)
+                    yield f"\n\n⚠️ {self._http_error_message(response, retry_after)}"
+                    return
                 yield from self._parse_sse_stream(response)
+        except RateLimitCooldownError as e:
+            yield f"\n\n⚠️ {e}"
         except Exception as e:
             yield f"\n\n⚠️ Yeniden deneme hatası: {str(e)}"
 
