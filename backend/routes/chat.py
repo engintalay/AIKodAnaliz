@@ -8,6 +8,7 @@ from backend.ai_client import LocalAIClient
 from backend.permission_manager import get_user_from_session, check_project_access
 from backend.logger import logger, log_audit
 from backend.rag_index import RagIndex
+from config.config import LLM_RATE_LIMIT_MAX_WAIT
 
 bp = Blueprint('chat', __name__, url_prefix='/api/chat')
 
@@ -293,13 +294,14 @@ def chat_with_project(project_id):
             # Rate limit beklemesi varsa önce kullanıcıya bildir, sonra bekle.
             remaining = client.rate_limit_remaining()
             if remaining > 0:
-                status_payload = json.dumps({
-                    'message': (
-                        f'Rate limit: yaklaşık {int(math.ceil(remaining))} '
-                        'saniye bekleniyor...'
-                    )
-                }, ensure_ascii=False)
-                yield f"event:status\ndata:{status_payload}\n\n"
+                if remaining <= LLM_RATE_LIMIT_MAX_WAIT:
+                    status_payload = json.dumps({
+                        'message': (
+                            f'Rate limit: yaklaşık {int(math.ceil(remaining))} '
+                            'saniye bekleniyor...'
+                        )
+                    }, ensure_ascii=False)
+                    yield f"event:status\ndata:{status_payload}\n\n"
                 remaining = client.wait_for_rate_limit()
                 if remaining > 0:
                     error_payload = json.dumps({
@@ -397,9 +399,11 @@ def chat_with_project(project_id):
         except Exception as e:
             logger.error(f"Chat stream error: {e}")
             try:
-                error_payload = json.dumps(
-                    {'error': str(e)}, ensure_ascii=False
-                )
+                payload = {'error': str(e)}
+                retry_after = getattr(e, 'retry_after_seconds', None)
+                if retry_after:
+                    payload['retry_after_seconds'] = retry_after
+                error_payload = json.dumps(payload, ensure_ascii=False)
                 yield f"event:error\ndata:{error_payload}\n\n"
                 yield "data:[DONE]\n\n"
             except GeneratorExit:

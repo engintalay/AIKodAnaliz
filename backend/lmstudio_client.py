@@ -888,13 +888,16 @@ Suggestions:"""
                 
                 if response.status_code != 200:
                     retry_after = self._register_rate_limit(response)
-                    yield f"\n\n⚠️ {self._http_error_message(response, retry_after)}"
-                    return
+                    message = self._http_error_message(response, retry_after)
+                    if retry_after:
+                        raise RateLimitCooldownError(message, retry_after)
+                    raise RuntimeError(message)
 
                 yield from self._parse_sse_stream(response)
 
-        except RateLimitCooldownError as e:
-            yield f"\n\n⚠️ {e}"
+        except (RateLimitCooldownError, RuntimeError):
+            # Çağıran katman (chat SSE) ayrıntılı hatayı kendisi bildirir.
+            raise
         except requests.exceptions.Timeout:
             yield f"\n\n⚠️ {self.provider_display} isteği zaman aşımına uğradı. Model yüklü mü kontrol edin."
         except requests.exceptions.ConnectionError:
@@ -915,11 +918,13 @@ Suggestions:"""
             ) as response:
                 if response.status_code != 200:
                     retry_after = self._register_rate_limit(response)
-                    yield f"\n\n⚠️ {self._http_error_message(response, retry_after)}"
-                    return
+                    message = self._http_error_message(response, retry_after)
+                    if retry_after:
+                        raise RateLimitCooldownError(message, retry_after)
+                    raise RuntimeError(message)
                 yield from self._parse_sse_stream(response)
-        except RateLimitCooldownError as e:
-            yield f"\n\n⚠️ {e}"
+        except (RateLimitCooldownError, RuntimeError):
+            raise
         except Exception as e:
             yield f"\n\n⚠️ Yeniden deneme hatası: {str(e)}"
 

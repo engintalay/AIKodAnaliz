@@ -31,6 +31,12 @@ class FakeResponse:
             raise ValueError('no json payload')
         return self._payload
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
 
 class ErrorDetailTests(unittest.TestCase):
     def test_openai_error_message(self):
@@ -238,6 +244,52 @@ class ClientIntegrationTests(unittest.TestCase):
         self.assertIn('vLLM HTTP 429', message)
         self.assertIn('quota exceeded', message)
         self.assertIn('9 saniye', message)
+
+
+class ChatStreamErrorTests(unittest.TestCase):
+    """chat_stream HTTP hatalarında ayrıntılı istisna üretmeli (GELIS25)."""
+
+    def setUp(self):
+        cooldown_registry.clear()
+        self.client = object.__new__(lc.LMStudioClient)
+        self.client.api_url = 'http://test-server:4001/v1'
+        self.client.provider = 'vllm'
+        self.client.model = 'test-model'
+        self.client.temperature = 0.2
+        self.client.top_p = 0.9
+        self.client.max_tokens = 128
+        self.client.request_timeout = 5
+
+    def tearDown(self):
+        cooldown_registry.clear()
+
+    def _client_with_response(self, response):
+        class FakeSession:
+            def post(self, *args, **kwargs):
+                return response
+
+        self.client.session = FakeSession()
+        return self.client
+
+    def test_rate_limit_raises_with_retry_after(self):
+        response = FakeResponse(
+            429,
+            {'error': {'message': 'quota exceeded'}},
+            headers={'Retry-After': '15'},
+        )
+        client = self._client_with_response(response)
+        with self.assertRaises(RateLimitCooldownError) as ctx:
+            list(client.chat_stream([{'role': 'user', 'content': 'merhaba'}]))
+        self.assertEqual(ctx.exception.retry_after_seconds, 15.0)
+        self.assertIn('quota exceeded', str(ctx.exception))
+
+    def test_other_http_error_raises_runtime_error_with_detail(self):
+        response = FakeResponse(500, {'error': {'message': 'internal boom'}})
+        client = self._client_with_response(response)
+        with self.assertRaises(RuntimeError) as ctx:
+            list(client.chat_stream([{'role': 'user', 'content': 'merhaba'}]))
+        self.assertIn('internal boom', str(ctx.exception))
+        self.assertIn('HTTP 500', str(ctx.exception))
 
 
 if __name__ == '__main__':
