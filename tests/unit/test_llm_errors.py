@@ -31,6 +31,9 @@ class FakeResponse:
             raise ValueError('no json payload')
         return self._payload
 
+    def iter_lines(self):
+        return iter(())
+
     def __enter__(self):
         return self
 
@@ -290,6 +293,115 @@ class ChatStreamErrorTests(unittest.TestCase):
             list(client.chat_stream([{'role': 'user', 'content': 'merhaba'}]))
         self.assertIn('internal boom', str(ctx.exception))
         self.assertIn('HTTP 500', str(ctx.exception))
+
+
+class MessageNormalizationTests(unittest.TestCase):
+    """System mesajı sırası: bazı modeller birden fazla system mesajını reddeder."""
+
+    def setUp(self):
+        cooldown_registry.clear()
+        self.client = object.__new__(lc.LMStudioClient)
+        self.client.api_url = 'http://test-server:4001/v1'
+        self.client.provider = 'vllm'
+        self.client.model = 'test-model'
+        self.client.temperature = 0.2
+        self.client.top_p = 0.9
+        self.client.max_tokens = 128
+        self.client.request_timeout = 5
+
+    def tearDown(self):
+        cooldown_registry.clear()
+
+    def test_merges_leading_system_messages(self):
+        messages = [
+            {'role': 'system', 'content': 'Türkçe yanıt ver.'},
+            {'role': 'system', 'content': 'Detaylı ol.'},
+            {'role': 'user', 'content': 'Merhaba'},
+        ]
+        normalized = lc.LMStudioClient._normalize_messages(messages)
+        self.assertEqual(len(normalized), 2)
+        self.assertEqual(normalized[0]['role'], 'system')
+        self.assertIn('Türkçe yanıt ver.', normalized[0]['content'])
+        self.assertIn('Detaylı ol.', normalized[0]['content'])
+        self.assertEqual(normalized[1], {'role': 'user', 'content': 'Merhaba'})
+
+    def test_moves_system_message_to_beginning(self):
+        messages = [
+            {'role': 'user', 'content': 'Merhaba'},
+            {'role': 'system', 'content': 'Kural'},
+            {'role': 'assistant', 'content': 'Selam'},
+        ]
+        normalized = lc.LMStudioClient._normalize_messages(messages)
+        self.assertEqual([m['role'] for m in normalized], ['system', 'user', 'assistant'])
+        self.assertEqual(normalized[0]['content'], 'Kural')
+
+    def test_ignores_empty_system_content(self):
+        messages = [
+            {'role': 'system', 'content': '   '},
+            {'role': 'user', 'content': 'Merhaba'},
+        ]
+        normalized = lc.LMStudioClient._normalize_messages(messages)
+        self.assertEqual(normalized, [{'role': 'user', 'content': 'Merhaba'}])
+
+    def test_build_chat_payload_has_single_leading_system(self):
+        payload = self.client._build_chat_payload('kod', 0.1, 0.9, 100)
+        roles = [m['role'] for m in payload['messages']]
+        self.assertEqual(roles, ['system', 'user'])
+        self.assertIn('Türkçe', payload['messages'][0]['content'])
+        self.assertIn('detaylı', payload['messages'][0]['content'])
+
+    def test_chat_payload_normalizes_system_messages(self):
+        captured = {}
+
+        class FakeSession:
+            def post(self, *args, **kwargs):
+                captured['json'] = kwargs.get('json')
+                return FakeResponse(200, {
+                    'choices': [{'message': {'content': 'yanıt'}}],
+                    'usage': {},
+                })
+
+        self.client.session = FakeSession()
+        self.client.chat(
+            [
+                {'role': 'user', 'content': 'Merhaba'},
+                {'role': 'system', 'content': 'Geç gelen kural'},
+            ],
+            system_prompt='Baştaki kural',
+        )
+        messages = captured['json']['messages']
+        self.assertEqual([m['role'] for m in messages], ['system', 'user'])
+        self.assertIn('Baştaki kural', messages[0]['content'])
+        self.assertIn('Geç gelen kural', messages[0]['content'])
+
+    def test_chat_stream_payload_normalizes_system_messages(self):
+        captured = {}
+
+        class FakeSession:
+            def post(self, *args, **kwargs):
+                captured['json'] = kwargs.get('json')
+                return FakeResponse(200, text='')
+
+        self.client.session = FakeSession()
+        list(self.client.chat_stream([
+            {'role': 'system', 'content': 'İkinci kural'},
+            {'role': 'user', 'content': 'Merhaba'},
+        ]))
+        messages = captured['json']['messages']
+        self.assertEqual([m['role'] for m in messages], ['system', 'user'])
+        self.assertIn('İkinci kural', messages[0]['content'])
+
+
+    def test_extract_message_text_prefers_content(self):
+        data = {'choices': [{'message': {'content': ' özet ', 'reasoning_content': 'düşünce'}}]}
+        self.assertEqual(lc.LMStudioClient._extract_message_text(data), 'özet')
+
+    def test_extract_message_text_falls_back_to_reasoning(self):
+        data = {'choices': [{'message': {'content': None, 'reasoning_content': 'düşünce'}}]}
+        self.assertEqual(lc.LMStudioClient._extract_message_text(data), 'düşünce')
+
+    def test_extract_message_text_handles_missing_choices(self):
+        self.assertEqual(lc.LMStudioClient._extract_message_text({}), '')
 
 
 if __name__ == '__main__':

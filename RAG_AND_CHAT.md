@@ -117,6 +117,10 @@ Sohbet modeli şu sırayla çözülür: **`user_settings.ai_model`** (kullanıc�
 
 LLM 429/kota hatası döndürdüğünde bekleme süresi `Retry-After` başlığından veya gövde ipuçlarından okunur; ipucu yoksa 60 sn varsayılır. Bekleme kaydı sunucu URL'si bazında süreç genelinde tutulur, böylece aynı sunucuya giden tüm kullanıcılar aynı beklemeden yararlanır. Diğer hatalarda (400/404/500 vb.) kullanıcıya gövdeden ayrıştırılmış ayrıntılı mesaj gösterilir. Ayrıntı: [CONFIGURATION.md](CONFIGURATION.md).
 
+### Mesaj normalizasyonu (GELIS26)
+
+Bazı modeller (ör. LiteLLM arkasındaki Ornith/Qwen varyantları) birden fazla `system` mesajını veya ilk sırada olmayan `system` mesajını reddeder: `System message must be at the beginning.` Bu nedenle `LMStudioClient` gönderim öncesinde tüm `system` içeriklerini sırayı koruyarak tek bir baştaki mesajda birleştirir (`_normalize_messages`). Aynı yardımcı `analyze_function`, `chat` ve `chat_stream` yollarında uygulanır. Reasoning-only yanıtlarda `content` boş olabileceği için metin `reasoning_content` üzerinden de okunur (`_extract_message_text`).
+
 ### Kaynak gösterimi (GELIS20)
 
 `refs` listesindeki her kaynak tıklanabilirdir:

@@ -211,10 +211,53 @@ class LMStudioClient:
             )
         return message
 
+    @staticmethod
+    def _normalize_messages(messages):
+        """System mesajlarını başa topla ve tek mesajda birleştir.
+
+        Bazı chat template'leri (ör. LiteLLM arkasındaki Ornith/Qwen
+        varyantları) birden fazla system mesajını veya ilk sırada olmayan
+        system mesajını reddeder: "System message must be at the beginning."
+        Bu yardımcı, tüm system içeriklerini sırayı koruyarak tek bir baştaki
+        mesajda birleştirir; diğer mesajların sırasını değiştirmez.
+        """
+        system_parts = []
+        rest = []
+        for message in messages or []:
+            if not isinstance(message, dict):
+                continue
+            if message.get("role") == "system":
+                content = message.get("content")
+                if isinstance(content, str):
+                    if content.strip():
+                        system_parts.append(content.strip())
+                elif content:
+                    system_parts.append(str(content))
+                continue
+            rest.append(message)
+
+        normalized = []
+        if system_parts:
+            normalized.append({"role": "system", "content": "\n\n".join(system_parts)})
+        normalized.extend(rest)
+        return normalized
+
+    @staticmethod
+    def _extract_message_text(data):
+        """Asistan metnini döndür; reasoning-only modellerde content boş olabilir."""
+        try:
+            message = data['choices'][0]['message']
+        except (KeyError, IndexError, TypeError):
+            return ''
+        content = message.get('content')
+        if content is None:
+            content = message.get('reasoning_content') or message.get('reasoning') or ''
+        return str(content).strip()
+
     def _build_chat_payload(self, prompt, temperature, top_p, max_tokens):
         return {
             "model": self.model,
-            "messages": [
+            "messages": self._normalize_messages([
                 {
                     "role": "system",
                     "content": "Yanıt dili zorunlu olarak Türkçe olmalı. İngilizce veya başka dil kullanma."
@@ -224,7 +267,7 @@ class LMStudioClient:
                     "content": "Olabildiğince detaylı ve açıklayıcı ol. Teknik detaylara girmekten çekinme. Kodun ne yaptığını, nasıl çalıştığını, neden öyle yapıldığını anlat. Eğer kodda belirsizlikler varsa, mümkün olan en iyi tahminini yaparak bunları da açıklamaya çalış. Eğer kodun amacı veya işlevi hakkında kesin bir fikrin yoksa, bunu açıkça belirt ve olası senaryoları sıralayarak açıklamaya çalış. Kodun hangi problemleri çözmeye çalıştığını, hangi ihtiyaçlara hizmet ettiğini, hangi durumlarda kullanışlı olabileceğini anlat. Kodun güçlü ve zayıf yönlerini, potansiyel riskleri veya yan etkileri varsa bunları da açıklamaya çalış. Kodun nasıl geliştirilebileceği veya iyileştirilebileceği konusunda önerilerin varsa bunları da paylaş. Kodun genel bağlamını, kullanım senaryolarını ve teknik detaylarını mümkün olan en iyi şekilde açıklamaya çalış.  "
                 },
                 {"role": "user", "content": prompt}
-            ],
+            ]),
             "temperature": temperature,
             "top_p": top_p,
             "max_tokens": max_tokens,
@@ -686,7 +729,7 @@ Summary:"""
                     'total_tokens': int(usage.get('total_tokens', 0) or 0),
                 }
                 import re
-                summary = data['choices'][0]['message']['content'].strip()
+                summary = self._extract_message_text(data)
                 # <think> bloklarını temizle
                 summary = re.sub(r'<think>.*?</think>', '', summary, flags=re.DOTALL).strip()
                 return summary
@@ -762,7 +805,7 @@ Suggestions:"""
             
             if response.status_code == 200:
                 data = response.json()
-                return data['choices'][0]['message']['content'].strip()
+                return self._extract_message_text(data)
             else:
                 retry_after = self.rate_limit_remaining() or None
                 return f"Error: {self._http_error_message(response, retry_after)}"
@@ -791,6 +834,7 @@ Suggestions:"""
         else:
             full_messages.append({"role": "system", "content": "Yanıt dili zorunlu olarak Türkçe olmalı."})
         full_messages.extend(messages)
+        full_messages = self._normalize_messages(full_messages)
 
         payload = {
             "model": self.model,
@@ -824,7 +868,7 @@ Suggestions:"""
                     retry_after = self._register_rate_limit(response)
             if response.status_code == 200:
                 data = response.json()
-                return data["choices"][0]["message"]["content"].strip()
+                return self._extract_message_text(data)
             else:
                 return f"Error: {self._http_error_message(response, retry_after)}"
         except RateLimitCooldownError as e:
@@ -857,6 +901,7 @@ Suggestions:"""
         else:
             full_messages.append({"role": "system", "content": "Yanıt dili zorunlu olarak Türkçe olmalı."})
         full_messages.extend(messages)
+        full_messages = self._normalize_messages(full_messages)
 
         payload = {
             "model": self.model,
