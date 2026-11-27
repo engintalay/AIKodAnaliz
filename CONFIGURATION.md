@@ -100,9 +100,7 @@ Ayarlar ekranındaki **Model** alanı bir dropdown'dır: "Modelleri Yükle" list
 | `ADMIN_USERNAME` | `admin` |
 | `ADMIN_PASSWORD` | `admin123` |
 
-> ⚠️ **Bilinen tutarsızlık:** `ADMIN_USERNAME/ADMIN_PASSWORD` config'de tanımlıdır ancak ilk kurulumda kullanıcıları **tohumlayan kod `backend/database.py` içinde sabittir** ve env'i okumaz:
-> `admin/admin123`, `developer/dev123`, `analyzer/analyzer123`.
-> İlk açılıştan sonra parolaları **Parola Değiştir** ekranından değiştirin; parolalar mevcut sürümde **düz metin** saklanır (production'da hash önerilir — todo).
+> ✅ **DZT-12:** İlk kurulumda admin kullanıcısı `ADMIN_USERNAME` / `ADMIN_PASSWORD` env değerleriyle oluşturulur. Demo kullanıcılar (`developer/dev123`, `analyzer/analyzer123`) yalnızca admin yoksa tohumlanır. Tüm parolalar Werkzeug `scrypt` ile hash'lenir; eski düz metin kayıtlar açılışta otomatik hash'e çevrilir. İlk girişten sonra **Parola Değiştir** ekranından değiştirmeniz önerilir.
 
 ### Masaüstü uygulaması için ek anahtarlar
 

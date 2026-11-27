@@ -6,6 +6,7 @@ from backend.permission_manager import (
     get_user_projects, get_project_users
 )
 from backend.logger import log_audit
+from backend.password_utils import hash_password, verify_password, is_password_hash
 import json
 
 bp = Blueprint('user', __name__, url_prefix='/api/users')
@@ -22,17 +23,24 @@ def login():
     
     try:
         rows = db.execute_query(
-            'SELECT id, username, role, is_active FROM users WHERE username = ? AND password = ?',
-            (username, password)
+            'SELECT id, username, role, is_active, password FROM users WHERE username = ?',
+            (username,)
         )
-        
-        if not rows:
+
+        if not rows or not verify_password(rows[0]['password'], password):
             return jsonify({'error': 'Invalid credentials'}), 401
-        
+
         user = dict(rows[0])
-        
+
         if not user['is_active']:
             return jsonify({'error': 'User account is disabled'}), 403
+
+        # Eski düz metin kaydı başarılı girişte hash'e yükselt
+        if not is_password_hash(user['password']):
+            db.execute_update(
+                'UPDATE users SET password = ? WHERE id = ?',
+                (hash_password(password), user['id'])
+            )
         
         # Store in session
         session['user_id'] = user['id']
@@ -74,7 +82,7 @@ def register():
     try:
         user_id = db.execute_insert(
             'INSERT INTO users (username, password, role) VALUES (?, ?, ?)',
-            (username, password, role)
+            (username, hash_password(password), role)
         )
         
         # Create default settings
@@ -222,7 +230,7 @@ def admin_create_user():
         user_id = db.execute_insert(
             '''INSERT INTO users (username, password, role, full_name, email, is_active)
                VALUES (?, ?, ?, ?, ?, ?)''',
-            (username, password, role, full_name, email, 1)
+            (username, hash_password(password), role, full_name, email, 1)
         )
         
         # Create default user settings
@@ -287,7 +295,7 @@ def admin_update_user(user_id):
         
         if 'password' in data and data['password']:
             updates.append('password = ?')
-            params.append(data['password'])
+            params.append(hash_password(data['password']))
         
         if updates:
             params.append(user_id)
@@ -478,16 +486,16 @@ def change_password():
             return jsonify({'error': 'New password must be different from current password'}), 400
 
         verify_rows = db.execute_query(
-            'SELECT id FROM users WHERE id = ? AND password = ?',
-            [user['id'], current_password]
+            'SELECT id, password FROM users WHERE id = ?',
+            [user['id']]
         )
 
-        if not verify_rows:
+        if not verify_rows or not verify_password(verify_rows[0]['password'], current_password):
             return jsonify({'error': 'Current password is incorrect'}), 401
 
         db.execute_update(
             'UPDATE users SET password = ? WHERE id = ?',
-            [new_password, user['id']]
+            [hash_password(new_password), user['id']]
         )
 
         return jsonify({'message': 'Password updated successfully'}), 200

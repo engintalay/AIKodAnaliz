@@ -94,7 +94,7 @@ Görev bellek-içidir; sunucu restart'ı veya süre aşımında `{status:'failed
 
 | Metod | Yol | Yetki | Not |
 |---|---|---|---|
-| POST | `/api/users/login` | yok | `{username, password}` → session + `{user{id,username,role}}`. Pasif hesap → 403. Audit: `login`. ⚠️ Parola DB'de düz metin saklanır |
+| POST | `/api/users/login` | yok | `{username, password}` → session + `{user{id,username,role}}`. Pasif hesap → 403. Audit: `login`. Parolalar Werkzeug `scrypt` ile hash'lenir; eski düz metin kayıtlar açılışta otomatik hash'e çevrilir |
 | POST | `/api/users/logout` | session | Session temizle; audit `logout` |
 | GET | `/api/users/current` | session | `{id, username, role, full_name, email}` |
 | POST | `/api/users/register` | admin | Yeni kullanıcı (rol default `analyzer`); çakışma → 409 |
@@ -250,5 +250,5 @@ Log satırı: `{user_id, username, action, resource_type, resource_id, details, 
 2. `GET /api/chat/project/<id>/search` şu an **bozuk** (tanımsız fonksiyon çağrısı → 500).
 3. Görev **iptali** yalnız tracker etiketini değiştirir; worker durmaz. Progress durumu bellek-içidir (restart'ta kaybolur).
 4. Yetki istemeyen uçlar: `GET /api/report`, tüm `/api/analysis/*`, tüm `/api/ai-settings/*`, tüm `/api/users/marks*`, `POST /api/projects/git-info`, `GET /api/projects/progress/<task_id>`.
-5. Parolalar `users` tablosunda **düz metin**; production'da hash'e geçilmeli (todo).
+5. Parolalar `users` tablosunda **Werkzeug hash** (scrypt) olarak saklanır; eski düz metin kayıtlar açılışta otomatik migrasyonla hash'e çevrilir (DZT-12).
 6. Import sonrası FTS/embedding indeksleri **otomatik kurulmaz** → `POST /api/rag/project/<id>/build` çağırın.
