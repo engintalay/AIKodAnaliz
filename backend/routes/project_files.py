@@ -145,6 +145,23 @@ def _extract_text_excel(path: str) -> str:
     return ''
 
 
+def _extract_text_doc(path: str) -> str:
+    """Extract text from legacy binary .doc files via catdoc/antiword."""
+    import subprocess
+
+    for cmd in (['catdoc', path], ['antiword', path]):
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=60)
+            if proc.returncode == 0 and proc.stdout.strip():
+                return proc.stdout.decode('utf-8', errors='ignore')
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            logger.warning(f"DOC extraction failed ({cmd[0]}) {path}: {e}")
+    logger.warning(f"DOC extraction unavailable for {path} (catdoc/antiword yok veya başarısız)")
+    return ''
+
+
 def _extract_document_text(path: str, file_name: str, document_type: str | None = None) -> str:
     """Extract readable text from a stored project document."""
     ext = (document_type or _ext(file_name) or _ext(path) or '').lower()
@@ -153,6 +170,8 @@ def _extract_document_text(path: str, file_name: str, document_type: str | None 
         return _extract_text_pdf(path)
     if ext == 'docx':
         return _extract_text_docx(path)
+    if ext == 'doc':
+        return _extract_text_doc(path)
     if ext in ('xlsx', 'xls'):
         return _extract_text_excel(path)
 

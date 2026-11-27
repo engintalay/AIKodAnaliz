@@ -14,7 +14,9 @@ from backend.permission_manager import (
     check_permission, check_project_access, login_required,
     get_user_from_session, get_user_projects,
 )
-from backend.routes.project_files import _is_dalmap_file, _process_dalmap_file
+from backend.routes.project_files import (
+    _is_dalmap_file, _process_dalmap_file, _extract_document_text,
+)
 
 bp = Blueprint('project', __name__, url_prefix='/api/projects')
 
@@ -493,53 +495,11 @@ def add_files_to_project(project_id):
                 
                 file_size = os.path.getsize(doc_path)
                 
-                # Extract text content based on document type (simplified)
-                extracted_text = ""
-                try:
-                    if file_lower.endswith('.pdf'):
-                        # For PDF, we'd need PyPDF2 or similar - for now store filename in extracted_text
-                        extracted_text = f"PDF Document: {file.filename}"
-                    elif file_lower.endswith(('.doc', '.docx')):
-                        extracted_text = f"Document: {file.filename}"
-                    elif file_lower.endswith('.txt'):
-                        with open(doc_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            extracted_text = f.read()
-                    elif file_lower.endswith('.md'):
-                        with open(doc_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            extracted_text = f.read()
-                    elif file_lower.endswith('.xlsx'):
-                        import openpyxl
-                        wb = openpyxl.load_workbook(doc_path, data_only=True, read_only=True)
-                        parts = []
-                        for sheet in wb.worksheets:
-                            parts.append(f"[Sayfa] {sheet.title}")
-                            for row in sheet.iter_rows(values_only=True):
-                                vals = [str(v).strip() for v in row if v is not None and str(v).strip()]
-                                if vals:
-                                    parts.append("\t".join(vals))
-                        extracted_text = "\n".join(parts)
-                    elif file_lower.endswith('.xls'):
-                        import xlrd
-                        wb = xlrd.open_workbook(doc_path)
-                        parts = []
-                        for sheet in wb.sheets():
-                            parts.append(f"[Sayfa] {sheet.name}")
-                            for r in range(sheet.nrows):
-                                vals = []
-                                for c in range(sheet.ncols):
-                                    cell_val = sheet.cell_value(r, c)
-                                    if cell_val is None:
-                                        continue
-                                    sval = str(cell_val).strip()
-                                    if sval:
-                                        vals.append(sval)
-                                if vals:
-                                    parts.append("\t".join(vals))
-                        extracted_text = "\n".join(parts)
-                except Exception as e:
-                    logger.warning(f"Failed to extract text from {file.filename}: {e}")
-                    extracted_text = f"Document: {file.filename}"
-                
+                # DZT-13: gerçek metin çıkarımı (PDF/DOCX/DOC/XLSX/XLS/TXT/MD)
+                extracted_text = _extract_document_text(doc_path, file.filename, document_type)
+                if not extracted_text.strip():
+                    logger.warning(f"No text extracted from {file.filename}")
+
                 # Add to project_documents
                 doc_id = db.execute_insert(
                     '''INSERT INTO project_documents
