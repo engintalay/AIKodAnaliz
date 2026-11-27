@@ -1,12 +1,14 @@
-"""GELIS8: Add files to an existing project.
+"""GELIS8: Proje dokümanları ve DALMap dosyaları.
 
-Code files  (zip, war, java, sql, py, …)    → source_files table + Tree-Sitter analysis + FTS5 update
-Document files (pdf, docx, txt, xlsx, xls)  → doc_chunks table + background embedding
+Dokümanlar (pdf, docx, txt, xlsx, xls) → doc_chunks + arka plan embedding
+DALMap XML dosyaları                  → dalmap_files + RAG indeksi
+
+Not (DZT-10): `add-file` ucu artık yalnızca `backend/routes/project.py` içinde
+tanımlıdır; bu modüldeki ölü kopya kaldırılmıştır. Buradaki yardımcılar
+(`_build_document_chunks`, `_process_dalmap_file`, …) project.py tarafından
+kullanılmaya devam eder.
 """
 import os
-import uuid
-import zipfile
-import shutil
 import threading
 
 from flask import Blueprint, request, jsonify
@@ -62,20 +64,6 @@ def _ext(filename: str) -> str:
 def _detect_language(filename: str) -> str:
     ext = _ext(filename)
     return LANGUAGE_ALIASES.get(ext, ext) if ext else 'unknown'
-
-
-def _is_binary(path: str) -> bool:
-    try:
-        with open(path, 'rb') as f:
-            chunk = f.read(2048)
-        if not chunk:
-            return False
-        if b'\x00' in chunk:
-            return True
-        non_text = sum(1 for b in chunk if b < 9 or (13 < b < 32))
-        return (non_text / len(chunk)) > 0.30
-    except Exception:
-        return True
 
 
 def _extract_text_pdf(path: str) -> str:
@@ -682,57 +670,6 @@ def _process_dalmap_file(project_id: int, file_path: str, rel_path: str, file_na
         return False
 
 
-def _process_doc_file(project_id: int, path: str, file_name: str) -> int:
-    """Extract text from doc file, store chunks. Returns chunk count."""
-    text, chunks = _build_document_chunks(path, file_name)
-    if not chunks:
-        return 0
-
-    # Delete previous chunks for this file (re-upload)
-    db.execute_update(
-        'DELETE FROM doc_chunks WHERE project_id = ? AND file_name = ?',
-        (project_id, file_name)
-    )
-
-    for idx, chunk in enumerate(chunks):
-        db.execute_insert(
-            '''INSERT INTO doc_chunks (project_id, file_name, chunk_index, content, page_start, page_end)
-               VALUES (?, ?, ?, ?, ?, ?)''',
-            (project_id, file_name, idx, chunk['content'], chunk.get('page_start'), chunk.get('page_end'))
-        )
-
-    # GELIS20: Insert or update project_documents table to list and serve the document file later.
-    try:
-        file_type = _ext(file_name)
-        file_size = os.path.getsize(path) if os.path.exists(path) else 0
-        rel_path = os.path.relpath(path, UPLOAD_DIR)
-        
-        exists = db.execute_query(
-            'SELECT id FROM project_documents WHERE project_id = ? AND file_name = ?',
-            (project_id, file_name)
-        )
-        if exists:
-            db.execute_update(
-                '''UPDATE project_documents 
-                   SET file_path = ?, file_size = ?, extracted_text = ?, updated_at = CURRENT_TIMESTAMP
-                   WHERE project_id = ? AND file_name = ?''',
-                (rel_path, file_size, text, project_id, file_name)
-            )
-        else:
-            db.execute_insert(
-                '''INSERT INTO project_documents 
-                   (project_id, file_name, file_path, file_type, document_type, file_size, extracted_text, source_folder)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                (project_id, file_name, rel_path, file_type, file_type, file_size, text, 'documents')
-            )
-    except Exception as e:
-        logger.warning(f"Failed to record document metadata in project_documents: {e}")
-
-    # Trigger async embedding
-    _embed_doc_chunks_async(project_id, file_name, chunks)
-    return len(chunks)
-
-
 def _rebuild_existing_documents_rag(project_id: int) -> dict:
     """Rebuild doc_chunks + embeddings for already stored project_documents rows."""
     rows = db.execute_query(
@@ -849,159 +786,6 @@ def _rebuild_existing_documents_rag(project_id: int) -> dict:
         'documents_skipped': documents_skipped,
         'total_documents': len(rows or []),
     }
-
-
-# ------------------------------------------------------------------
-# Route
-# ------------------------------------------------------------------
-
-@bp.route('/<int:project_id>/add-file', methods=['POST'])
-@check_project_access('write')
-def add_file_to_project(project_id):
-    """Add one or more files to an existing project.
-
-    Accepts multipart/form-data with 'file' field (one or multiple files).
-    Returns a summary of what was processed.
-    """
-    if 'file' not in request.files:
-        return jsonify({'error': 'Dosya sağlanmadı'}), 400
-
-    uploaded_files = request.files.getlist('file')
-    if not uploaded_files:
-        return jsonify({'error': 'Dosya listesi boş'}), 400
-
-    # Verify project exists
-    proj = db.execute_query('SELECT id, name FROM projects WHERE id = ?', (project_id,))
-    if not proj:
-        return jsonify({'error': 'Proje bulunamadı'}), 404
-
-    user = get_user_from_session()
-
-    results = []
-    code_files_added = 0
-    doc_chunks_added = 0
-    dalmap_files_added = 0
-
-    # Temp staging dir for this upload batch
-    stage_dir = os.path.join(UPLOAD_DIR, f'project_{project_id}', 'added_files', str(uuid.uuid4()))
-    os.makedirs(stage_dir, exist_ok=True)
-
-    try:
-        for upload in uploaded_files:
-            filename = upload.filename or 'unknown'
-            ext = _ext(filename)
-            save_path = os.path.join(stage_dir, filename)
-            upload.save(save_path)
-
-            if ext in ARCHIVE_EXTENSIONS:
-                # Extract archive, then process each file inside
-                extract_sub = os.path.join(stage_dir, filename + '_extracted')
-                os.makedirs(extract_sub, exist_ok=True)
-                try:
-                    with zipfile.ZipFile(save_path, 'r') as zf:
-                        zf.extractall(extract_sub)
-                except Exception as e:
-                    results.append({'file': filename, 'status': 'error', 'detail': f'ZIP açılamadı: {e}'})
-                    continue
-
-                for root, _, files in os.walk(extract_sub):
-                    for fname in files:
-                        fpath = os.path.join(root, fname)
-                        fext = _ext(fname)
-                        rel = os.path.relpath(fpath, extract_sub)
-                        rel_db = f'added_files/{filename}/{rel}'
-
-                        if fext in SKIP_BINARY_EXTENSIONS:
-                            continue
-                        if fext in DOC_EXTENSIONS and fext not in CODE_EXTENSIONS:
-                            cnt = _process_doc_file(project_id, fpath, fname)
-                            doc_chunks_added += cnt
-                        elif fext in CODE_EXTENSIONS or (fext and fext not in SKIP_BINARY_EXTENSIONS):
-                            if _process_code_file(project_id, fpath, rel_db, fname):
-                                code_files_added += 1
-
-                results.append({'file': filename, 'status': 'ok', 'type': 'archive'})
-
-            if _is_dalmap_file(filename):
-                rel_db = f'added_files/{filename}'
-                if _process_dalmap_file(project_id, save_path, rel_db, filename):
-                    dalmap_files_added += 1
-                    results.append({'file': filename, 'status': 'ok', 'type': 'dalmap'})
-                else:
-                    results.append({'file': filename, 'status': 'skipped', 'detail': 'DALMap parse edilemedi'})
-
-            elif ext in DOC_EXTENSIONS and ext not in CODE_EXTENSIONS:
-                # Pure document — only RAG
-                cnt = _process_doc_file(project_id, save_path, filename)
-                doc_chunks_added += cnt
-                results.append({'file': filename, 'status': 'ok', 'type': 'document', 'chunks': cnt})
-
-            else:
-                # Single code file
-                rel_db = f'added_files/{filename}'
-                if _process_code_file(project_id, save_path, rel_db, filename):
-                    code_files_added += 1
-                    results.append({'file': filename, 'status': 'ok', 'type': 'code'})
-                else:
-                    results.append({'file': filename, 'status': 'skipped', 'detail': 'Binary ya da okunamıyor'})
-
-        # If code files were added, trigger Tree-Sitter analysis and FTS5 update
-        if code_files_added > 0:
-            _trigger_analysis_async(project_id)
-            _trigger_fts_update_async(project_id)
-
-        log_audit(user, 'project_file_added', 'project', project_id,
-                  details=f'{code_files_added} code, {doc_chunks_added} doc chunks',
-                  request=request)
-
-        return jsonify({
-            'message': 'Dosyalar işlendi',
-            'code_files_added': code_files_added,
-            'doc_chunks_added': doc_chunks_added,
-            'files': results,
-        }), 200
-
-    except Exception as e:
-        logger.error(f"add_file_to_project error: {e}")
-        return jsonify({'error': str(e)}), 500
-    finally:
-        # Clean up temp staging dir (keep extracted content in project folder)
-        pass  # Keep files since they're referenced by DB paths
-
-
-# ------------------------------------------------------------------
-# Async helpers
-# ------------------------------------------------------------------
-
-def _trigger_analysis_async(project_id: int):
-    """Run Tree-Sitter function extraction in a background thread."""
-    def worker():
-        try:
-            # Re-use the existing analysis logic via direct import
-            from backend.routes.analysis import _run_tree_sitter_for_project
-            _run_tree_sitter_for_project(project_id)
-            logger.info(f"Post-upload analysis complete for project {project_id}")
-        except ImportError:
-            # Fallback: call via internal API if direct import not available
-            logger.warning("_run_tree_sitter_for_project not found; skipping auto-analysis")
-        except Exception as e:
-            logger.error(f"Post-upload analysis error (project={project_id}): {e}")
-
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
-
-
-def _trigger_fts_update_async(project_id: int):
-    """Rebuild FTS5 index for the project in a background thread."""
-    def worker():
-        try:
-            from backend.rag_index import RagIndex
-            RagIndex.build_fts(project_id)
-        except Exception as e:
-            logger.warning(f"FTS rebuild after file add error: {e}")
-
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
 
 
 # ------------------------------------------------------------------
