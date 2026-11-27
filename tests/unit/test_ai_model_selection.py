@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 import backend.lmstudio_client as lc
+import backend.permission_manager as permission_manager
 import backend.routes.ai_settings as ai_settings_route
 import backend.routes.user as user_route
 from backend.app import app
@@ -316,7 +317,9 @@ class TestRouteOverrides(unittest.TestCase):
         self.patches = [
             patch.object(ai_settings_route, 'LocalAIClient', FakeRouteClient),
             patch.object(ai_settings_route, 'get_user_from_session',
-                         return_value={'id': 7}),
+                         return_value={'id': 7, 'role': 'admin'}),
+            patch.object(permission_manager, 'get_user_from_session',
+                         return_value={'id': 7, 'role': 'admin'}),
         ]
         for p in self.patches:
             p.start()
@@ -398,7 +401,10 @@ class TestUserModelPersistence(unittest.TestCase):
         self.fake_db = FakeUserDB()
         self.patches = [
             patch.object(user_route, 'db', self.fake_db),
-            patch.object(user_route, 'get_user_from_session', return_value={'id': 7}),
+            patch.object(user_route, 'get_user_from_session',
+                         return_value={'id': 7, 'role': 'admin'}),
+            patch.object(permission_manager, 'get_user_from_session',
+                         return_value={'id': 7, 'role': 'admin'}),
         ]
         for p in self.patches:
             p.start()

@@ -1,6 +1,7 @@
 """AI Summary Coverage Report Routes"""
 from flask import Blueprint, jsonify
 from backend.database import db
+from backend.permission_manager import check_permission
 from backend.logger import logger
 from backend.routes.analysis import _prepare_function_code_for_ai
 import math
@@ -32,6 +33,7 @@ def _estimate_ai_input_tokens(func, dependency_summaries):
     return _estimate_text_tokens(estimated_payload) + 180, code_mode
 
 @bp.route('', methods=['GET'])
+@check_permission('view_analytics')
 def get_ai_summary_report():
     """Generate AI summary coverage report with statistics"""
     try:

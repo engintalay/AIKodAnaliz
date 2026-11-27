@@ -65,6 +65,30 @@ def get_user_from_session():
     result = db.execute_query('SELECT * FROM users WHERE id = ?', [user_id])
     return dict(result[0]) if result else None
 
+def login_required(f):
+    """Decorator: require an authenticated session (any role)."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = get_user_from_session()
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def admin_required(f):
+    """Decorator: require an authenticated admin session."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        user = get_user_from_session()
+        if not user:
+            return jsonify({'error': 'Unauthorized'}), 401
+        if user.get('role') != 'admin':
+            return jsonify({'error': 'Permission denied'}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+
 def check_permission(permission_key):
     """Decorator to check if user has specific permission"""
     def decorator(f):

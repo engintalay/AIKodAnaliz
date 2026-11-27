@@ -10,7 +10,10 @@ from config.config import UPLOAD_DIR
 import uuid
 import subprocess
 import shutil
-from backend.permission_manager import check_permission, check_project_access, get_user_from_session, get_user_projects
+from backend.permission_manager import (
+    check_permission, check_project_access, login_required,
+    get_user_from_session, get_user_projects,
+)
 from backend.routes.project_files import _is_dalmap_file, _process_dalmap_file
 
 bp = Blueprint('project', __name__, url_prefix='/api/projects')
@@ -649,6 +652,7 @@ def add_files_to_project(project_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/git-info', methods=['POST'])
+@login_required
 def get_git_info():
     """Get Git repository information (branches, repo name)"""
     try:
@@ -973,6 +977,7 @@ def delete_project(project_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/progress/<task_id>', methods=['GET'])
+@login_required
 def get_upload_progress(task_id):
     """Get progress for an upload task"""
     try:

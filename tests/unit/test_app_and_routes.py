@@ -11,6 +11,11 @@ class TestAppAndRoutes(unittest.TestCase):
     def setUpClass(cls):
         app.config["TESTING"] = True
         cls.client = app.test_client()
+        login = cls.client.post(
+            "/api/users/login",
+            json={"username": "admin", "password": "admin123"},
+        )
+        assert login.status_code == 200, login.get_data(as_text=True)
 
     def test_health_endpoint(self):
         response = self.client.get("/api/health")

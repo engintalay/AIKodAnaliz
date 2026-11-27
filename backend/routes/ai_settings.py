@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from backend.ai_client import LocalAIClient
 from backend.database import db
-from backend.permission_manager import get_user_from_session
+from backend.permission_manager import get_user_from_session, check_permission
 
 bp = Blueprint('ai_settings', __name__, url_prefix='/api/ai-settings')
 
@@ -46,6 +46,7 @@ def _build_client_with_overrides(data):
 
 
 @bp.route('/', methods=['GET'])
+@check_permission('manage_ai_settings')
 def get_settings():
     """Get all AI settings (sensitive keys masked)"""
     try:
@@ -77,6 +78,7 @@ def get_settings():
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/<setting_name>', methods=['PUT'])
+@check_permission('manage_ai_settings')
 def update_setting(setting_name):
     """Update AI setting.
 
@@ -119,6 +121,7 @@ def update_setting(setting_name):
 
 @bp.route('/lmstudio/test', methods=['POST'])
 @bp.route('/provider/test', methods=['POST'])
+@check_permission('manage_ai_settings')
 def test_provider_connection():
     """Test provider connection.
 
@@ -140,6 +143,7 @@ def test_provider_connection():
 
 
 @bp.route('/models', methods=['GET', 'POST'])
+@check_permission('manage_ai_settings')
 def list_models():
     """List models with metadata (context length, output limit, defaults).
 
@@ -157,6 +161,7 @@ def list_models():
 
 
 @bp.route('/generation/test', methods=['POST'])
+@check_permission('manage_ai_settings')
 def test_generation():
     """Send a real chat completion and verify the model answers.
 
@@ -187,6 +192,7 @@ def test_generation():
 
 
 @bp.route('/embedding/test', methods=['POST'])
+@check_permission('manage_ai_settings')
 def test_embedding_connection():
     """Test the embedding endpoint (GELIS23).
 
