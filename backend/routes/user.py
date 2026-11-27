@@ -1,8 +1,9 @@
 from flask import Blueprint, request, jsonify, session
 from backend.database import db
 from backend.permission_manager import (
-    check_permission, get_user_from_session, grant_project_permission,
-    revoke_project_permission, get_user_projects, get_project_users
+    check_permission, login_required, get_user_from_session,
+    grant_project_permission, revoke_project_permission,
+    get_user_projects, get_project_users
 )
 from backend.logger import log_audit
 import json
@@ -112,6 +113,7 @@ def get_current_user():
     }), 200
 
 @bp.route('/marks', methods=['POST'])
+@login_required
 def add_mark():
     """Add mark/comment to function"""
     data = request.json
@@ -133,6 +135,7 @@ def add_mark():
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/marks/<int:project_id>', methods=['GET'])
+@login_required
 def get_marks(project_id):
     """Get all marks in project"""
     try:
@@ -150,6 +153,7 @@ def get_marks(project_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/marks/<int:mark_id>/resolve', methods=['PUT'])
+@login_required
 def resolve_mark(mark_id):
     """Resolve mark (admin)"""
     data = request.json
@@ -167,6 +171,7 @@ def resolve_mark(mark_id):
 # ========== ADMIN USER MANAGEMENT ==========
 
 @bp.route('/list', methods=['GET'])
+@login_required
 def get_users_for_assignment():
     """Get all active users for assignment (Developer/Admin)"""
     try:
@@ -326,6 +331,7 @@ def admin_delete_user(user_id):
 # ========== USER SETTINGS ==========
 
 @bp.route('/settings', methods=['GET'])
+@login_required
 def get_user_settings():
     """Get current user settings"""
     try:
@@ -355,6 +361,7 @@ def get_user_settings():
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/settings', methods=['PUT'])
+@login_required
 def update_user_settings():
     """Update user settings"""
     try:
@@ -449,6 +456,7 @@ def update_user_settings():
 
 
 @bp.route('/change-password', methods=['PUT'])
+@login_required
 def change_password():
     """Change password for current logged-in user"""
     try:
@@ -490,6 +498,7 @@ def change_password():
 # ========== PROJECT PERMISSIONS ==========
 
 @bp.route('/projects/<int:project_id>/permissions', methods=['GET'])
+@check_permission('manage_project_permissions')
 def get_project_permissions(project_id):
     """Get all users with access to project"""
     try:
@@ -520,6 +529,7 @@ def get_project_permissions(project_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/projects/<int:project_id>/permissions/grant', methods=['POST'])
+@check_permission('manage_project_permissions')
 def grant_permission(project_id):
     """Grant project permission to user"""
     try:
@@ -544,6 +554,7 @@ def grant_permission(project_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/projects/<int:project_id>/permissions/revoke', methods=['POST'])
+@check_permission('manage_project_permissions')
 def revoke_permission(project_id):
     """Revoke project permission from user"""
     try:

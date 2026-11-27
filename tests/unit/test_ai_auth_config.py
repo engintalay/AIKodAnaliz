@@ -4,8 +4,10 @@ Sahte (fake) db nesneleriyle çalışır; gerçek veritabanını ve ağı kullan
 """
 import time
 import unittest
+from unittest.mock import patch
 
 import backend.lmstudio_client as lc
+import backend.permission_manager as permission_manager
 import backend.rag_index as ri
 import backend.routes.ai_settings as ai_settings_route
 from backend.app import app
@@ -179,6 +181,10 @@ class TestSensitiveSettingsSemantics(unittest.TestCase):
         self.fake_db = FakeAISettingsDB()
         ai_settings_route.db = self.fake_db
         self.addCleanup(lambda: setattr(ai_settings_route, 'db', self.original_db))
+        patcher = patch.object(permission_manager, 'get_user_from_session',
+                               return_value={'id': 7, 'role': 'admin'})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_mask_on_get_helper(self):
         self.assertEqual(ai_settings_route._mask_secret(''), '')

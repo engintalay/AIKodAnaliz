@@ -4,7 +4,10 @@ from backend.database import db
 from backend.analyzers.advanced_analyzer import AdvancedCodeAnalyzer
 from backend.progress_tracker import progress_tracker
 from backend.logger import logger, log_analysis, log_ai_call, log_error, log_audit, log_file_analysis_start, log_file_analysis_complete
-from backend.permission_manager import get_user_from_session
+from backend.permission_manager import (
+    get_user_from_session, login_required, admin_required,
+    check_permission, check_project_access,
+)
 from config.config import AI_SUMMARY_WORKERS, AI_SUMMARY_MAX_TOKENS
 import json
 import uuid
@@ -273,6 +276,7 @@ def extract_imported_symbols(content, language):
 bp = Blueprint('analysis', __name__, url_prefix='/api/analysis')
 
 @bp.route('/test-connection', methods=['GET'])
+@login_required
 def test_lmstudio_connection():
     """Test active AI provider connection."""
     try:
@@ -284,6 +288,7 @@ def test_lmstudio_connection():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @bp.route('/project/<int:project_id>/analyze-single-file/<int:file_id>', methods=['POST'])
+@check_project_access('write')
 def analyze_single_file(project_id, file_id):
     """Analyze a single source file and extract functions (used when adding a file to an existing project)"""
     task_id = request.args.get('task_id', str(uuid.uuid4()))
@@ -368,6 +373,7 @@ def analyze_single_file(project_id, file_id):
 
 
 @bp.route('/project/<int:project_id>', methods=['POST'])
+@check_project_access('write')
 def analyze_project(project_id):
     """Analyze entire project"""
     task_id = request.args.get('task_id')
@@ -1235,6 +1241,7 @@ Based on the method summaries above, provide a brief summary of what this class 
 
 
 @bp.route('/function/<int:function_id>/ai-summary', methods=['POST'])
+@login_required
 def get_ai_summary(function_id):
     """Get AI summary for function (with recursive dependency summary generation)"""
     task_id = request.args.get('task_id')
@@ -1503,6 +1510,7 @@ def _bulk_generate_worker(project_id, task_id, user_id, temperature, top_p, max_
 
 
 @bp.route('/project/<int:project_id>/bulk-ai-summary', methods=['POST'])
+@check_project_access('write')
 def bulk_generate_ai_summaries(project_id):
     """Start a background task to generate AI summaries for all missing functions in a project."""
     task_id = request.args.get('task_id')
@@ -1558,6 +1566,7 @@ def bulk_generate_ai_summaries(project_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/file/<int:file_id>', methods=['POST'])
+@login_required
 def analyze_file_missing_functions(file_id):
     """Analyze all missing function summaries in a file"""
     try:
@@ -1688,6 +1697,7 @@ def analyze_file_missing_functions(file_id):
 
 
 @bp.route('/errors', methods=['GET'])
+@admin_required
 def list_error_summaries():
     """List functions whose AI summary starts with Error:"""
     try:
@@ -1722,6 +1732,7 @@ def list_error_summaries():
 
 
 @bp.route('/errors/clear', methods=['POST'])
+@admin_required
 def clear_error_summaries():
     """Clear Error: summaries (set ai_summary to NULL)."""
     try:
@@ -1750,6 +1761,7 @@ def clear_error_summaries():
 
 
 @bp.route('/errors/reanalyze', methods=['POST'])
+@admin_required
 def reanalyze_error_summaries():
     """Re-analyze functions with Error: summaries recursively (including errored dependencies)."""
     task_id = request.args.get('task_id')
@@ -1870,6 +1882,7 @@ def reanalyze_error_summaries():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @bp.route('/functions/source', methods=['POST'])
+@login_required
 def get_functions_source():
     """Return full source code for the given function ids (Markdown export).
 
@@ -1934,6 +1947,7 @@ def get_functions_source():
 
 
 @bp.route('/function/<int:function_id>', methods=['GET'])
+@login_required
 def get_function_details(function_id):
     """Get single function details including source code"""
     try:
@@ -2048,6 +2062,7 @@ def get_function_details(function_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/function/<int:function_id>/summary', methods=['PUT'])
+@check_permission('modify_summaries')
 def update_function_summary(function_id):
     """Manually update function summary"""
     try:
@@ -2071,6 +2086,7 @@ def update_function_summary(function_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/project/<int:project_id>/functions', methods=['GET'])
+@check_project_access('read')
 def get_project_functions(project_id):
     """Get all functions in project"""
     try:
@@ -2171,6 +2187,7 @@ def get_project_functions(project_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/dependencies/<int:project_id>', methods=['GET'])
+@check_project_access('read')
 def get_dependencies(project_id):
     """Get function call dependencies"""
     try:
@@ -2189,6 +2206,7 @@ def get_dependencies(project_id):
 
 
 @bp.route('/global-ai-stats', methods=['GET'])
+@login_required
 def get_global_ai_stats():
     """Get global AI statistics across all tasks"""
     try:
@@ -2199,6 +2217,7 @@ def get_global_ai_stats():
 
 
 @bp.route('/active-tasks', methods=['GET'])
+@login_required
 def get_active_tasks():
     """Get list of all active/running tasks"""
     try:
@@ -2221,6 +2240,7 @@ def get_active_tasks():
 
 
 @bp.route('/recent-files', methods=['GET'])
+@login_required
 def get_recent_ai_files():
     """Get list of recently analyzed files"""
     try:
@@ -2261,6 +2281,7 @@ def get_recent_ai_files():
 
 
 @bp.route('/task/<task_id>/cancel', methods=['POST'])
+@login_required
 def cancel_task(task_id):
     """Cancel a running task"""
     try:

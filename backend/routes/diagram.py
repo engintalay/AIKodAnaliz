@@ -1,10 +1,12 @@
 from flask import Blueprint, request, jsonify
 from backend.database import db
+from backend.permission_manager import check_project_access, login_required
 import json
 
 bp = Blueprint('diagram', __name__, url_prefix='/api/diagram')
 
 @bp.route('/project/<int:project_id>/', methods=['GET'])
+@check_project_access('read')
 def get_diagram_data(project_id):
     """Get diagram data (nodes and edges)"""
     try:
@@ -80,6 +82,7 @@ def get_diagram_data(project_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/function/<int:function_id>/callgraph', methods=['GET'])
+@login_required
 def get_function_callgraph(function_id):
     """Get a highly focused call graph for a single function (1 level up, 2 levels down)"""
     try:
@@ -174,6 +177,7 @@ def get_function_callgraph(function_id):
         return jsonify({'error': str(e)}), 500
 
 @bp.route('/export/png', methods=['POST'])
+@login_required
 def export_diagram_png():
     """Export diagram as PNG"""
     data = request.json
