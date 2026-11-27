@@ -12,7 +12,10 @@ from config.config import (
     LMSTUDIO_DEFAULT_MODEL,
     CONTEXT_LIMIT_TOKENS,
     AI_SUMMARY_MAX_TOKENS,
+    ADMIN_USERNAME,
+    ADMIN_PASSWORD,
 )
+from backend.password_utils import hash_password, migrate_plaintext_passwords
 
 class Database:
     def __init__(self):
@@ -352,28 +355,28 @@ class Database:
             if 'sections_json' not in dalmap_columns:
                 cursor.execute('ALTER TABLE dalmap_files ADD COLUMN sections_json TEXT')
             # Create demo users if not exist
-            cursor.execute("SELECT COUNT(*) FROM users WHERE username = ?", ("admin",))
+            cursor.execute("SELECT COUNT(*) FROM users WHERE username = ?", (ADMIN_USERNAME,))
             if cursor.fetchone()[0] == 0:
-                # Admin user
+                # Admin user (kimlik bilgileri env'den: ADMIN_USERNAME / ADMIN_PASSWORD)
                 cursor.execute('''
                     INSERT INTO users (username, password, role, full_name, email, is_active)
                     VALUES (?, ?, ?, ?, ?, ?)
-                ''', ("admin", "admin123", "admin", "Admin Kullanıcı", "admin@aikodanaliz.local", 1))
-                
+                ''', (ADMIN_USERNAME, hash_password(ADMIN_PASSWORD), "admin", "Admin Kullanıcı", "admin@aikodanaliz.local", 1))
+
                 # Demo developer user
                 cursor.execute('''
                     INSERT INTO users (username, password, role, full_name, email, is_active)
                     VALUES (?, ?, ?, ?, ?, ?)
-                ''', ("developer", "dev123", "developer", "Geliştirici Kullanıcı", "dev@aikodanaliz.local", 1))
-                
-                # Demo analyzer user  
+                ''', ("developer", hash_password("dev123"), "developer", "Geliştirici Kullanıcı", "dev@aikodanaliz.local", 1))
+
+                # Demo analyzer user
                 cursor.execute('''
                     INSERT INTO users (username, password, role, full_name, email, is_active)
                     VALUES (?, ?, ?, ?, ?, ?)
-                ''', ("analyzer", "analyzer123", "analyzer", "Analizci Kullanıcı", "analyzer@aikodanaliz.local", 1))
-                
+                ''', ("analyzer", hash_password("analyzer123"), "analyzer", "Analizci Kullanıcı", "analyzer@aikodanaliz.local", 1))
+
                 # Create default settings for demo users
-                for username in ["admin", "developer", "analyzer"]:
+                for username in [ADMIN_USERNAME, "developer", "analyzer"]:
                     cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
                     user_id = cursor.fetchone()[0]
                     cursor.execute('''
@@ -431,7 +434,10 @@ class Database:
                     INSERT OR IGNORE INTO ai_settings (setting_name, setting_value, data_type)
                     VALUES (?, ?, ?)
                 ''', (setting_name, setting_value, data_type))
-            
+
+            # DZT-12: eski düz metin parolaları hash'e çevir (idempotent)
+            migrate_plaintext_passwords(cursor)
+
             conn.commit()
     
     def get_connection(self):

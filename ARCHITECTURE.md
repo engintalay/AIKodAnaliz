@@ -143,7 +143,7 @@ Ayrıntı: [EXPORT_IMPORT.md](EXPORT_IMPORT.md)
   - admin: her şeye tam erişim; developer: kendi + kendisine tam yetkiyle paylaşılan projeler; **analyzer daima salt okuma** (izin kaydındaki `read_only=0` bile yazma vermez).
 - **Session:** Flask cookie (7 gün, HttpOnly). JWT yok (todo).
 - **Audit:** login/logout, proje görüntüleme/güncelleme/silme, dosya ekleme, chat mesajı, export/import, özet üretimi → `audit_logs` (GELIS6).
-- **Bilinen riskler (dokümante edildi, API.md §son):** parolalar düz metin; `/api/analysis/*`, `/api/report`, `git-info`, `progress` uçları auth istemez; production'da reverse-proxy ile korunmalı.
+- **Bilinen riskler (dokümante edildi, API.md §son):** parolalar Werkzeug hash (scrypt) ile saklanır ve eski kayıtlar otomatik migrate edilir; `/api/analysis/*`, `/api/report`, `git-info`, `progress` uçları artık session/rol decorator'ları ile korunur (DZT-11/DZT-12).
 
 ## Performans Özellikleri
 
